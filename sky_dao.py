@@ -8,7 +8,7 @@ from playwright.sync_api import sync_playwright
 HEADERS = {"User-Agent": "Mozilla/5.0","Accept": "application/json"}
 
 DUNE_MKR_API_URL = "https://api.dune.com/api/v1/query/3926020/results"
-DUNE_SKY_API_URL = "https://api.dune.com/api/v1/query/5261531/results"
+DUNE_SKY_API_URL = "https://api.dune.com/api/v1/query/6604139/results"
 SKY_ALL_POLLS_URL =  "https://vote.sky.money/api/polling/all-polls"
 SKY_EXECUTIVE_SUPPORTERS_URL = "https://vote.sky.money/api/executive/supporters"
 SKY_POLL_ID_URL = "https://vote.sky.money/api/polling/tally"
