@@ -13,6 +13,7 @@ __pycache__/
 .env.test.local
 .env.production.local
 /venv
+.venv
 
 # Dependency directories
 /node_modules/
