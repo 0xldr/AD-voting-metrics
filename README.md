@@ -26,9 +26,10 @@ Follow these steps to set up the project:
    ```bash
    cd AD-voting-metrics
    ```
-1. Install the required dependencies:
+1. Install the required dependencies and the package itself:
    ```bash
    pip install -r requirements.txt
+   pip install -e .
    ```
 
 ## Configuration
@@ -45,9 +46,16 @@ cp .env.example .env
 3. Edit `.env` and set `DUNE_API_KEY` to your key.
    
 ## Usage
-1. Install the required dependencies from `requirements.txt`.
-2. Run `main.py` and follow the on-screen prompts.
+
+Run the script for a specific month:
+
+```bash
++python -m ad_voting_metrics --month "April 2026"
+```
+
+Output CSVs are written to `output_data/`.
 
 ## To Dos
+
 - [ ] General code clean up.
 - [ ] Add more information about the polls and spells to the CSV file.

@@ -1,15 +1,20 @@
 import argparse
 import logging
-import os
 from datetime import date
+from pathlib import Path
 
 import pandas as pd
 from dotenv import load_dotenv
 
-import sky_dao as sky
-from period import MonthPeriod
+from . import sky_dao as sky
+from .period import MonthPeriod
 
 logger = logging.getLogger(__name__)
+
+# Locate data and output directories relative to the repo root
+REPO_ROOT = Path(__file__).resolve().parent.parent.parent
+DATA_DIR = REPO_ROOT / "delegate_date"
+OUTPUT_DIR = REPO_ROOT / "output_data"
 
 
 def parse_month(value):
@@ -71,10 +76,8 @@ def main(argv=None):
         "Querying %s (%s through %s)", period, period.start.isoformat(), period.end.isoformat()
     )
 
-    script_dir = os.path.dirname(os.path.abspath(__file__))
-
     # Step 1: Read the delegate roster
-    file_path = os.path.join(script_dir, "delegate_data", "Aligned Delegates v3.csv")
+    file_path = DATA_DIR / "Aligned Delegates v3.csv"
     df = pd.read_csv(file_path)
 
     hardcoded_order = df["Delegate Contract"].str.lower().tolist()
@@ -117,24 +120,20 @@ def main(argv=None):
     df = sky.get_vote_execute_ids(SPELL_INFO, df, df_sky)
 
     # Save data to CSV files
-    output_csv = os.path.join(script_dir, "output_data", "vote_participation.csv")
+    output_csv = OUTPUT_DIR / "vote_participation.csv"
     df.to_csv(output_csv, index=False)
     logger.info("Participation vote data saved to %s", output_csv)
 
     df = sky.custom_sort(df, hardcoded_order, POLL_INFO, SPELL_INFO)
 
-    output_csv = os.path.join(script_dir, "output_data", "sky.csv")
+    output_csv = OUTPUT_DIR / "sky.csv"
     df_sky.to_csv(output_csv, index=False)
     logger.info("SKY data by date saved to %s", output_csv)
 
-    output_csv = os.path.join(script_dir, "output_data", "ranking.csv")
+    output_csv = OUTPUT_DIR / "ranking.csv"
     df_ranking.to_csv(output_csv, index=False)
     logger.info("Ranking data saved to %s", output_csv)
 
-    output_csv = os.path.join(script_dir, "output_data", "vote_participation_final_transposed.csv")
+    output_csv = OUTPUT_DIR / "vote_participation_final_transposed.csv"
     df.to_csv(output_csv, header=False, index=True)
     logger.info("(transposed) Participation vote data saved to %s", output_csv)
-
-
-if __name__ == "__main__":
-    main()
