@@ -1,53 +1,98 @@
+import argparse
+import calendar
 import os
+from datetime import date, datetime
 
 import pandas as pd
+from dateutil import parser as dateparser
+from dotenv import load_dotenv
 
 import sky_dao as sky
 
-# Get the current directory
 
-script_dir = os.path.dirname(os.path.abspath(__file__))
+def parse_month(value):
+    """Parse a --month argument into (start_date, end_date) for that month.
 
-while True:
-    # Step 1: Read the CSV file
+    Accepts human-readable strings like "April 2026" and ISO-style
+    "2026-04". Returns the first and last day of the month as date objects.
+
+    Raises argparse.ArgumentTypeError on bad input or future months.
+    """
+    # dateutil fills unspecified components from the default. Without a
+    # default, it uses today's date, which means "April 2026" on May 5 parses
+    # to April 5, 2026. Use a fixed sentinel and only trust the year/month.
+    sentinel = datetime(2000, 1, 1)
+    try:
+        parsed = dateparser.parse(value, default=sentinel)
+    except (ValueError, TypeError, OverflowError) as e:
+        raise argparse.ArgumentTypeError(
+            f"could not parse {value!r} as a month. Try formats like 'April 2026' or '2026-04'."
+        ) from e
+
+    year, month = parsed.year, parsed.month
+    start = date(year, month, 1)
+    last_day = calendar.monthrange(year, month)[1]
+    end = date(year, month, last_day)
+
+    today = date.today()
+    if start > today:
+        raise argparse.ArgumentTypeError(
+            f"{value!r} resolves to {start.isoformat()}..{end.isoformat()}, "
+            "which is entirely in the future."
+        )
+    return start, end
+
+
+def build_arg_parser():
+    parser = argparse.ArgumentParser(
+        prog="ad-voting-metrics",
+        description=(
+            "Generate AD voting metrics CSVs for a single month. "
+            "Reads the aligned-delegate roster, fetches SKY delegations and "
+            "poll/spell vote data, and writes CSVs to output_data/."
+        ),
+    )
+    parser.add_argument(
+        "--month",
+        required=True,
+        type=parse_month,
+        metavar="MONTH",
+        help=(
+            "Month to query, e.g. 'April 2026' or '2026-04'. Resolves to the full calendar month."
+        ),
+    )
+    return parser
+
+
+def main(argv=None):
+    load_dotenv()
+    parser = build_arg_parser()
+    args = parser.parse_args(argv)
+    start_date, end_date = args.month
+
+    print(f"Querying data for {start_date.isoformat()}..{end_date.isoformat()}")
+
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+
+    # Step 1: Read the delegate roster
     file_path = os.path.join(script_dir, "delegate_data", "Aligned Delegates v3.csv")
     df = pd.read_csv(file_path)
-    # #Get a list of the order to use in the spreadsheet
-    # df_spreadsheet = pd.read_csv(os.path.join(script_dir, 'delegate_data', 'order spreadsheet.csv'))
 
     hardcoded_order = df["Delegate Contract"].str.lower().tolist()
-
-    # Create DataFrames to store results
-    df_ranking = pd.DataFrame()
-
-    # Prompt user input for query date
-    query_input = input(
-        "\nEnter the date to query (YYYY-MM-DD), or a range (YYYY-MM-DD to YYYY-MM-DD):"
-    )
-
-    # Generate dates from user input
-    start_date, end_date = sky.generate_dates(query_input)
-
-    # Check if valid dates were entered
-    if start_date is None and end_date is None:
-        continue
 
     # Get delegate list and SKY ranking
     print("Getting RANKING...")
     delegate_list_sky, delegate_list_rank = sky.get_delegate_list_sky(df, start_date, end_date)
 
-    # Create DataFrames to store results
     df_sky = pd.DataFrame(delegate_list_sky)
     df_ranking = pd.DataFrame(delegate_list_rank)
 
-    # Sort DataFrames by date and delegated SKY
     df_sky = df_sky.sort_values(by=["date", "sky", "contract"], ascending=False)
     df_ranking = df_ranking.sort_values(by=["Date", "Total Delegation"], ascending=False)
 
     # Calculate and assign ranks to delegates
     current_rank = 1
     prev_date = None
-    prev_total_delegation = None
     ranks = []
 
     for _index, row in df_ranking.iterrows():
@@ -59,8 +104,6 @@ while True:
 
     df_ranking["Rank"] = ranks
     df_ranking = df_ranking.sort_values(by=["Rank", "Date"], ascending=[True, True])
-
-    # df = df.sort_values(by='SKY Delegated', ascending=False)
 
     # Get poll IDs information and vote from polls
     print("Getting POLL IDS...")
@@ -93,7 +136,6 @@ while True:
     df.to_csv(output_csv, header=False, index=True)
     print(f"(transposed) Participation vote data saved to {output_csv}")
 
-    # Ask if another query is desired
-    continue_query = input("\nDo you want to query another date? (yes/no): ").strip().lower()
-    if continue_query != "yes":
-        break
+
+if __name__ == "__main__":
+    main()
