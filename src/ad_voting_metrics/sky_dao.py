@@ -84,9 +84,7 @@ def get_all_sky_delegated():
 
     data = response.json()
 
-    delegate_list = data.get("result", {}).get("rows", [])
-
-    return delegate_list
+    return data.get("result", {}).get("rows", [])
 
 
 def get_sky_delegated(data, contract_address, date):
@@ -229,13 +227,9 @@ def get_vote_poll_ids(poll_info, df, df_sky):
 
             for _index, delegate_sky_available in delegates_sky_available.iterrows():
                 if delegate_sky_available["sky"] != 0:
-                    if voted:
-                        voted = "Yes"
-                    else:
-                        voted = "No"
+                    voted = "Yes" if voted else "No"
                     break
-                else:
-                    voted = "No Delegated SKY"
+                voted = "No Delegated SKY"
 
             if first_delegate_date > end_date:
                 voted = "Not Started"
@@ -316,13 +310,9 @@ def get_vote_execute_ids(spell_info, df, df_sky):
                     continue
 
                 if delegate_sky_available["sky"] != 0:
-                    if voted:
-                        voted = "Yes"
-                    else:
-                        voted = "Pending verification"
+                    voted = "Yes" if voted else "Pending verification"
                     break
-                else:
-                    voted = "No Delegated SKY"
+                voted = "No Delegated SKY"
 
             if first_delegate_date > start_date:
                 voted = "Not Started"
