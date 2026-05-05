@@ -21,17 +21,18 @@ from datetime import date
 class MonthPeriod:
     """A single calendar month, identified by year and 1-indexed month number.
 
-    Use the .start and .end properties to get the date bounds for the month.
+    Use the .start and .end properties to get date bounds for the month.
     Construct from a string like "April 2026" via MonthPeriod.from_string().
     """
 
     year: int
     month: int
 
-    def _post_init__(self):
+    def __post_init__(self):
         if not 1 <= self.month <= 12:
-            raise ValueError(f"month must be in 1..12, got {self.month}")
-        # No upper bound on year
+            raise ValueError(f"month must be 1..12, got {self.month}")
+        # No upper bound on year — the type is happy with December 2099 even
+        # if the CLI rejects future months. Lower bound is just sanity.
         if self.year < 1900:
             raise ValueError(f"year must be >= 1900, got {self.year}")
 
@@ -47,6 +48,7 @@ class MonthPeriod:
         return date(self.year, self.month, last_day)
 
     def __str__(self) -> str:
+        # "April 2026" rather than "MonthPeriod(year=2026, month=4)".
         return f"{calendar.month_name[self.month]} {self.year}"
 
     @classmethod
