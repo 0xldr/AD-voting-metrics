@@ -1,5 +1,4 @@
 import os
-import sys
 from datetime import datetime, timedelta
 
 import requests
@@ -70,57 +69,6 @@ SKY_ALL_POLLS_URL = "https://vote.sky.money/api/polling/all-polls"
 SKY_EXECUTIVE_SUPPORTERS_URL = "https://vote.sky.money/api/executive/supporters"
 SKY_POLL_ID_URL = "https://vote.sky.money/api/polling/tally"
 SKY_EXECUTIVE_URL = "https://vote.sky.money/api/executive"
-
-
-def generate_dates(query_input):
-    # Get today's date
-    today = datetime.now().date()
-
-    try:
-        if "to" in query_input:
-            # Date range
-            start_str, end_str = query_input.split(" to ")
-            start_date = datetime.strptime(start_str, "%Y-%m-%d")
-            end_date = datetime.strptime(end_str, "%Y-%m-%d")
-
-            # Check if end date is in the future
-            if end_date.date() > today:
-                print("The application cannot see into the future.")
-                confirm = (
-                    input("Would you like to limit the range to today's date? (yes/no): ")
-                    .strip()
-                    .lower()
-                )
-                if confirm == "yes":
-                    end_date = datetime.now()
-                else:
-                    print("Exiting.")
-                    sys.exit()
-        else:
-            # Single date
-            start_date = datetime.strptime(query_input, "%Y-%m-%d")
-
-            # Check if the date is in the future
-            if start_date.date() > today:
-                print("The application cannot see into the future.")
-                confirm = (
-                    input("Would you like to query today's date instead? (yes/no): ")
-                    .strip()
-                    .lower()
-                )
-                if confirm == "yes":
-                    start_date = datetime.now()
-                else:
-                    print("Exiting.")
-                    sys.exit()
-
-            end_date = start_date
-
-    except ValueError as e:
-        print(f"Invalid date format: {e}. Please try again.")
-        return None, None
-
-    return start_date.date(), end_date.date()
 
 
 # Define a function to retrieve the SKY for each delegate by date.
