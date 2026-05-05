@@ -12,8 +12,8 @@ __pycache__/
 .env.development.local
 .env.test.local
 .env.production.local
-/venv
-.venv
+venv/
+.venv/
 
 # Dependency directories
 /node_modules/
@@ -24,6 +24,16 @@ __pycache__/
 /dist
 /tmp
 /out
+
+# Generated outputs (scripts write CSVs here at runtime)
+output_data/*.csv
+
+# Python tooling caches
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
 
 # Local development
 .vscode/
