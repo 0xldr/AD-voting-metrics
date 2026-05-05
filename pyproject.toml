@@ -28,7 +28,11 @@ select = [
     "W",    # pycodestyle warnings
     "I",    # isort
     "UP",   # pyupgrade
-    "B",    # bugbear
+    "B",    # bugbear,
+    "SIM",  # simplifications
+    "RET",
+    "PTH",
+    "PIE",
 ]
 ignore = [
     "E501",  # line too long — too noisy for legacy code, will tighten later
