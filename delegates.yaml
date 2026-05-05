@@ -1,0 +1,89 @@
+# Aligned Delegate roster — source of truth for who is or has been an AD.
+#
+# Every delegate ever in the program has an entry here. Currently-active
+# delegates have endDate: null. Exited delegates have endDate set to their
+# inclusive last day (e.g., endDate: 2026-04-15 means April 15 was their
+# last active day).
+#
+# When a new delegate is aligned: add an entry with their startDate (the date
+# AD compensation begins, not the contract creation date).
+# When a delegate exits: set their endDate.
+#
+# The script verifies this YAML against the vote.sky.money API on each run
+# and warns about mismatches (a YAML entry with endDate: null that the API
+# doesn't return as currently-aligned probably means the operator forgot to
+# set endDate after an exit).
+#
+# Schema validation is in src/ad_voting_metrics/roster.py.
+# Address regex: ^0x[0-9a-f]{40}$ (lowercase only).
+
+delegates:
+  - name: BONAPUBLICA
+    voteDelegateAddress: "0xfc48fbca739079aab08216c4d5e506b96593753d"
+    startDate: 2023-07-04
+    endDate: null
+
+  - name: BLUE
+    voteDelegateAddress: "0x173a1c04b79ed9266721c1154daa29addc0b9558"
+    startDate: 2023-09-28
+    endDate: null
+
+  - name: PBG
+    voteDelegateAddress: "0x555230eca835a808518ec3ea3082f05502bab850"
+    startDate: 2023-04-09
+    endDate: null
+
+  - name: WBC
+    voteDelegateAddress: "0x4bed44a9839b8778f69bb6a6d9f843414377ae90"
+    startDate: 2023-07-10
+    endDate: null
+
+  - name: Cloaky
+    voteDelegateAddress: "0x0f23de72e1581857eacd6308aebb69cf3a49cc86"
+    startDate: 2023-06-06
+    endDate: null
+
+  - name: AegisD
+    voteDelegateAddress: "0xd260762e442ea1893e5ed5e7d28984e19aafbf5e"
+    startDate: 2025-03-04
+    endDate: null
+
+  - name: Excel
+    voteDelegateAddress: "0xead02d18529c10eedd995f760fdf5e380ddf3da6"
+    startDate: 2025-04-04
+    endDate: null
+
+  - name: Tango
+    voteDelegateAddress: "0x550e5ec00b9d26a3517ce772ddfe73e8ed1672ad"
+    startDate: 2025-05-01
+    endDate: null
+
+  - name: Max Staking Yield
+    voteDelegateAddress: "0xff7615e05ec1c8d5ded24ab50bf74432666bee2f"
+    startDate: 2025-05-22
+    endDate: null
+
+  - name: Sky Staking
+    voteDelegateAddress: "0xe01684b17df0abbdaf97839277b194be4e1a7e79"
+    startDate: 2025-05-22
+    endDate: 2026-01-27
+
+  - name: Kuzmich
+    voteDelegateAddress: "0x2c89024c13a80bc1b662a3db990524652c15221c"
+    startDate: 2025-07-01
+    endDate: null
+  
+  - name: OPEX
+    voteDelegateAddress: "0x16A5a76904140e01F31C7e7ABD9fB81988469bA4"
+    startDate: 2026-01-21
+    endDate: null
+  
+  - name: AxisLegati
+    voteDelegateAddress: "0x7bc5a420b6524Fa925F1321A01825438369E3c2e"
+    startDate: 2026-02-01
+    endDate: null
+
+  - name: Brendan Navigator
+    voteDelegateAddress: "0x8a8D131502bb4868A0777bEf604547A8316a8f11"
+    startDate: 2026-03-06
+    endDate: null
