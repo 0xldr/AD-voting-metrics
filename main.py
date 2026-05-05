@@ -1,5 +1,7 @@
 import os
+
 import pandas as pd
+
 import sky_dao as sky
 
 # Get the current directory
@@ -20,12 +22,12 @@ while True:
 
     # Prompt user input for query date
     query_input = input("\nEnter the date to query (YYYY-MM-DD), or a range (YYYY-MM-DD to YYYY-MM-DD):")
-    
+
     # Generate dates from user input
     start_date, end_date = sky.generate_dates(query_input)
 
     # Check if valid dates were entered
-    if start_date is None and end_date is None: 
+    if start_date is None and end_date is None:
         continue
 
     # Get delegate list and SKY ranking
@@ -39,7 +41,7 @@ while True:
     # Sort DataFrames by date and delegated SKY
     df_sky = df_sky.sort_values(by=['date', 'sky', 'contract'], ascending=False)
     df_ranking = df_ranking.sort_values(by=['Date', 'Total Delegation'], ascending=False)
-    
+
     # Calculate and assign ranks to delegates
     current_rank = 1
     prev_date = None
@@ -51,7 +53,7 @@ while True:
             current_rank = 1
         ranks.append(current_rank)
         current_rank += 1
-        prev_date = row['Date']        
+        prev_date = row['Date']
 
     df_ranking['Rank'] = ranks
     df_ranking = df_ranking.sort_values(by=['Rank','Date'], ascending=[True, True])
@@ -69,14 +71,14 @@ while True:
     SPELL_INFO = sky.get_execute_ids(start_date, end_date)
     print('Getting VOTE FROM SPELL...')
     df = sky.get_vote_execute_ids(SPELL_INFO, df, df_sky)
-    
+
     # Save data to CSV files
     output_csv = os.path.join(script_dir, 'output_data', 'vote_participation.csv')
     df.to_csv(output_csv, index=False)
     print(f"Participation vote data saved to {output_csv}")
 
     df = sky.custom_sort(df,hardcoded_order,POLL_INFO,SPELL_INFO)
-  
+
     output_csv = os.path.join(script_dir, 'output_data', 'sky.csv')
     df_sky.to_csv(output_csv, index=False)
     print(f"SKY data by date saved to {output_csv}")
@@ -84,11 +86,11 @@ while True:
     output_csv = os.path.join(script_dir, 'output_data', 'ranking.csv')
     df_ranking.to_csv(output_csv, index=False)
     print(f"Ranking data saved to {output_csv}")
-        
+
     output_csv = os.path.join(script_dir, 'output_data', 'vote_participation_final_transposed.csv')
     df.to_csv(output_csv, header=False, index=True)
     print(f"(transposed) Participation vote data saved to {output_csv}")
- 
+
     # Ask if another query is desired
     continue_query = input("\nDo you want to query another date? (yes/no): ").strip().lower()
     if continue_query != 'yes':
