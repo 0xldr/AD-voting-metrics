@@ -6,7 +6,7 @@ from dateutil import parser
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
-from period import MonthPeriod
+from .period import MonthPeriod
 
 HEADERS = {"User-Agent": "Mozilla/5.0", "Accept": "application/json"}
 
