@@ -1,3 +1,4 @@
+import os
 import sys
 from datetime import datetime, timedelta
 
@@ -8,6 +9,23 @@ HEADERS = {"User-Agent": "Mozilla/5.0", "Accept": "application/json"}
 
 DUNE_MKR_API_URL = "https://api.dune.com/api/v1/query/3926020/results"
 DUNE_SKY_API_URL = "https://api.dune.com/api/v1/query/5261531/results"
+
+
+def _dune_headers():
+    """Build request headers for Dune API calls.
+
+    The API key is read from the DUNE_API_KEY environment variable, which should be set in a .env file. If unset,
+    raises RuntimeError with a clear message rather than letting requests fail.
+    """
+    key = os.environ.get("DUNE_API_KEY")
+    if not key:
+        raise RuntimeError(
+            "DUNE_API_KEY environment variable not set."
+            "Add it to your .env file (see .env.example) or export it in your shell."
+        )
+    return {"X-Dune-API-Key": key}
+
+
 SKY_ALL_POLLS_URL = "https://vote.sky.money/api/polling/all-polls"
 SKY_EXECUTIVE_SUPPORTERS_URL = "https://vote.sky.money/api/executive/supporters"
 SKY_POLL_ID_URL = "https://vote.sky.money/api/polling/tally"
@@ -80,7 +98,7 @@ def get_delegate_data():
 # #Define a function to retrieve the MKR for each delegate by date.
 def get_all_mkr_delegated():
     payload = {}
-    headers = {"X-Dune-API-Key": "UcQrwk9uj3RO5NaR8s6tGmW2UgxNgNtD"}
+    headers = _dune_headers()
 
     response = requests.request("GET", DUNE_MKR_API_URL, headers=headers, data=payload)
 
@@ -94,7 +112,7 @@ def get_all_mkr_delegated():
 # Define a function to retrieve the SKY for each delegate by date.
 def get_all_sky_delegated():
     payload = {}
-    headers = {"X-Dune-API-Key": "UcQrwk9uj3RO5NaR8s6tGmW2UgxNgNtD"}
+    headers = _dune_headers()
 
     response = requests.request("GET", DUNE_SKY_API_URL, headers=headers, data=payload)
 
@@ -436,9 +454,11 @@ def custom_sort(df, hardcoded_order, poll_info, spell_info):
 
     # Create a new column for sorting based on the custom_sort function
     df["SortKey"] = df["Delegate Contract"].apply(
-        lambda x: hardcoded_order.index(x.lower())
-        if x.lower() in hardcoded_order
-        else len(hardcoded_order)
+        lambda x: (
+            hardcoded_order.index(x.lower())
+            if x.lower() in hardcoded_order
+            else len(hardcoded_order)
+        )
     )
 
     # Sort the DataFrame using the SortKey column

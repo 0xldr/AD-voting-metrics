@@ -30,6 +30,19 @@ Follow these steps to set up the project:
    ```bash
    pip install -r requirements.txt
    ```
+
+## Configuration
+
+The script needs a Dune Analytics API key to fetch delegated amounts. 
+
+1. Get an API key from https://dune.com/settings/api.
+2. Copy `.env.example` to `.env`:
+
+```
+cp .env.example .env
+```
+
+3. Edit `.env` and set `DUNE_API_KEY` to your key.
    
 ## Usage
 1. Install the required dependencies from `requirements.txt`.
