@@ -5,8 +5,8 @@ from datetime import date
 
 import pytest
 
-from main import parse_month
-from period import MonthPeriod
+from ad_voting_metrics.cli import parse_month
+from ad_voting_metrics.period import MonthPeriod
 
 # ---------------------------------------------------------------------------
 # MonthPeriod construction and properties
