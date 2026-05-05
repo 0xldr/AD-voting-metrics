@@ -1,5 +1,6 @@
 import argparse
 import calendar
+import logging
 import os
 from datetime import date, datetime
 
@@ -8,6 +9,8 @@ from dateutil import parser as dateparser
 from dotenv import load_dotenv
 
 import sky_dao as sky
+
+logger = logging.getLogger(__name__)
 
 
 def parse_month(value):
@@ -65,12 +68,17 @@ def build_arg_parser():
 
 
 def main(argv=None):
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+    )
     load_dotenv()
     parser = build_arg_parser()
     args = parser.parse_args(argv)
     start_date, end_date = args.month
 
-    print(f"Querying data for {start_date.isoformat()}..{end_date.isoformat()}")
+    logger.info("Querying %s through %s", start_date.isoformat(), end_date.isoformat())
 
     script_dir = os.path.dirname(os.path.abspath(__file__))
 
@@ -81,7 +89,7 @@ def main(argv=None):
     hardcoded_order = df["Delegate Contract"].str.lower().tolist()
 
     # Get delegate list and SKY ranking
-    print("Getting RANKING...")
+    logger.info("Getting RANKING...")
     delegate_list_sky, delegate_list_rank = sky.get_delegate_list_sky(df, start_date, end_date)
 
     df_sky = pd.DataFrame(delegate_list_sky)
@@ -106,35 +114,35 @@ def main(argv=None):
     df_ranking = df_ranking.sort_values(by=["Rank", "Date"], ascending=[True, True])
 
     # Get poll IDs information and vote from polls
-    print("Getting POLL IDS...")
+    logger.info("Getting POLL IDS...")
     POLL_INFO = sky.get_poll_ids(start_date, end_date)
-    print("Getting VOTE FROM POLLS...")
+    logger.info("Getting VOTE FROM POLLS...")
     df = sky.get_vote_poll_ids(POLL_INFO, df, df_sky)
 
     # Get SPELL addresses information and vote from SPELL
-    print("Getting SPELL addresses...")
+    logger.info("Getting SPELL addresses...")
     SPELL_INFO = sky.get_execute_ids(start_date, end_date)
-    print("Getting VOTE FROM SPELL...")
+    logger.info("Getting VOTE FROM SPELL...")
     df = sky.get_vote_execute_ids(SPELL_INFO, df, df_sky)
 
     # Save data to CSV files
     output_csv = os.path.join(script_dir, "output_data", "vote_participation.csv")
     df.to_csv(output_csv, index=False)
-    print(f"Participation vote data saved to {output_csv}")
+    logger.info("Participation vote data saved to %s", output_csv)
 
     df = sky.custom_sort(df, hardcoded_order, POLL_INFO, SPELL_INFO)
 
     output_csv = os.path.join(script_dir, "output_data", "sky.csv")
     df_sky.to_csv(output_csv, index=False)
-    print(f"SKY data by date saved to {output_csv}")
+    logger.info("SKY data by date saved to %s", output_csv)
 
     output_csv = os.path.join(script_dir, "output_data", "ranking.csv")
     df_ranking.to_csv(output_csv, index=False)
-    print(f"Ranking data saved to {output_csv}")
+    logger.info("Ranking data saved to %s", output_csv)
 
     output_csv = os.path.join(script_dir, "output_data", "vote_participation_final_transposed.csv")
     df.to_csv(output_csv, header=False, index=True)
-    print(f"(transposed) Participation vote data saved to {output_csv}")
+    logger.info("(transposed) Participation vote data saved to %s", output_csv)
 
 
 if __name__ == "__main__":
