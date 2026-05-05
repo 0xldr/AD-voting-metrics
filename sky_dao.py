@@ -7,6 +7,9 @@ from dateutil import parser
 
 HEADERS = {"User-Agent": "Mozilla/5.0", "Accept": "application/json"}
 
+# Timeout for all HTTP requests, as (connect_timeout, read_timeout) seconds.
+HTTP_TIMEOUT = (5, 30)
+
 DUNE_MKR_API_URL = "https://api.dune.com/api/v1/query/3926020/results"
 DUNE_SKY_API_URL = "https://api.dune.com/api/v1/query/5261531/results"
 
@@ -86,7 +89,7 @@ def generate_dates(query_input):
 # Define a function to retrieve data from each delegate.
 def get_delegate_data():
     url = "https://vote.makerdao.com/api/delegates/v1?network=mainnet&sortBy=random"
-    response = requests.get(url)
+    response = requests.get(url, timeout=HTTP_TIMEOUT)
 
     data = response.json()
 
@@ -100,7 +103,9 @@ def get_all_mkr_delegated():
     payload = {}
     headers = _dune_headers()
 
-    response = requests.request("GET", DUNE_MKR_API_URL, headers=headers, data=payload)
+    response = requests.request(
+        "GET", DUNE_MKR_API_URL, headers=headers, data=payload, timeout=HTTP_TIMEOUT
+    )
 
     data = response.json()
 
@@ -114,7 +119,9 @@ def get_all_sky_delegated():
     payload = {}
     headers = _dune_headers()
 
-    response = requests.request("GET", DUNE_SKY_API_URL, headers=headers, data=payload)
+    response = requests.request(
+        "GET", DUNE_SKY_API_URL, headers=headers, data=payload, timeout=HTTP_TIMEOUT
+    )
 
     data = response.json()
 
@@ -209,10 +216,10 @@ def get_poll_ids(start_date, end_date):
         page = page + 1
         if not start_date:
             base_url = f"{SKY_ALL_POLLS_URL}?network=mainnet&pageSize=30&page={page}&orderBy=FURTHEST_START"
-            response = requests.get(base_url, headers=HEADERS)
+            response = requests.get(base_url, headers=HEADERS, timeout=HTTP_TIMEOUT)
         else:
             base_url = f"{SKY_ALL_POLLS_URL}?network=mainnet&pageSize=30&page={page}&orderBy=FURTHEST_START&startDate={start_date.isoformat()}"
-            response = requests.get(base_url, headers=HEADERS)
+            response = requests.get(base_url, headers=HEADERS, timeout=HTTP_TIMEOUT)
 
         if response.status_code != 200:
             print(f"Error: Status code {response.status_code} for endpoint {base_url}")
@@ -249,7 +256,7 @@ def get_vote_poll_ids(poll_info, df, df_sky):
         vote_statuses = []
         # Make the API request
         base_url = f"{SKY_POLL_ID_URL}/{poll['pollId']}?network=mainnet"
-        response = requests.get(base_url, headers=HEADERS)
+        response = requests.get(base_url, headers=HEADERS, timeout=HTTP_TIMEOUT)
 
         if response.status_code != 200:
             print(f"Error: Status code {response.status_code} for endpoint {base_url}")
@@ -301,7 +308,7 @@ def get_execute_ids(start_date, end_date):
     limit = 100
     while start < 10000000:
         base_url = f"{SKY_EXECUTIVE_URL}?start={start}&limit={limit}"
-        response = requests.get(base_url, headers=HEADERS)
+        response = requests.get(base_url, headers=HEADERS, timeout=HTTP_TIMEOUT)
 
         if response.status_code != 200:
             print(f"Error: Status code {response.status_code} for endpoint {base_url}")
@@ -335,7 +342,7 @@ def get_execute_ids(start_date, end_date):
 def get_vote_execute_ids(spell_info, df, df_sky):
     base_url = f"{SKY_EXECUTIVE_SUPPORTERS_URL}?network=mainnet"
     # Make the API request
-    response = requests.get(base_url, headers=HEADERS)
+    response = requests.get(base_url, headers=HEADERS, timeout=HTTP_TIMEOUT)
     if response.status_code != 200:
         print(f"Error: Status code {response.status_code} for endpoint {base_url}")
         sys.exit(1)
