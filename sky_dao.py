@@ -6,6 +6,8 @@ from dateutil import parser
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
+from period import MonthPeriod
+
 HEADERS = {"User-Agent": "Mozilla/5.0", "Accept": "application/json"}
 
 # Timeout for all HTTP requests, as (connect_timeout, read_timeout) seconds.
@@ -104,14 +106,12 @@ def get_sky_delegated(data, contract_address, date):
 
 
 # Define a function to retrieve the total SKY held by each delegate by date.
-def get_delegate_list_sky(df, start_date, end_date):
+def get_delegate_list_sky(df, period: MonthPeriod):
 
     all_sky_delegated = get_all_sky_delegated()
 
-    start_date_initial = start_date
     delegate_data_sky = {"contract": {}, "name": {}}
     for _index, row in df.iterrows():
-        start_date = start_date_initial
         delegate_name = row["Delegate Name"].strip().lower()
         delegate_contract = row["Delegate Contract"]
         if delegate_name not in delegate_data_sky["name"]:
@@ -120,26 +120,26 @@ def get_delegate_list_sky(df, start_date, end_date):
         if delegate_contract not in delegate_data_sky["contract"]:
             delegate_data_sky["contract"][delegate_contract] = {}
 
-        while start_date <= end_date:
-            if start_date.strftime("%Y-%m-%d") not in delegate_data_sky["name"][delegate_name]:
-                delegate_data_sky["name"][delegate_name][start_date.strftime("%Y-%m-%d")] = {
+        current_date = period.start
+        while current_date <= period.end:
+            if current_date.strftime("%Y-%m-%d") not in delegate_data_sky["name"][delegate_name]:
+                delegate_data_sky["name"][delegate_name][current_date.strftime("%Y-%m-%d")] = {
                     "sky": 0
                 }
             if (
-                start_date.strftime("%Y-%m-%d")
+                current_date.strftime("%Y-%m-%d")
                 not in delegate_data_sky["contract"][delegate_contract]
             ):
-                delegate_data_sky["contract"][delegate_contract][start_date] = {"sky": 0}
+                delegate_data_sky["contract"][delegate_contract][current_date] = {"sky": 0}
 
-            sky_delegated = get_sky_delegated(all_sky_delegated, delegate_contract, start_date)
+            sky_delegated = get_sky_delegated(all_sky_delegated, delegate_contract, current_date)
 
-            delegate_data_sky["name"][delegate_name][start_date.strftime("%Y-%m-%d")]["sky"] += (
+            delegate_data_sky["name"][delegate_name][current_date.strftime("%Y-%m-%d")]["sky"] += (
                 sky_delegated
             )
+            delegate_data_sky["contract"][delegate_contract][current_date]["sky"] = sky_delegated
 
-            delegate_data_sky["contract"][delegate_contract][start_date]["sky"] = sky_delegated
-
-            start_date += timedelta(days=1)
+            current_date += timedelta(days=1)
 
     delegate_list_rank = []
     for delegate_name, data in delegate_data_sky["name"].items():
@@ -163,18 +163,14 @@ def get_delegate_list_sky(df, start_date, end_date):
 
 
 # define a function to get the polls IDs for Data.
-def get_poll_ids(start_date, end_date):
+def get_poll_ids(period: MonthPeriod):
     poll_info = []
     page = 0
     all_found = False
     while all_found is False:
         page = page + 1
-        if not start_date:
-            base_url = f"{SKY_ALL_POLLS_URL}?network=mainnet&pageSize=30&page={page}&orderBy=FURTHEST_START"
-            response = _session().get(base_url, headers=HEADERS, timeout=HTTP_TIMEOUT)
-        else:
-            base_url = f"{SKY_ALL_POLLS_URL}?network=mainnet&pageSize=30&page={page}&orderBy=FURTHEST_START&startDate={start_date.isoformat()}"
-            response = _session().get(base_url, headers=HEADERS, timeout=HTTP_TIMEOUT)
+        base_url = f"{SKY_ALL_POLLS_URL}?network=mainnet&pageSize=30&page={page}&orderBy=FURTHEST_START&startDate={period.start.isoformat()}"
+        response = _session().get(base_url, headers=HEADERS, timeout=HTTP_TIMEOUT)
 
         response.raise_for_status()
         data = response.json()
@@ -190,7 +186,7 @@ def get_poll_ids(start_date, end_date):
         for poll in polls:
             start_date_poll = parser.parse(poll["startDate"]).date()
 
-            if start_date_poll >= start_date and start_date_poll <= end_date:
+            if period.start <= start_date_poll <= period.end:
                 poll_info.append(poll)
 
         if paginationInfo["numPages"] == 1:
@@ -253,7 +249,7 @@ def get_vote_poll_ids(poll_info, df, df_sky):
 
 
 # define a function to get the executes IDs for Data.
-def get_execute_ids(start_date, end_date):
+def get_execute_ids(period: MonthPeriod):
     spell_info = []
     start = 0
     limit = 100
@@ -273,7 +269,7 @@ def get_execute_ids(start_date, end_date):
                 execute["date"].replace("(Coordinated Universal Time)", "")
             ).date()
 
-            if date_execute >= start_date and date_execute <= end_date:
+            if period.start <= date_execute <= period.end:
                 spell_info.append(
                     {
                         "address": execute["address"].lower(),

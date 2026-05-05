@@ -66,9 +66,10 @@ def main(argv=None):
     parser = build_arg_parser()
     args = parser.parse_args(argv)
     period = args.month
-    start_date, end_date = period.start, period.end
 
-    logger.info("Querying %s (%s through %s)", period, start_date.isoformat(), end_date.isoformat())
+    logger.info(
+        "Querying %s (%s through %s)", period, period.start.isoformat(), period.end.isoformat()
+    )
 
     script_dir = os.path.dirname(os.path.abspath(__file__))
 
@@ -80,7 +81,7 @@ def main(argv=None):
 
     # Get delegate list and SKY ranking
     logger.info("Getting RANKING...")
-    delegate_list_sky, delegate_list_rank = sky.get_delegate_list_sky(df, start_date, end_date)
+    delegate_list_sky, delegate_list_rank = sky.get_delegate_list_sky(df, period)
 
     df_sky = pd.DataFrame(delegate_list_sky)
     df_ranking = pd.DataFrame(delegate_list_rank)
@@ -105,13 +106,13 @@ def main(argv=None):
 
     # Get poll IDs information and vote from polls
     logger.info("Getting POLL IDS...")
-    POLL_INFO = sky.get_poll_ids(start_date, end_date)
+    POLL_INFO = sky.get_poll_ids(period)
     logger.info("Getting VOTE FROM POLLS...")
     df = sky.get_vote_poll_ids(POLL_INFO, df, df_sky)
 
     # Get SPELL addresses information and vote from SPELL
     logger.info("Getting SPELL addresses...")
-    SPELL_INFO = sky.get_execute_ids(start_date, end_date)
+    SPELL_INFO = sky.get_execute_ids(period)
     logger.info("Getting VOTE FROM SPELL...")
     df = sky.get_vote_execute_ids(SPELL_INFO, df, df_sky)
 
