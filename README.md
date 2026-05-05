@@ -14,21 +14,28 @@ This repository contains a Python script to track the states of votes cast in po
 - Exports two CSV files (one of them transposed for usability) with the status of the votes corresponding to each poll and spell.
 
 ## Requirements
-- Python 3.x (versions prior to 3.12) and dependencies listed in `requirements.txt`.
+
+- Python 3.10 or later. Dependencies are declared in `pyproject.toml` and installed automatically via `pip install -e .`.
 
 ## Installation
+
 Follow these steps to set up the project:
+
 1. Clone the repository:
+
    ```bash
    git clone 
    ```
-1. Navigate to the cloned directory:
+
+2. Navigate to the cloned directory:
+
    ```bash
    cd AD-voting-metrics
    ```
-1. Install the required dependencies and the package itself:
+
+3. Install the required dependencies and the package itself:
+
    ```bash
-   pip install -r requirements.txt
    pip install -e .
    ```
 
