@@ -151,7 +151,7 @@ def test_boundary_exited_on_first_day_of_period():
 
 def test_boundary_aligned_one_day_after_period():
     # Aligned the day after, inactive
-    d = _delegate(start=date(2025, 5, 1), end=date(2026, 6, 1))
+    d = _delegate(start=date(2026, 5, 1), end=date(2026, 6, 1))
     assert not d.is_active_during(date(2026, 4, 1), date(2026, 4, 30))
 
 
@@ -193,7 +193,7 @@ def test_load_delegates_happy_path(tmp_path):
     yaml_text = """
     delegates:
       - name: Alice
-        voteDelegateAddress: 0x1234567890abcdef1234567890abcdef123
+        voteDelegateAddress: "0x1234567890abcdef1234567890abcdef12348899"
         startDate: 2025-01-01
         endDate: null
         """
@@ -208,11 +208,11 @@ def test_load_delegates_with_exited_delegate(tmp_path):
     yaml_text = """
     delegates:
       - name: Alice
-        voteDelegateAddress: 0x1234567890abcdef1234567890abcdef123
+        voteDelegateAddress: "0x1234567890abcdef1234567890abcdef12348899"
         startDate: 2025-01-01
         endDate: null
       - name: Bob
-        voteDelegateAddress: 0xabcdef1234567890abcdef1234567890abcdef12
+        voteDelegateAddress: "0xabcdef1234567890abcdef1234567890abcdef12"
         startDate: 2024-01-01
         endDate: 2024-06-30
         """
