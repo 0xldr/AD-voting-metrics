@@ -48,7 +48,6 @@ def _session():
     return _session_instance
 
 
-DUNE_MKR_API_URL = "https://api.dune.com/api/v1/query/3926020/results"
 DUNE_SKY_API_URL = "https://api.dune.com/api/v1/query/5261531/results"
 
 
@@ -124,34 +123,6 @@ def generate_dates(query_input):
     return start_date.date(), end_date.date()
 
 
-# Define a function to retrieve data from each delegate.
-def get_delegate_data():
-    url = "https://vote.makerdao.com/api/delegates/v1?network=mainnet&sortBy=random"
-    response = _session().get(url, timeout=HTTP_TIMEOUT)
-
-    data = response.json()
-
-    delegate_list = data.get("delegates", [])
-
-    return delegate_list
-
-
-# #Define a function to retrieve the MKR for each delegate by date.
-def get_all_mkr_delegated():
-    payload = {}
-    headers = _dune_headers()
-
-    response = _session().request(
-        "GET", DUNE_MKR_API_URL, headers=headers, data=payload, timeout=HTTP_TIMEOUT
-    )
-
-    data = response.json()
-
-    delegate_list = data.get("result", {}).get("rows", [])
-
-    return delegate_list
-
-
 # Define a function to retrieve the SKY for each delegate by date.
 def get_all_sky_delegated():
     payload = {}
@@ -185,11 +156,9 @@ def get_sky_delegated(data, contract_address, date):
 
 
 # Define a function to retrieve the total SKY held by each delegate by date.
-def get_delegate_list_sky(df, start_date, end_date, token="sky"):
-    if token == "sky":
-        all_sky_delegated = get_all_sky_delegated()
-    else:
-        all_sky_delegated = get_all_mkr_delegated()
+def get_delegate_list_sky(df, start_date, end_date):
+
+    all_sky_delegated = get_all_sky_delegated()
 
     start_date_initial = start_date
     delegate_data_sky = {"contract": {}, "name": {}}
