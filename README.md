@@ -3,9 +3,11 @@
 This repository contains a Python script to track the states of votes cast in polls and spells at SKY.
 
 ## Important Note
+
 - The script is not compatible with Python 3.12 due to the deprecation of certain datetime functions used in the code.
 
 ## Current Functionality
+
 - Collects information of delegates from vote.sky.money and Dune.
 - Retrieves information of polls corresponding to the entered dates from vote.sky.money.
 - Retrieves information of spells corresponding to the entered dates from vote.sky.money.
@@ -51,7 +53,20 @@ cp .env.example .env
 ```
 
 3. Edit `.env` and set `DUNE_API_KEY` to your key.
-   
+
+## Maintaining the delegate roster
+
+The list of Aligned Delegates lives in `delegates.yaml` at the repo root. This is the source of truth for the script which reads it and verifies against the vote.sky.money API.
+
+Each entry has:
+
+- `name`: display name of the delegate
+- `voteDelegateAddress`: the on-chain voteDelegate contract (lowercase 0x...)
+- `startDate`: the date that the delegate was recognized as aligned. This is not necessarily the same date the contract was deployed.
+- `endDate`: optional. The inclusive last day that they were an AD. `null` for currently active delegates.
+
+When a new delegate is recognized, add an entry with their `startDate` and `endDate: null`. When a delegate exits, set their `endDate` to the inclusive last day they were active. The script will warn if the YAML drifts from the API state (e.g., a delegate marked active in YAML who no longer appears in the API as currently-aligned).
+
 ## Usage
 
 Run the script for a specific month:

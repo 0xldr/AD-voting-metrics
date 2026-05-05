@@ -43,6 +43,8 @@ htmlcov/
 *.sublime-workspace
 *.sublime-project
 *.history/
+*.egg-info/
+*.egg
 
 # Heroku specific
 /heroku_output/
