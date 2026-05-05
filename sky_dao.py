@@ -228,9 +228,7 @@ def get_poll_ids(start_date, end_date):
             base_url = f"{SKY_ALL_POLLS_URL}?network=mainnet&pageSize=30&page={page}&orderBy=FURTHEST_START&startDate={start_date.isoformat()}"
             response = _session().get(base_url, headers=HEADERS, timeout=HTTP_TIMEOUT)
 
-        if response.status_code != 200:
-            print(f"Error: Status code {response.status_code} for endpoint {base_url}")
-            sys.exit(1)
+        response.raise_for_status()
         data = response.json()
         # Make the API request
         paginationInfo = data.get("paginationInfo", [])
@@ -265,9 +263,7 @@ def get_vote_poll_ids(poll_info, df, df_sky):
         base_url = f"{SKY_POLL_ID_URL}/{poll['pollId']}?network=mainnet"
         response = _session().get(base_url, headers=HEADERS, timeout=HTTP_TIMEOUT)
 
-        if response.status_code != 200:
-            print(f"Error: Status code {response.status_code} for endpoint {base_url}")
-            sys.exit(1)
+        response.raise_for_status()
         data = response.json()
         for _index, row in df.iterrows():
             address = row["Delegate Contract"]
@@ -317,9 +313,7 @@ def get_execute_ids(start_date, end_date):
         base_url = f"{SKY_EXECUTIVE_URL}?start={start}&limit={limit}"
         response = _session().get(base_url, headers=HEADERS, timeout=HTTP_TIMEOUT)
 
-        if response.status_code != 200:
-            print(f"Error: Status code {response.status_code} for endpoint {base_url}")
-            sys.exit(1)
+        response.raise_for_status()
 
         data = response.json()
 
@@ -350,10 +344,7 @@ def get_vote_execute_ids(spell_info, df, df_sky):
     base_url = f"{SKY_EXECUTIVE_SUPPORTERS_URL}?network=mainnet"
     # Make the API request
     response = _session().get(base_url, headers=HEADERS, timeout=HTTP_TIMEOUT)
-    if response.status_code != 200:
-        print(f"Error: Status code {response.status_code} for endpoint {base_url}")
-        sys.exit(1)
-
+    response.raise_for_status()
     data = response.json()
 
     for spell in spell_info:
