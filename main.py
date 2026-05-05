@@ -1,49 +1,38 @@
 import argparse
-import calendar
 import logging
 import os
-from datetime import date, datetime
+from datetime import date
 
 import pandas as pd
-from dateutil import parser as dateparser
 from dotenv import load_dotenv
 
 import sky_dao as sky
+from period import MonthPeriod
 
 logger = logging.getLogger(__name__)
 
 
 def parse_month(value):
-    """Parse a --month argument into (start_date, end_date) for that month.
+    """argparse type callback: parse --month value into a MonthPeriod.
 
-    Accepts human-readable strings like "April 2026" and ISO-style
-    "2026-04". Returns the first and last day of the month as date objects.
-
-    Raises argparse.ArgumentTypeError on bad input or future months.
+    Wraps MonthPeriod.from_string() and adds CLI-specific concerns:
+      - Errors are surfaced as argparse.ArgumentTypeErrors so argparse handles
+      them with proper messages and exit code 2.
+      - Future months are rejected here.
     """
-    # dateutil fills unspecified components from the default. Without a
-    # default, it uses today's date, which means "April 2026" on May 5 parses
-    # to April 5, 2026. Use a fixed sentinel and only trust the year/month.
-    sentinel = datetime(2000, 1, 1)
     try:
-        parsed = dateparser.parse(value, default=sentinel)
-    except (ValueError, TypeError, OverflowError) as e:
-        raise argparse.ArgumentTypeError(
-            f"could not parse {value!r} as a month. Try formats like 'April 2026' or '2026-04'."
-        ) from e
-
-    year, month = parsed.year, parsed.month
-    start = date(year, month, 1)
-    last_day = calendar.monthrange(year, month)[1]
-    end = date(year, month, last_day)
+        period = MonthPeriod.from_string(value)
+    except ValueError as e:
+        raise argparse.ArgumentTypeError(str(e)) from e
 
     today = date.today()
-    if start > today:
+    if period.start > today:
         raise argparse.ArgumentTypeError(
-            f"{value!r} resolves to {start.isoformat()}..{end.isoformat()}, "
+            f"{value!r} resolves to {period.start.isoformat()}..{period.end.isoformat()}, "
             "which is entirely in the future."
         )
-    return start, end
+
+    return period
 
 
 def build_arg_parser():
@@ -76,9 +65,10 @@ def main(argv=None):
     load_dotenv()
     parser = build_arg_parser()
     args = parser.parse_args(argv)
-    start_date, end_date = args.month
+    period = args.month
+    start_date, end_date = period.start, period.end
 
-    logger.info("Querying %s through %s", start_date.isoformat(), end_date.isoformat())
+    logger.info("Querying %s (%s through %s)", period, start_date.isoformat(), end_date.isoformat())
 
     script_dir = os.path.dirname(os.path.abspath(__file__))
 
