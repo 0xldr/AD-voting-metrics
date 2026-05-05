@@ -30,4 +30,4 @@ jobs:
 
             - name: Run tests
               # Exit code 5 means "no tests collected", which is fine until tests exist
-              run: pytest --tb=short || [ $? -eq 5 ]
+              run: pytest --tb=short
