@@ -74,16 +74,16 @@ delegates:
     endDate: null
   
   - name: OPEX
-    voteDelegateAddress: "0x16A5a76904140e01F31C7e7ABD9fB81988469bA4"
+    voteDelegateAddress: "0x16a5a76904140e01f31c7e7abd9fb81988469ba4"
     startDate: 2026-01-21
     endDate: null
   
   - name: AxisLegati
-    voteDelegateAddress: "0x7bc5a420b6524Fa925F1321A01825438369E3c2e"
+    voteDelegateAddress: "0x7bc5a420b6524fa925f1321a01825438369e3c2e"
     startDate: 2026-02-01
     endDate: null
 
   - name: Brendan Navigator
-    voteDelegateAddress: "0x8a8D131502bb4868A0777bEf604547A8316a8f11"
+    voteDelegateAddress: "0x8a8d131502bb4868a0777bef604547a8316a8f11"
     startDate: 2026-03-06
     endDate: null
