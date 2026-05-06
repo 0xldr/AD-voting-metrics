@@ -2,13 +2,10 @@
 
 This repository contains a Python script to track the states of votes cast in polls and spells at SKY.
 
-## Important Note
-
-- The script is not compatible with Python 3.12 due to the deprecation of certain datetime functions used in the code.
-
 ## Current Functionality
 
-- Collects information of delegates from vote.sky.money and Dune.
+- Reads the Aligned Delegate roster from `delegates.yaml` and verifies it against vote.sky.money.
+- Fetches SKY delegation data per delegate per date from a Dune Analytics query.
 - Retrieves information of polls corresponding to the entered dates from vote.sky.money.
 - Retrieves information of spells corresponding to the entered dates from vote.sky.money.
 - Exports a CSV file with the SKY holdings of each delegate per date.
@@ -23,19 +20,14 @@ This repository contains a Python script to track the states of votes cast in po
 
 Follow these steps to set up the project:
 
-1. Clone the repository:
+1. Clone the repository and navigate to it:
 
    ```bash
-   git clone 
-   ```
-
-2. Navigate to the cloned directory:
-
-   ```bash
+   git clone <repo-url>
    cd AD-voting-metrics
    ```
 
-3. Install the required dependencies and the package itself:
+2. Install the package and its dependencies:
 
    ```bash
    pip install -e .
@@ -72,12 +64,7 @@ When a new delegate is recognized, add an entry with their `startDate` and `endD
 Run the script for a specific month:
 
 ```bash
-+python -m ad_voting_metrics --month "April 2026"
+python -m ad_voting_metrics --month "April 2026"
 ```
 
 Output CSVs are written to `output_data/`.
-
-## To Dos
-
-- [ ] General code clean up.
-- [ ] Add more information about the polls and spells to the CSV file.
