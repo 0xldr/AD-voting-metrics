@@ -448,11 +448,11 @@ def test_build_roster_for_period_filters_to_active(tmp_path):
         _api_entry("AlignedAfter", "0x173a1c04b79ed9266721c1154daa29addc0b9558"),
     ]
 
-    delegates, _ = build_roster_for_period(p, period, fake_fetcher)
+    result = build_roster_for_period(p, period, fake_fetcher)
 
     # Only Active is in the period (ExitedBefore exited Dec 2025; AlignedAfter starts 2027)
-    assert len(delegates) == 1
-    assert delegates[0].name == "Active"
+    assert len(result.active_delegates) == 1
+    assert result.active_delegates[0].name == "Active"
 
 
 def test_build_roster_for_period_propagates_warnings(tmp_path):
@@ -469,9 +469,9 @@ def test_build_roster_for_period_propagates_warnings(tmp_path):
     # API doesn't return Active — should warn
     fake_fetcher = list
 
-    _, warnings = build_roster_for_period(p, MonthPeriod(2026, 4), fake_fetcher)
-    assert len(warnings) == 1
-    assert "Active" in warnings[0]
+    result = build_roster_for_period(p, MonthPeriod(2026, 4), fake_fetcher)
+    assert len(result.drift_warnings) == 1
+    assert "Active" in result.drift_warnings[0]
 
 
 def test_build_roster_for_period_soft_fails_on_api_error(tmp_path):
@@ -489,15 +489,43 @@ def test_build_roster_for_period_soft_fails_on_api_error(tmp_path):
     def failing_fetcher():
         raise ConnectionError("network is down")
 
-    delegates, warnings = build_roster_for_period(p, MonthPeriod(2026, 4), failing_fetcher)
+    result = build_roster_for_period(p, MonthPeriod(2026, 4), failing_fetcher)
 
     # The roster still loads from YAML — soft fail
-    assert len(delegates) == 1
-    assert delegates[0].name == "Active"
+    assert len(result.active_delegates) == 1
+    assert result.active_delegates[0].name == "Active"
     # One warning explaining the skipped check
-    assert len(warnings) == 1
-    assert "API drift check skipped" in warnings[0]
-    assert "network is down" in warnings[0]
+    assert len(result.drift_warnings) == 1
+    assert "API drift check skipped" in result.drift_warnings[0]
+    assert "network is down" in result.drift_warnings[0]
+    # api_fetch_succeeded reflects the failure
+    assert result.api_fetch_succeeded is False
+    assert result.api_delegate_count == 0
+
+
+def test_build_roster_for_period_records_api_metadata(tmp_path):
+    """RosterResult exposes the API count and success flag for the reconciliation log."""
+    yaml_text = """
+    delegates:
+      - name: Active
+        voteDelegateAddress: "0xfc48fbca739079aab08216c4d5e506b96593753d"
+        startDate: 2024-01-01
+        endDate: null
+    """
+    p = tmp_path / "delegates.yaml"
+    p.write_text(yaml_text)
+
+    fake_fetcher = lambda: [  # noqa: E731
+        _api_entry("Active", "0xfc48fbca739079aab08216c4d5e506b96593753d"),
+        _api_entry("Other", "0x0f23de72e1581857eacd6308aebb69cf3a49cc86"),
+    ]
+
+    result = build_roster_for_period(p, MonthPeriod(2026, 4), fake_fetcher)
+
+    assert result.api_fetch_succeeded is True
+    assert result.api_delegate_count == 2  # the API returned 2 entries
+    # yaml_config exposed for downstream callers (reconciliation log)
+    assert len(result.yaml_config.delegates) == 1
 
 
 # ---------------------------------------------------------------------------
