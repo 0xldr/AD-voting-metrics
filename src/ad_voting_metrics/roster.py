@@ -12,18 +12,24 @@ Each entry has:
 - endDate: optional. If set, the inclusive last day they were an AD;
   endDate of 2026-04-15 means they were active on April 15.
 
-Drift detection (handled in the roster module, not here): every entry
-with endDate=None should appear in the API's currently-aligned response;
-every API-returned aligned delegate should have a matching entry with
-endDate=None. Mismatches are warnings — typically signalling that the
-YAML needs updating after a new alignment or an exit.
+Drift detection: every YAML entry with endDate=None should appear in the API's
+currently-aligned response; every API-returned AD should have a matching entry
+with endDate=None. Mismatches produce warnings - typically that the YAML needs
+updating after a new alignment or an exit.
 """
 
+import logging
+from collections.abc import Callable
 from datetime import date
 from pathlib import Path
 
+import pandas as pd
 import yaml
 from pydantic import BaseModel, Field, field_validator, model_validator
+
+from .period import MonthPeriod
+
+logger = logging.getLogger(__name__)
 
 
 class Delegate(BaseModel):
@@ -89,3 +95,108 @@ def load_delegates(path: Path) -> DelegatesConfig:
     if raw is None:
         raise ValueError(f"{path} is empty or contains only YAML null")
     return DelegatesConfig.model_validate(raw)
+
+
+def merge_with_api(
+    yaml_config: DelegatesConfig,
+    api_response: list[dict],
+) -> tuple[list["Delegate"], list[str]]:
+    """Verify the YAML roster against the API response.
+
+    Returns the YAML's delegates as the canonical roster (the API
+    does not add anyone - the YAML is source of truth) plus a list
+    of human-readable warning strings for any drift detected.
+
+    Drift rules:
+    - YAML active (endDate=None), API absent -> warn (operator likely
+    forgot to set endDate after an exit)
+    - YAML exited (endDate set), API absent -> expected, no warn
+    - YAML exited, API present -> warn (date mismatch; either YAML
+    or API is wrong about the exit)
+    - API present, not in YAML -> warn (new aligned delegate not yet
+    added to YAML)
+
+    Comparisons are by voteDelegateAddress (lowercased). Names that differ
+    but addresses match are not flagged.
+    """
+    warnings: list[str] = []
+
+    yaml_by_address: dict[str, Delegate] = {
+        d.voteDelegateAddress.lower(): d for d in yaml_config.delegates
+    }
+    api_by_address: dict[str, dict] = {
+        entry["voteDelegateAddress"].lower(): entry for entry in api_response
+    }
+
+    for addr, delegate in yaml_by_address.items():
+        in_api = addr in api_by_address
+        if delegate.endDate is None and not in_api:
+            warnings.append(
+                f"{delegate.name} ({addr}) is marked active in YAML "
+                f"(endDate=null) but does not appear in the API as currently "
+                f"aligned. Did they exit? Update endDate in delegates.yaml"
+            )
+        elif delegate.endDate is not None and in_api:
+            warnings.append(
+                f"{delegate.name} ({addr}) is marked exited in YAML "
+                f"(endDate={delegate.endDate}) but the API still shows them "
+                f"as currently aligned. Date mismatch - verify which is correct."
+            )
+
+    for addr in api_by_address:
+        if addr not in yaml_by_address:
+            api_name = api_by_address[addr].get("name", "?")
+            warnings.append(
+                f"{api_name} ({addr}) appears in the API as currently "
+                "aligned but is not in delegates.yaml. Add an entry."
+            )
+
+    return list(yaml_config.delegates), warnings
+
+
+def build_roster_for_period(
+    yaml_path: Path,
+    period: MonthPeriod,
+    api_fetcher: Callable[[], list[dict]],
+) -> tuple[list["Delegate"], list[str]]:
+    """Load YAML, fetch API, run drift detection, filter to active-during-period.
+
+    The api_fetcher is a callable that returns the raw API delegate list.
+
+    If the API fetch raises, drift detection is skipped and the script proceeds
+    with YAML alone. This is a deliberate soft-fail, YAML is the source of truth.
+
+    Returns (active_delegates_for_period, warnings).
+    """
+    yaml_config = load_delegates(yaml_path)
+
+    try:
+        api_response = api_fetcher()
+        _, warnings = merge_with_api(yaml_config, api_response)
+    except Exception as e:
+        warnings = [
+            f"API drift check skipped due to fetch failure: {type(e).__name__}: {e}"
+            f"Proceeding with delegates.yaml as the sole source."
+        ]
+        logger.warning("API fecth failed during drift check: %s", e)
+
+    active = [d for d in yaml_config.delegates if d.is_active_during(period.start, period.end)]
+    return active, warnings
+
+
+def to_dataframe(delegates: list["Delegate"]) -> pd.DataFrame:
+    """Build a pandas DataFrame in the shape of the sky_dao functions expect.
+
+    sky_dao reads three colums:
+    - 'Delegate Name': (str)
+    - 'Delegate Contract': (str, lowercase 0x...address)
+    - 'Start Date': (str, formatted '%Y-%m-%d - sky_dao parses it back
+    with strptime, so format matters)
+    """
+    return pd.DataFrame(
+        {
+            "Delegate Name": [d.name for d in delegates],
+            "Delegate Contract": [d.voteDelegateAddress for d in delegates],
+            "Start Date": [d.startDate.strftime("%Y-%m-%d") for d in delegates],
+        }
+    )

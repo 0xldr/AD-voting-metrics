@@ -331,15 +331,12 @@ def get_vote_execute_ids(spell_info, df, df_sky):
 # Define the custom sorting function
 def custom_sort(df, hardcoded_order, poll_info, spell_info):
     # Define your hardcoded order array
-    df = df.drop(["Start Date", "End Date", "End Reason"], axis=1)
+    # Drop the columns we received but don't need in the per-poll/spell view.
+    df = df.drop(["Start Date"], axis=1)
 
-    df.insert(
-        df.columns.get_loc("Delegate Contract") + 1,
-        "Delegate",
-        df["Delegate Name"].str.cat(df["Aligned Voter Committee"], sep="-"),
-    )
-
-    df.drop(["Delegate Name", "Aligned Voter Committee"], axis=1, inplace=True)
+    # Build the human-readable Delegate column
+    df.insert(df.columns.get_loc("Delegate Contract") + 1, "Delegate", df["Delegate Name"])
+    df.drop(["Delegate Name"], axis=1, inplace=True)
 
     # Get the names of all columns in the DataFrame
     column_names = df.columns
