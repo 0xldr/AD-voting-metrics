@@ -7,7 +7,15 @@ import pytest
 import yaml
 from pydantic import ValidationError
 
-from ad_voting_metrics.roster import Delegate, DelegatesConfig, load_delegates
+from ad_voting_metrics.period import MonthPeriod
+from ad_voting_metrics.roster import (
+    Delegate,
+    DelegatesConfig,
+    build_roster_for_period,
+    load_delegates,
+    merge_with_api,
+    to_dataframe,
+)
 
 # ---------------------------------------------------------------------------
 # Delegate construction and validation
@@ -276,3 +284,266 @@ def test_real_delegates_yaml():
         assert d.name
         assert d.voteDelegateAddress.startswith("0x")
         assert len(d.voteDelegateAddress) == 42
+
+
+# ---------------------------------------------------------------------------
+# merge_with_api — drift detection between YAML and API
+# ---------------------------------------------------------------------------
+
+
+def _api_entry(name: str, address: str) -> dict:
+    """Minimal API-shaped delegate dict."""
+    return {
+        "name": name,
+        "voteDelegateAddress": address,
+        "status": "aligned",
+    }
+
+
+def test_merge_no_drift():
+    addr = "0xfc48fbca739079aab08216c4d5e506b96593753d"
+    yaml_config = DelegatesConfig(
+        delegates=[
+            Delegate(name="Active", voteDelegateAddress=addr, startDate=date(2024, 1, 1)),
+        ]
+    )
+    api = [_api_entry("Active", addr)]
+    delegates, warnings = merge_with_api(yaml_config, api)
+    assert len(delegates) == 1
+    assert warnings == []
+
+
+def test_merge_yaml_active_api_absent_warns():
+    addr = "0xfc48fbca739079aab08216c4d5e506b96593753d"
+    yaml_config = DelegatesConfig(
+        delegates=[
+            Delegate(name="GhostlyActive", voteDelegateAddress=addr, startDate=date(2024, 1, 1)),
+        ]
+    )
+    api: list[dict] = []  # API doesn't return this delegate
+    _, warnings = merge_with_api(yaml_config, api)
+    assert len(warnings) == 1
+    assert "GhostlyActive" in warnings[0]
+    assert "active in YAML" in warnings[0]
+
+
+def test_merge_yaml_exited_api_absent_no_warn():
+    """Expected case: YAML says exited, API doesn't return them."""
+    addr = "0xfc48fbca739079aab08216c4d5e506b96593753d"
+    yaml_config = DelegatesConfig(
+        delegates=[
+            Delegate(
+                name="LegitimatelyExited",
+                voteDelegateAddress=addr,
+                startDate=date(2024, 1, 1),
+                endDate=date(2025, 6, 30),
+            ),
+        ]
+    )
+    api: list[dict] = []
+    _, warnings = merge_with_api(yaml_config, api)
+    assert warnings == []
+
+
+def test_merge_yaml_exited_api_present_warns():
+    addr = "0xfc48fbca739079aab08216c4d5e506b96593753d"
+    yaml_config = DelegatesConfig(
+        delegates=[
+            Delegate(
+                name="ExitedButReappearing",
+                voteDelegateAddress=addr,
+                startDate=date(2024, 1, 1),
+                endDate=date(2025, 6, 30),
+            ),
+        ]
+    )
+    api = [_api_entry("ExitedButReappearing", addr)]
+    _, warnings = merge_with_api(yaml_config, api)
+    assert len(warnings) == 1
+    assert "exited in YAML" in warnings[0]
+
+
+def test_merge_api_present_not_in_yaml_warns():
+    yaml_config = DelegatesConfig(delegates=[])
+    api = [_api_entry("NewlyAligned", "0x0f23de72e1581857eacd6308aebb69cf3a49cc86")]
+    _, warnings = merge_with_api(yaml_config, api)
+    assert len(warnings) == 1
+    assert "NewlyAligned" in warnings[0]
+    assert "not in delegates.yaml" in warnings[0]
+
+
+def test_merge_address_case_insensitive():
+    """API may return mixed-case addresses; comparison should still work."""
+    addr_lower = "0xfc48fbca739079aab08216c4d5e506b96593753d"
+    addr_mixed = "0xFc48fBcA739079aaB08216C4d5E506B96593753d"
+    yaml_config = DelegatesConfig(
+        delegates=[
+            Delegate(name="X", voteDelegateAddress=addr_lower, startDate=date(2024, 1, 1)),
+        ]
+    )
+    api = [_api_entry("X", addr_mixed)]
+    _, warnings = merge_with_api(yaml_config, api)
+    assert warnings == []
+
+
+def test_merge_names_differ_addresses_match_no_warn():
+    """Casing differences in names are intentional; don't flag them."""
+    addr = "0xfc48fbca739079aab08216c4d5e506b96593753d"
+    yaml_config = DelegatesConfig(
+        delegates=[
+            Delegate(name="BONAPUBLICA", voteDelegateAddress=addr, startDate=date(2024, 1, 1)),
+        ]
+    )
+    api = [_api_entry("Bonapublica", addr)]  # different casing
+    _, warnings = merge_with_api(yaml_config, api)
+    assert warnings == []
+
+
+def test_merge_returns_yaml_delegates():
+    """The roster returned is the YAML's; API doesn't add anyone."""
+    addr_in_yaml = "0xfc48fbca739079aab08216c4d5e506b96593753d"
+    addr_in_api_only = "0x0f23de72e1581857eacd6308aebb69cf3a49cc86"
+    yaml_config = DelegatesConfig(
+        delegates=[
+            Delegate(
+                name="OnlyInYaml", voteDelegateAddress=addr_in_yaml, startDate=date(2024, 1, 1)
+            ),
+        ]
+    )
+    api = [_api_entry("OnlyInApi", addr_in_api_only)]
+    delegates, _ = merge_with_api(yaml_config, api)
+    # API-only entry produces a warning but is NOT added to the returned roster
+    assert len(delegates) == 1
+    assert delegates[0].name == "OnlyInYaml"
+
+
+# ---------------------------------------------------------------------------
+# build_roster_for_period — load + merge + filter
+# ---------------------------------------------------------------------------
+
+
+def test_build_roster_for_period_filters_to_active(tmp_path):
+    """Only delegates active during the period are returned."""
+    yaml_text = """
+    delegates:
+      - name: Active
+        voteDelegateAddress: "0xfc48fbca739079aab08216c4d5e506b96593753d"
+        startDate: 2024-01-01
+        endDate: null
+      - name: ExitedBefore
+        voteDelegateAddress: "0x0f23de72e1581857eacd6308aebb69cf3a49cc86"
+        startDate: 2023-01-01
+        endDate: 2025-12-31
+      - name: AlignedAfter
+        voteDelegateAddress: "0x173a1c04b79ed9266721c1154daa29addc0b9558"
+        startDate: 2027-01-01
+        endDate: null
+    """
+    p = tmp_path / "delegates.yaml"
+    p.write_text(yaml_text)
+
+    period = MonthPeriod(2026, 4)
+    fake_fetcher = lambda: [  # noqa: E731
+        _api_entry("Active", "0xfc48fbca739079aab08216c4d5e506b96593753d"),
+        _api_entry("AlignedAfter", "0x173a1c04b79ed9266721c1154daa29addc0b9558"),
+    ]
+
+    delegates, _ = build_roster_for_period(p, period, fake_fetcher)
+
+    # Only Active is in the period (ExitedBefore exited Dec 2025; AlignedAfter starts 2027)
+    assert len(delegates) == 1
+    assert delegates[0].name == "Active"
+
+
+def test_build_roster_for_period_propagates_warnings(tmp_path):
+    yaml_text = """
+    delegates:
+      - name: Active
+        voteDelegateAddress: "0xfc48fbca739079aab08216c4d5e506b96593753d"
+        startDate: 2024-01-01
+        endDate: null
+    """
+    p = tmp_path / "delegates.yaml"
+    p.write_text(yaml_text)
+
+    # API doesn't return Active — should warn
+    fake_fetcher = list
+
+    _, warnings = build_roster_for_period(p, MonthPeriod(2026, 4), fake_fetcher)
+    assert len(warnings) == 1
+    assert "Active" in warnings[0]
+
+
+def test_build_roster_for_period_soft_fails_on_api_error(tmp_path):
+    """If the API fetch raises, drift detection is skipped with one warning."""
+    yaml_text = """
+    delegates:
+      - name: Active
+        voteDelegateAddress: "0xfc48fbca739079aab08216c4d5e506b96593753d"
+        startDate: 2024-01-01
+        endDate: null
+    """
+    p = tmp_path / "delegates.yaml"
+    p.write_text(yaml_text)
+
+    def failing_fetcher():
+        raise ConnectionError("network is down")
+
+    delegates, warnings = build_roster_for_period(p, MonthPeriod(2026, 4), failing_fetcher)
+
+    # The roster still loads from YAML — soft fail
+    assert len(delegates) == 1
+    assert delegates[0].name == "Active"
+    # One warning explaining the skipped check
+    assert len(warnings) == 1
+    assert "API drift check skipped" in warnings[0]
+    assert "network is down" in warnings[0]
+
+
+# ---------------------------------------------------------------------------
+# to_dataframe — DataFrame shape compatible with sky_dao
+# ---------------------------------------------------------------------------
+
+
+def test_to_dataframe_columns():
+    """sky_dao reads exactly Delegate Name, Delegate Contract, Start Date."""
+    delegates = [
+        Delegate(
+            name="Cloaky",
+            voteDelegateAddress="0x0f23de72e1581857eacd6308aebb69cf3a49cc86",
+            startDate=date(2023, 6, 6),
+        ),
+    ]
+    df = to_dataframe(delegates)
+    assert list(df.columns) == ["Delegate Name", "Delegate Contract", "Start Date"]
+
+
+def test_to_dataframe_start_date_is_string():
+    """sky_dao parses Start Date with strptime, so it must be a string in '%Y-%m-%d'."""
+    delegates = [
+        Delegate(
+            name="X",
+            voteDelegateAddress="0xfc48fbca739079aab08216c4d5e506b96593753d",
+            startDate=date(2024, 7, 4),
+        ),
+    ]
+    df = to_dataframe(delegates)
+    assert df.iloc[0]["Start Date"] == "2024-07-04"
+
+
+def test_to_dataframe_preserves_address_format():
+    delegates = [
+        Delegate(
+            name="X",
+            voteDelegateAddress="0xfc48fbca739079aab08216c4d5e506b96593753d",
+            startDate=date(2024, 1, 1),
+        ),
+    ]
+    df = to_dataframe(delegates)
+    assert df.iloc[0]["Delegate Contract"] == "0xfc48fbca739079aab08216c4d5e506b96593753d"
+
+
+def test_to_dataframe_empty():
+    df = to_dataframe([])
+    assert list(df.columns) == ["Delegate Name", "Delegate Contract", "Start Date"]
+    assert len(df) == 0
