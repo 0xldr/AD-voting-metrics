@@ -17,7 +17,7 @@ This repository contains a Python script to track the states of votes cast in po
 
 ## Requirements
 
-- Python 3.10 or later. Dependencies are declared in `pyproject.toml` and installed automatically via `pip install -e .`.
+- Python 3.11 or later. Dependencies are declared in `pyproject.toml` and installed automatically via `pip install -e .`.
 
 ## Installation
 
@@ -43,14 +43,14 @@ Follow these steps to set up the project:
 
 ## Configuration
 
-The script needs a Dune Analytics API key to fetch delegated amounts. 
+The script needs a Dune Analytics API key to fetch delegated amounts.
 
-1. Get an API key from https://dune.com/settings/api.
+1. Get an API key from [Dune](https://dune.com/settings/api).
 2. Copy `.env.example` to `.env`:
 
-```
-cp .env.example .env
-```
+   ```bash
+   cp .env.example .env
+   ```
 
 3. Edit `.env` and set `DUNE_API_KEY` to your key.
 
