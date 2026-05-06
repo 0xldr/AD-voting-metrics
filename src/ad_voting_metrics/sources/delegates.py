@@ -5,7 +5,7 @@ Fetches the currently aligned delegate set. Paginates via paginationInfo.hasNext
 
 import logging
 
-from ..sky_dao import HTTP_TIMEOUT, get_session
+from .http import HTTP_TIMEOUT, get_session
 
 logger = logging.getLogger(__name__)
 
@@ -32,7 +32,7 @@ def fetch_aligned_delegates() -> list[dict]:
     page = 1
 
     while page <= _MAX_PAGES:
-        params = {
+        params: dict[str, str | int] = {
             "network": "mainnet",
             "pageSize": PAGE_SIZE,
             "page": page,

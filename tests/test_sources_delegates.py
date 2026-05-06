@@ -4,7 +4,7 @@ import pytest
 import responses
 from pytest import LogCaptureFixture
 
-from ad_voting_metrics import sky_dao
+from ad_voting_metrics.sources import http as http_module
 from ad_voting_metrics.sources.delegates import DELEGATES_URL, fetch_aligned_delegates
 
 
@@ -12,13 +12,13 @@ from ad_voting_metrics.sources.delegates import DELEGATES_URL, fetch_aligned_del
 def reset_session():
     """Reset the module-cached session before each test.
 
-    sky_dao caches a Session at module level. Tests that rely
+    sources.http caches a Session at module level. Tests that rely
     on responses mocking should start with a new session so prior
     tests can't leak state through the adapter.
     """
-    sky_dao._session_instance = None
+    http_module._session_instance = None
     yield
-    sky_dao._session_instance = None
+    http_module._session_instance = None
 
 
 def _delegate_dict(name: str, address: str) -> dict:

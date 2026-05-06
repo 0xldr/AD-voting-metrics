@@ -3,60 +3,16 @@ import os
 from datetime import datetime, timedelta
 from typing import Any
 
-import requests
 from dateutil import parser
 from dune_client.client import DuneClient
 from dune_client.query import QueryBase
-from requests.adapters import HTTPAdapter
-from urllib3.util.retry import Retry
 
 from .period import MonthPeriod
+from .sources.http import HTTP_TIMEOUT, get_session
 
 logger = logging.getLogger(__name__)
 
 HEADERS = {"User-Agent": "Mozilla/5.0", "Accept": "application/json"}
-
-# Timeout for all HTTP requests, as (connect_timeout, read_timeout) seconds.
-HTTP_TIMEOUT = (5, 30)
-
-# Shared session with automatic retry on transient failures.
-# All HTTP traffic in this module goes through _session() for
-# uniform behavior.
-_RETRY_STATUSES = (429, 500, 502, 503, 504)
-_session_instance = None
-
-
-def _session():
-    """Return a module-wide requests.Session with retry and backoff logic.
-
-    Created lazily on first use. Retries transient failures (timeouts,
-    connection errors, 5xx, 429) up to 3 times with exponential backoff:
-    sleeps of 0s, 2s, 4s between retries. Persistent failures raise
-    requests.exceptions.RetryError after exhausting retries.
-
-    Only idempotent methods (GET, HEAD, etc.) are retried, which is the urllib3
-    default.
-    """
-    global _session_instance
-    if _session_instance is None:
-        retry = Retry(
-            total=3,
-            connect=3,
-            read=3,
-            backoff_factor=1,
-            status_forcelist=_RETRY_STATUSES,
-            raise_on_status=False,
-        )
-        adapter = HTTPAdapter(max_retries=retry)
-        s = requests.Session()
-        s.mount("https://", adapter)
-        s.mount("http://", adapter)
-        _session_instance = s
-    return _session_instance
-
-
-# Public alias for cross-module use.
-get_session = _session
 
 DUNE_SKY_QUERY_ID = 6604139
 SKY_ALL_POLLS_URL = "https://vote.sky.money/api/polling/all-polls"
@@ -176,7 +132,7 @@ def get_poll_ids(period: MonthPeriod):
     while all_found is False:
         page = page + 1
         base_url = f"{SKY_ALL_POLLS_URL}?network=mainnet&pageSize=30&page={page}&orderBy=FURTHEST_START&startDate={period.start.isoformat()}"
-        response = _session().get(base_url, headers=HEADERS, timeout=HTTP_TIMEOUT)
+        response = get_session().get(base_url, headers=HEADERS, timeout=HTTP_TIMEOUT)
 
         response.raise_for_status()
         data = response.json()
@@ -211,7 +167,7 @@ def get_vote_poll_ids(poll_info, df, df_sky):
         vote_statuses = []
         # Make the API request
         base_url = f"{SKY_POLL_ID_URL}/{poll['pollId']}?network=mainnet"
-        response = _session().get(base_url, headers=HEADERS, timeout=HTTP_TIMEOUT)
+        response = get_session().get(base_url, headers=HEADERS, timeout=HTTP_TIMEOUT)
 
         response.raise_for_status()
         data = response.json()
@@ -257,7 +213,7 @@ def get_execute_ids(period: MonthPeriod):
     limit = 100
     while start < 10000000:
         base_url = f"{SKY_EXECUTIVE_URL}?start={start}&limit={limit}"
-        response = _session().get(base_url, headers=HEADERS, timeout=HTTP_TIMEOUT)
+        response = get_session().get(base_url, headers=HEADERS, timeout=HTTP_TIMEOUT)
 
         response.raise_for_status()
 
@@ -289,7 +245,7 @@ def get_execute_ids(period: MonthPeriod):
 def get_vote_execute_ids(spell_info, df, df_sky):
     base_url = f"{SKY_EXECUTIVE_SUPPORTERS_URL}?network=mainnet"
     # Make the API request
-    response = _session().get(base_url, headers=HEADERS, timeout=HTTP_TIMEOUT)
+    response = get_session().get(base_url, headers=HEADERS, timeout=HTTP_TIMEOUT)
     response.raise_for_status()
     data = response.json()
 
