@@ -45,6 +45,11 @@ def fetch_aligned_delegates() -> list[dict]:
         data = response.json()
 
         page_delegates = data.get("delegates", [])
+
+        # Exit on empty page.
+        if not page_delegates:
+            break
+
         delegates.extend(page_delegates)
 
         pagination = data.get("paginationInfo", {})
