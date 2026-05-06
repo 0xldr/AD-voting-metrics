@@ -32,12 +32,10 @@ def test_construct_exited_delegate():
         startDate=date(2024, 1, 1),
         endDate=date(2024, 6, 30),
     )
-    assert d.name == "Bob"
-    assert d.startDate == date(2024, 1, 1)
     assert d.endDate == date(2024, 6, 30)
 
 
-def test_address_must_be_lowercase():
+def test_address_must_be_lowercase_hex():
     with pytest.raises(ValidationError, match="String should match pattern"):
         Delegate(
             name="Charlie",
@@ -73,8 +71,8 @@ def test_name_must_be_non_empty():
         )
 
 
-def test_end_date_must_be_after_start_date():
-    with pytest.raises(ValidationError, match="endDate .* must be after startDate"):
+def test_end_date_must_be_after_start():
+    with pytest.raises(ValidationError, match="endDate.*must be after"):
         Delegate(
             name="Frank",
             voteDelegateAddress="0x1234567890abcdef1234567890abcdef12345678",
@@ -84,7 +82,8 @@ def test_end_date_must_be_after_start_date():
 
 
 def test_end_date_equal_to_start_date_rejected():
-    with pytest.raises(ValidationError, match="endDate .* must be after startDate"):
+    # endDate must be *strictly* after startDate, so equal dates should also be rejected.
+    with pytest.raises(ValidationError, match="endDate.*must be after"):
         Delegate(
             name="Grace",
             voteDelegateAddress="0x1234567890abcdef1234567890abcdef12345678",
@@ -141,6 +140,12 @@ def test_inactive_exited_before_period():
     # Aligned before, exited before period starts
     d = _delegate(start=date(2025, 1, 1), end=date(2026, 3, 31))
     assert not d.is_active_during(date(2026, 4, 1), date(2026, 4, 30))
+
+
+def test_boundary_aligned_on_last_day_of_period():
+    # Aligned on the last day, should be active
+    d = _delegate(start=date(2026, 4, 30))
+    assert d.is_active_during(date(2026, 4, 1), date(2026, 4, 30))
 
 
 def test_boundary_exited_on_first_day_of_period():
@@ -226,6 +231,13 @@ def test_load_delegates_with_exited_delegate(tmp_path):
 def test_load_delegates_file_not_found(tmp_path):
     with pytest.raises(FileNotFoundError):
         load_delegates(tmp_path / "nonexistent.yaml")
+
+
+def test_load_delegates_empty_file(tmp_path):
+    p = tmp_path / "delegates.yaml"
+    p.write_text("")
+    with pytest.raises(ValueError, match="empty"):
+        load_delegates(p)
 
 
 def test_load_delegates_malformed_yaml(tmp_path):

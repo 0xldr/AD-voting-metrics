@@ -49,6 +49,9 @@ def _session():
     return _session_instance
 
 
+# Public alias for cross-module use.
+get_session = _session
+
 DUNE_SKY_API_URL = "https://api.dune.com/api/v1/query/5261531/results"
 
 

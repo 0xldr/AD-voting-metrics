@@ -1,0 +1,241 @@
+"""Tests for sources.delegates — the vote.sky.money paginated fetcher."""
+
+import pytest
+import responses
+from pytest import LogCaptureFixture
+
+from ad_voting_metrics import sky_dao
+from ad_voting_metrics.sources.delegates import DELEGATES_URL, fetch_aligned_delegates
+
+
+@pytest.fixture(autouse=True)
+def reset_session():
+    """Reset the module-cached session before each test.
+
+    sky_dao caches a Session at module level. Tests that rely
+    on responses mocking should start with a new session so prior
+    tests can't leak state through the adapter.
+    """
+    sky_dao._session_instance = None
+    yield
+    sky_dao._session_instance = None
+
+
+def _delegate_dict(name: str, address: str) -> dict:
+    """Minimal API-shaped delegate dict for tests."""
+    return {
+        "name": name,
+        "voteDelegateAddress": address,
+        "address": "0x0000000000000000000000000000000000000000",
+        "status": "aligned",
+        "creationDate": "2024-01-01T00:00:00Z",
+    }
+
+
+# ---------------------------------------------------------------------------
+# Single-page response: hasNextPage=false on first page
+# ---------------------------------------------------------------------------
+
+
+@responses.activate
+def test_single_page_returns_all_delegates():
+    responses.add(
+        responses.GET,
+        DELEGATES_URL,
+        json={
+            "paginationInfo": {"page": 1, "numPages": None, "hasNextPage": False},
+            "stats": {"total": 2, "aligned": 2},
+            "delegates": [
+                _delegate_dict("Alpha", "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"),
+                _delegate_dict("Beta", "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"),
+            ],
+        },
+        status=200,
+    )
+
+    result = fetch_aligned_delegates()
+    assert len(result) == 2
+    assert result[0]["name"] == "Alpha"
+    assert result[1]["name"] == "Beta"
+
+
+@responses.activate
+def test_empty_response():
+    responses.add(
+        responses.GET,
+        DELEGATES_URL,
+        json={
+            "paginationInfo": {"page": 1, "numPages": None, "hasNextPage": False},
+            "stats": {"total": 0, "aligned": 0},
+            "delegates": [],
+        },
+        status=200,
+    )
+
+    result = fetch_aligned_delegates()
+    assert result == []
+
+
+# ---------------------------------------------------------------------------
+# Multi-page response: hasNextPage=true then false
+# ---------------------------------------------------------------------------
+
+
+@responses.activate
+def test_multi_page_concatenates_results():
+    # Page 1: hasNextPage=true
+    responses.add(
+        responses.GET,
+        DELEGATES_URL,
+        json={
+            "paginationInfo": {"page": 1, "numPages": None, "hasNextPage": True},
+            "stats": {"total": 3, "aligned": 3},
+            "delegates": [
+                _delegate_dict("Alpha", "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"),
+                _delegate_dict("Beta", "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"),
+            ],
+        },
+        status=200,
+    )
+    # Page 2: hasNextPage=false
+    responses.add(
+        responses.GET,
+        DELEGATES_URL,
+        json={
+            "paginationInfo": {"page": 2, "numPages": None, "hasNextPage": False},
+            "stats": {"total": 3, "aligned": 3},
+            "delegates": [
+                _delegate_dict("Gamma", "0xcccccccccccccccccccccccccccccccccccccccccc"),
+            ],
+        },
+        status=200,
+    )
+
+    result = fetch_aligned_delegates()
+    assert len(result) == 3
+    assert [d["name"] for d in result] == ["Alpha", "Beta", "Gamma"]
+
+
+@responses.activate
+def test_pagination_increments_page_param():
+    """Verify the page number actually advances across requests."""
+    responses.add(
+        responses.GET,
+        DELEGATES_URL,
+        json={
+            "paginationInfo": {"page": 1, "numPages": None, "hasNextPage": True},
+            "stats": {"total": 0, "aligned": 0},
+            "delegates": [],
+        },
+        status=200,
+    )
+    responses.add(
+        responses.GET,
+        DELEGATES_URL,
+        json={
+            "paginationInfo": {"page": 2, "numPages": None, "hasNextPage": False},
+            "stats": {"total": 0, "aligned": 0},
+            "delegates": [],
+        },
+    )
+
+    fetch_aligned_delegates()
+
+    # Two requests made, in order
+    assert len(responses.calls) == 2
+    # page= query should be 1, then 2
+    url_1 = responses.calls[0].request.url
+    url_2 = responses.calls[1].request.url
+    assert url_1 is not None
+    assert url_2 is not None
+    assert "page=1" in url_1
+    assert "page=2" in url_2
+
+
+@responses.activate
+def test_query_params_include_aligned_filter():
+    """Verify the aligned=true filter is included."""
+    responses.add(
+        responses.GET,
+        DELEGATES_URL,
+        json={
+            "paginationInfo": {"page": 1, "numPages": None, "hasNextPage": False},
+            "stats": {"total": 0, "aligned": 0},
+            "delegates": [],
+        },
+        status=200,
+    )
+
+    fetch_aligned_delegates()
+    url = responses.calls[0].request.url
+    assert url is not None
+    assert "delegateType=ALIGNED" in url
+    assert "network=mainnet" in url
+
+
+# ---------------------------------------------------------------------------
+# Defensive: page cap prevents infinite loops on misbehaving APIs
+# ---------------------------------------------------------------------------
+
+
+@responses.activate
+def test_page_cap_stops_infinite_loop(caplog: LogCaptureFixture):
+    """If the API always returns hasNextPage=true, we should stop after 10 pages."""
+    from ad_voting_metrics.sources.delegates import _MAX_PAGES
+
+    # Register enough responses to satisfy _MAX_PAGES, all with hasNextPage=true
+    for _ in range(_MAX_PAGES):
+        responses.add(
+            responses.GET,
+            DELEGATES_URL,
+            json={
+                "paginationInfo": {"page": 1, "numPages": None, "hasNextPage": True},
+                "stats": {"total": 0, "aligned": 0},
+                "delegates": [_delegate_dict("X", "0x" + "0" * 40)],
+            },
+            status=200,
+        )
+
+    with caplog.at_level("WARNING"):
+        result = fetch_aligned_delegates()
+
+    # Stopped after _MAX_PAGES, not infinite
+    assert len(responses.calls) == _MAX_PAGES
+    assert len(result) == _MAX_PAGES  # Got one delegate per page
+    # The cap-hit warning fired
+    assert any("page cap" in record.message for record in caplog.records)
+
+
+# ---------------------------------------------------------------------------
+# HTTP error handling: relies on raise_for_status from sky_dao's session
+# ---------------------------------------------------------------------------
+
+
+@responses.activate
+def test_500_error_raises():
+    responses.add(
+        responses.GET,
+        DELEGATES_URL,
+        json={"error": "internal"},
+        status=500,
+    )
+    # The session has retries on 5xx, but after retries are exhausted
+    # raise_on_status=False means raise_for_status fires.
+    # We register only one response, so retries will fail on subsequent
+    # attempts (responses will raise ConnectionError when no match exists).
+    # That's acceptable — the test just confirms 500s don't get swallowed.
+    with pytest.raises(Exception):  # noqa: B017 — Exception or RetryError or HTTPError, depending on retry behavior
+        fetch_aligned_delegates()
+
+
+@responses.activate
+def test_404_error_raises():
+    responses.add(
+        responses.GET,
+        DELEGATES_URL,
+        json={"error": "not found"},
+        status=404,
+    )
+    # 404 isn't in the retry list, so raise_for_status fires immediately.
+    with pytest.raises(Exception):  # noqa: B017
+        fetch_aligned_delegates()
