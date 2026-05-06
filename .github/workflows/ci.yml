@@ -28,6 +28,8 @@ jobs:
             - name: Lint with ruff
               run: ruff check .
 
+            - name: Type-check with mypy
+              run: mypy
+
             - name: Run tests
-              # Exit code 5 means "no tests collected", which is fine until tests exist
               run: pytest --tb=short
