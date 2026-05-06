@@ -1,12 +1,17 @@
+import logging
 import os
 from datetime import datetime, timedelta
 
 import requests
 from dateutil import parser
+from dune_client.client import DuneClient
+from dune_client.query import QueryBase
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
 from .period import MonthPeriod
+
+logger = logging.getLogger(__name__)
 
 HEADERS = {"User-Agent": "Mozilla/5.0", "Accept": "application/json"}
 
@@ -52,24 +57,7 @@ def _session():
 # Public alias for cross-module use.
 get_session = _session
 
-DUNE_SKY_API_URL = "https://api.dune.com/api/v1/query/5261531/results"
-
-
-def _dune_headers():
-    """Build request headers for Dune API calls.
-
-    The API key is read from the DUNE_API_KEY environment variable, which should be set in a .env file. If unset,
-    raises RuntimeError with a clear message rather than letting requests fail.
-    """
-    key = os.environ.get("DUNE_API_KEY")
-    if not key:
-        raise RuntimeError(
-            "DUNE_API_KEY environment variable not set."
-            "Add it to your .env file (see .env.example) or export it in your shell."
-        )
-    return {"X-Dune-API-Key": key}
-
-
+DUNE_SKY_QUERY_ID = 6604139
 SKY_ALL_POLLS_URL = "https://vote.sky.money/api/polling/all-polls"
 SKY_EXECUTIVE_SUPPORTERS_URL = "https://vote.sky.money/api/executive/supporters"
 SKY_POLL_ID_URL = "https://vote.sky.money/api/polling/tally"
@@ -78,16 +66,32 @@ SKY_EXECUTIVE_URL = "https://vote.sky.money/api/executive"
 
 # Define a function to retrieve the SKY for each delegate by date.
 def get_all_sky_delegated():
-    payload = {}
-    headers = _dune_headers()
+    """Fetch SKY delegations per (delegate, date) from Dune.
 
-    response = _session().request(
-        "GET", DUNE_SKY_API_URL, headers=headers, data=payload, timeout=HTTP_TIMEOUT
-    )
+    Uses dune-client to execute query DUNE_SKY_QUERY_ID fresh on every call.
+    Fresh execution costs Dune credits but ensures the script's monthly
+    output reflects the latest on-chain delegation state.
 
-    data = response.json()
+    Reads DUNE_API_KEY from the environment. Raises RuntimeError with a
+    clear message if unset, rather than letting dune-client fail with an
+    opaque auth error from inside the SDK.
 
-    return data.get("result", {}).get("rows", [])
+    Returns: list of dicts with columns delegation_contract, dt, and runnint_total_balance.
+    """
+    api_key = os.environ.get("DUNE_API_KEY")
+    if not api_key:
+        raise RuntimeError(
+            "DUNE_API_KEY environment variable is not set. "
+            "Add it to your .env file (see .env.example)."
+        )
+
+    dune = DuneClient(api_key=api_key)
+    query = QueryBase(query_id=DUNE_SKY_QUERY_ID)
+    logger.info("Executing Dune query %d (fresh)...", DUNE_SKY_QUERY_ID)
+    results = dune.run_query(query=query)
+    rows = results.get_rows()
+    logger.info("Dune query returned %d rows", len(rows))
+    return rows
 
 
 def get_sky_delegated(data, contract_address, date):
