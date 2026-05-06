@@ -119,24 +119,27 @@ def test_multi_page_concatenates_results():
 @responses.activate
 def test_pagination_increments_page_param():
     """Verify the page number actually advances across requests."""
+    # Page 1 needs at least one delegate so we don't hit the empty page stop.
     responses.add(
         responses.GET,
         DELEGATES_URL,
         json={
             "paginationInfo": {"page": 1, "numPages": None, "hasNextPage": True},
-            "stats": {"total": 0, "aligned": 0},
-            "delegates": [],
+            "stats": {"total": 1, "aligned": 1},
+            "delegates": [_delegate_dict("Alpha", "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")],
         },
         status=200,
     )
+    # Page 2 hasNextPage=false so ends the loop normally
     responses.add(
         responses.GET,
         DELEGATES_URL,
         json={
             "paginationInfo": {"page": 2, "numPages": None, "hasNextPage": False},
-            "stats": {"total": 0, "aligned": 0},
-            "delegates": [],
+            "stats": {"total": 1, "aligned": 1},
+            "delegates": [_delegate_dict("Beta", "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")],
         },
+        status=200,
     )
 
     fetch_aligned_delegates()
@@ -176,6 +179,43 @@ def test_query_params_include_aligned_filter():
 # ---------------------------------------------------------------------------
 # Defensive: page cap prevents infinite loops on misbehaving APIs
 # ---------------------------------------------------------------------------
+
+
+@responses.activate
+def test_stops_on_empty_page_even_when_hasnextpage_true():
+    """The vote.sky.money API has a bug: after the last delegate is returned,
+    subsequent pages have delegates=[] but hasNextPage=true (forever). We must
+    treat empty page as end-of-data regardless of hasNextPage signal.
+    """
+    # Page 1: 2 delegates, hasNextPage = true
+    responses.add(
+        responses.GET,
+        DELEGATES_URL,
+        json={
+            "paginationInfo": {"page": 1, "numPages": None, "hasNextPage": True},
+            "stats": {"total": 2, "aligned": 2},
+            "delegates": [
+                _delegate_dict("Alpha", "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"),
+                _delegate_dict("Beta", "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"),
+            ],
+        },
+        status=200,
+    )
+    # Page 2: empty list, but hasNextPage still true
+    responses.add(
+        responses.GET,
+        DELEGATES_URL,
+        json={
+            "paginationInfo": {"page": 2, "numPages": None, "hasNextPage": True},
+            "stats": {"total": 2, "aligned": 2},
+            "delegates": [],
+        },
+        status=200,
+    )
+
+    result = fetch_aligned_delegates()
+    assert len(result) == 2
+    assert len(responses.calls) == 2
 
 
 @responses.activate
