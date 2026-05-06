@@ -1,0 +1,21 @@
+{
+  "run_timestamp": "2026-05-06T22:02:40.947286+00:00",
+  "period": "March 2026",
+  "period_start": "2026-03-01",
+  "period_end": "2026-03-31",
+  "yaml_path": "/home/ldr/Documents/GitHub/ldr-ad-voting-metrics/delegates.yaml",
+  "yaml_total_delegates": 14,
+  "yaml_active_delegates": 13,
+  "yaml_exited_delegates": 1,
+  "api_delegate_count": 13,
+  "api_fetch_succeeded": true,
+  "active_during_period": 13,
+  "drift_warnings": [],
+  "dune_query_id": 6604139,
+  "output_files": [
+    "/home/ldr/Documents/GitHub/ldr-ad-voting-metrics/output_data/vote_participation.csv",
+    "/home/ldr/Documents/GitHub/ldr-ad-voting-metrics/output_data/sky.csv",
+    "/home/ldr/Documents/GitHub/ldr-ad-voting-metrics/output_data/ranking.csv",
+    "/home/ldr/Documents/GitHub/ldr-ad-voting-metrics/output_data/vote_participation_final_transposed.csv"
+  ]
+}

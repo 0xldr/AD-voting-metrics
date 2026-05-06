@@ -20,6 +20,7 @@ updating after a new alignment or an exit.
 
 import logging
 from collections.abc import Callable
+from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
 
@@ -154,11 +155,27 @@ def merge_with_api(
     return list(yaml_config.delegates), warnings
 
 
+@dataclass
+class RosterResult:
+    """Outcome of build_roster_for_period.
+
+    Carries the active-delegates list (the runtime-relevant output) plus
+    counts and metadata that downstream callers (the reconciliation log,
+    in particular) need to record what happened during roster building.
+    """
+
+    active_delegates: list[Delegate]
+    drift_warnings: list[str]
+    yaml_config: "DelegatesConfig"  # full config so reconciliation can split active/exited
+    api_delegate_count: int  # 0 if api_fetch_succeeded is False
+    api_fetch_succeeded: bool
+
+
 def build_roster_for_period(
     yaml_path: Path,
     period: MonthPeriod,
     api_fetcher: Callable[[], list[dict]],
-) -> tuple[list["Delegate"], list[str]]:
+) -> RosterResult:
     """Load YAML, fetch API, run drift detection, filter to active-during-period.
 
     The api_fetcher is a callable that returns the raw API delegate list.
@@ -166,22 +183,33 @@ def build_roster_for_period(
     If the API fetch raises, drift detection is skipped and the script proceeds
     with YAML alone. This is a deliberate soft-fail, YAML is the source of truth.
 
-    Returns (active_delegates_for_period, warnings).
+    Returns a RosterResult with the active delegates, drift warnings, the full
+    YAML config, and metadata about API counts and fetch success — for the
+    reconciliation log.
     """
     yaml_config = load_delegates(yaml_path)
 
+    api_response: list[dict] = []
+    api_fetch_succeeded = False
     try:
         api_response = api_fetcher()
+        api_fetch_succeeded = True
         _, warnings = merge_with_api(yaml_config, api_response)
     except Exception as e:
         warnings = [
-            f"API drift check skipped due to fetch failure: {type(e).__name__}: {e}"
+            f"API drift check skipped due to fetch failure: {type(e).__name__}: {e}. "
             f"Proceeding with delegates.yaml as the sole source."
         ]
-        logger.warning("API fecth failed during drift check: %s", e)
+        logger.warning("API fetch failed during drift check: %s", e)
 
     active = [d for d in yaml_config.delegates if d.is_active_during(period.start, period.end)]
-    return active, warnings
+    return RosterResult(
+        active_delegates=active,
+        drift_warnings=warnings,
+        yaml_config=yaml_config,
+        api_delegate_count=len(api_response),
+        api_fetch_succeeded=api_fetch_succeeded,
+    )
 
 
 def to_dataframe(delegates: list["Delegate"]) -> pd.DataFrame:

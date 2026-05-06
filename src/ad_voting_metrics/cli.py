@@ -8,6 +8,7 @@ from dotenv import load_dotenv
 
 from . import sky_dao as sky
 from .period import MonthPeriod
+from .reconciliation import build_entry, write_entry
 from .roster import build_roster_for_period, to_dataframe
 from .sources.delegates import fetch_aligned_delegates
 
@@ -17,6 +18,7 @@ logger = logging.getLogger(__name__)
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 OUTPUT_DIR = REPO_ROOT / "output_data"
 YAML_PATH = REPO_ROOT / "delegates.yaml"
+RECONCILIATION_LOG_PATH = OUTPUT_DIR / "reconciliation.log.jsonl"
 
 
 def parse_month(value):
@@ -82,14 +84,19 @@ def main(argv=None):
     # The YAML is the source of truth, the API call is for drift detection.
     # Filtering to "active during this month" happens inside build_roster_for_period.
     logger.info("Building delegate roster from delegates.yaml and vote.sky.money API...")
-    delegates, drift_warnings = build_roster_for_period(
+    roster_result = build_roster_for_period(
         yaml_path=YAML_PATH,
         period=period,
         api_fetcher=fetch_aligned_delegates,
     )
+    delegates = roster_result.active_delegates
+    drift_warnings = roster_result.drift_warnings
     for warning in drift_warnings:
         logger.warning(warning)
     logger.info("Roster has %d delegates active during %s", len(delegates), period)
+
+    # Track CSVs we write so the reconciliation log can record them
+    output_files: list[Path] = []
 
     df = to_dataframe(delegates)
     hardcoded_order = df["Delegate Contract"].str.lower().tolist()
@@ -134,18 +141,35 @@ def main(argv=None):
     # Save data to CSV files
     output_csv = OUTPUT_DIR / "vote_participation.csv"
     df.to_csv(output_csv, index=False)
+    output_files.append(output_csv)
     logger.info("Participation vote data saved to %s", output_csv)
 
     df = sky.custom_sort(df, hardcoded_order, POLL_INFO, SPELL_INFO)
 
     output_csv = OUTPUT_DIR / "sky.csv"
     df_sky.to_csv(output_csv, index=False)
+    output_files.append(output_csv)
     logger.info("SKY data by date saved to %s", output_csv)
 
     output_csv = OUTPUT_DIR / "ranking.csv"
     df_ranking.to_csv(output_csv, index=False)
+    output_files.append(output_csv)
     logger.info("Ranking data saved to %s", output_csv)
 
     output_csv = OUTPUT_DIR / "vote_participation_final_transposed.csv"
     df.to_csv(output_csv, header=False, index=True)
+    output_files.append(output_csv)
     logger.info("(transposed) Participation vote data saved to %s", output_csv)
+
+    entry = build_entry(
+        period=period,
+        yaml_path=YAML_PATH,
+        yaml_config=roster_result.yaml_config,
+        active_delegates=delegates,
+        drift_warnings=drift_warnings,
+        dune_query_id=sky.DUNE_SKY_QUERY_ID,
+        api_delegate_count=roster_result.api_delegate_count,
+        api_fetch_succeeded=roster_result.api_fetch_succeeded,
+        output_files=output_files,
+    )
+    write_entry(RECONCILIATION_LOG_PATH, period, entry)
