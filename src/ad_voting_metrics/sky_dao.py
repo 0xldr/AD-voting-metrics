@@ -1,6 +1,7 @@
 import logging
 import os
 from datetime import datetime, timedelta
+from typing import Any
 
 import requests
 from dateutil import parser
@@ -115,7 +116,7 @@ def get_delegate_list_sky(df, period: MonthPeriod):
 
     all_sky_delegated = get_all_sky_delegated()
 
-    delegate_data_sky = {"contract": {}, "name": {}}
+    delegate_data_sky: dict[str, dict[str, dict[Any, Any]]] = {"contract": {}, "name": {}}
     for _index, row in df.iterrows():
         delegate_name = row["Delegate Name"].strip().lower()
         delegate_contract = row["Delegate Contract"]

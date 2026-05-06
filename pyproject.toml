@@ -21,6 +21,11 @@ dependencies = [
 test = [
     "pytest>=8.0",
     "responses>=0.25",
+    "mypy>=1.0",
+    "pandas-stubs",
+    "types-requests",
+    "types-python-dateutil",
+    "types-PyYAML",
 ]
 
 [tool.setuptools.packages.find]
@@ -53,3 +58,10 @@ ignore = [
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+
+[tool.mypy]
+files = ["src"]
+warn_redundant_casts = true
+warn_unused_ignores = true
+warn_return_any = true
+strict_equality = true
