@@ -23,12 +23,17 @@ SKY_EXECUTIVE_URL = "https://vote.sky.money/api/executive"
 
 
 # Define a function to retrieve the SKY for each delegate by date.
-def get_all_sky_delegated() -> pd.DataFrame:
+def get_all_sky_delegated(cache_max_age_hours: int | None = None) -> pd.DataFrame:
     """Fetch SKY delegations per (delegate, date) from Dune as an indexed DataFrame.
 
-    Uses dune-client to execute query DUNE_SKY_QUERY_ID fresh on every call.
-    Fresh execution costs Dune credits but ensures the script's monthly
-    output reflects the latest on-chain delegation state.
+    By default (cache_max_age_hours=None), executes Dune query
+    DUNE_SKY_QUERY_ID fresh - the safe-default for production runs.
+
+    When cache_age_max_hours is set to a non-negative integer, uses
+    dune-client's get_latest_result with the supplied threshold: returns
+    the most recent cached execution if it's within N hours, otherwise
+    triggers a fresh execution. Useful for fast development iteration
+    where re-execution every run is wasteful credits and time.
 
     Reads DUNE_API_KEY from the environment. Raises RuntimeError with a
     clear message if unset, rather than letting dune-client fail with an
@@ -43,8 +48,19 @@ def get_all_sky_delegated() -> pd.DataFrame:
 
     dune = DuneClient(api_key=api_key)
     query = QueryBase(query_id=DUNE_SKY_QUERY_ID)
-    logger.info("Executing Dune query %d (fresh)...", DUNE_SKY_QUERY_ID)
-    df: pd.DataFrame = dune.run_query_dataframe(query=query)
+
+    df: pd.DataFrame
+    if cache_max_age_hours is None:
+        logger.info("Executing Dune query %d (fresh)...", DUNE_SKY_QUERY_ID)
+        df = dune.run_query_dataframe(query=query)
+    else:
+        logger.info(
+            "Fetching Dune query %d (cached up to %dh; will execute fresh if older)...",
+            DUNE_SKY_QUERY_ID,
+            cache_max_age_hours,
+        )
+        results = dune.get_latest_result(query=query, max_age_hours=cache_max_age_hours)
+        df = pd.DataFrame(results.get_rows())
     logger.info("Dune query returns %d rows", len(df))
 
     # Normalize for indexed lookup
@@ -77,9 +93,9 @@ def get_sky_delegated(data: pd.DataFrame, contract_address: str, dt: date) -> fl
 
 
 # Define a function to retrieve the total SKY held by each delegate by date.
-def get_delegate_list_sky(df, period: MonthPeriod):
+def get_delegate_list_sky(df, period: MonthPeriod, cache_max_age_hours: int | None = None):
 
-    all_sky_delegated = get_all_sky_delegated()
+    all_sky_delegated = get_all_sky_delegated(cache_max_age_hours=cache_max_age_hours)
 
     delegate_data_sky: dict[str, dict[str, dict[Any, Any]]] = {"contract": {}, "name": {}}
     for _index, row in df.iterrows():

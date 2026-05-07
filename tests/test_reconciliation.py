@@ -66,6 +66,7 @@ def test_build_entry_minimal():
         active_delegates=active_delegates,
         drift_warnings=[],
         dune_query_id=6604139,
+        dune_cache_max_age_hours=None,
         api_delegate_count=2,
         api_fetch_succeeded=True,
         output_files=[Path("/tmp/output.csv")],
@@ -82,7 +83,47 @@ def test_build_entry_minimal():
     assert entry["active_during_period"] == 2
     assert entry["drift_warnings"] == []
     assert entry["dune_query_id"] == 6604139
+    assert entry["dune_execution_mode"] == "fresh"
+    assert entry["dune_cache_max_age_hours"] is None
     assert entry["output_files"] == ["/tmp/output.csv"]
+
+
+def test_build_entry_records_fresh_execution_when_cache_hours_is_none():
+    """When dune_cache_max_age_hours is None, the entry records mode='fresh'."""
+    entry = build_entry(
+        period=_sample_period(),
+        yaml_path=Path("/tmp/delegates.yaml"),
+        yaml_config=_make_yaml_config(),
+        active_delegates=[],
+        drift_warnings=[],
+        dune_query_id=6604139,
+        dune_cache_max_age_hours=None,
+        api_delegate_count=0,
+        api_fetch_succeeded=True,
+        output_files=[],
+    )
+
+    assert entry["dune_execution_mode"] == "fresh"
+    assert entry["dune_cache_max_age_hours"] is None
+
+
+def test_build_entry_records_cached_execution_when_cache_hours_is_set():
+    """When dune_cache_max_age_hours is an int, the entry records mode='cached'."""
+    entry = build_entry(
+        period=_sample_period(),
+        yaml_path=Path("/tmp/delegates.yaml"),
+        yaml_config=_make_yaml_config(),
+        active_delegates=[],
+        drift_warnings=[],
+        dune_query_id=6604139,
+        dune_cache_max_age_hours=24,
+        api_delegate_count=0,
+        api_fetch_succeeded=True,
+        output_files=[],
+    )
+
+    assert entry["dune_execution_mode"] == "cached"
+    assert entry["dune_cache_max_age_hours"] == 24
 
 
 def test_build_entry_preserves_drift_warnings():
@@ -91,15 +132,16 @@ def test_build_entry_preserves_drift_warnings():
         yaml_path=Path("/tmp/delegates.yaml"),
         yaml_config=_make_yaml_config(),
         active_delegates=[],
-        drift_warnings=["Alice vanished from API", "Mystery delegate appeared"],
+        drift_warnings=["Cloaky vanished from API", "Mystery delegate appeared"],
         dune_query_id=6604139,
+        dune_cache_max_age_hours=None,
         api_delegate_count=0,
         api_fetch_succeeded=True,
         output_files=[],
     )
 
     assert entry["drift_warnings"] == [
-        "Alice vanished from API",
+        "Cloaky vanished from API",
         "Mystery delegate appeared",
     ]
 
@@ -112,6 +154,7 @@ def test_build_entry_records_api_failure():
         active_delegates=[],
         drift_warnings=["API drift check skipped..."],
         dune_query_id=6604139,
+        dune_cache_max_age_hours=None,
         api_delegate_count=0,
         api_fetch_succeeded=False,
         output_files=[],
@@ -130,6 +173,7 @@ def test_build_entry_includes_all_output_files():
         active_delegates=[],
         drift_warnings=[],
         dune_query_id=6604139,
+        dune_cache_max_age_hours=None,
         api_delegate_count=0,
         api_fetch_succeeded=True,
         output_files=files,
@@ -139,7 +183,7 @@ def test_build_entry_includes_all_output_files():
 
 
 def test_build_entry_run_timestamp_is_iso_with_tz():
-    """run timestamp should be parseable as an ISO 8601 datetime in UTC."""
+    """run_timestamp should be parseable as an ISO 8601 datetime in UTC."""
     from datetime import datetime
 
     entry = build_entry(
@@ -149,6 +193,7 @@ def test_build_entry_run_timestamp_is_iso_with_tz():
         active_delegates=[],
         drift_warnings=[],
         dune_query_id=6604139,
+        dune_cache_max_age_hours=None,
         api_delegate_count=0,
         api_fetch_succeeded=True,
         output_files=[],
@@ -167,13 +212,14 @@ def test_build_entry_is_json_serializable():
         active_delegates=_make_yaml_config(active=2).delegates,
         drift_warnings=["w1", "w2"],
         dune_query_id=6604139,
+        dune_cache_max_age_hours=None,
         api_delegate_count=2,
         api_fetch_succeeded=True,
         output_files=[Path("/o/a.csv")],
     )
 
-    serializable = json.dumps(entry)
-    round_tripped = json.loads(serializable)
+    serialized = json.dumps(entry)
+    round_tripped = json.loads(serialized)
     assert round_tripped == entry
 
 
@@ -199,7 +245,7 @@ def test_write_entry_creates_file_with_period_and_timestamp_in_name(tmp_path):
     assert path.exists()
 
 
-def test_write_entry_serialises_entry_as_json(tmp_path):
+def test_write_entry_serializes_entry_as_json(tmp_path):
     period = _sample_period()
     entry = {
         "run_timestamp": "2026-05-06T15:32:08+00:00",

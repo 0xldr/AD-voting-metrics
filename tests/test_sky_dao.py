@@ -49,6 +49,33 @@ def test_get_all_sky_delegated_calls_run_query_dataframe(monkeypatch):
     assert ("0xdef", "2026-03-01") in result.index
 
 
+def test_get_all_sky_delegated_uses_cache_when_cache_hours_set(monkeypatch):
+    """When cache_max_age_hours is provided, get_latest_resultis called
+    instead of run_query_dataframe, with the threshold passed through."""
+    monkeypatch.setenv("DUNE_API_KEY", "fake-key")
+
+    fake_results = MagicMock()
+    fake_results.get_rows.return_value = [
+        {"delegation_contract": "0xabc", "dt": "2026-03-01", "running_total_balance": 1500.0},
+    ]
+    fake_client = MagicMock()
+    fake_client.get_latest_result.return_value = fake_results
+
+    with patch("ad_voting_metrics.sky_dao.DuneClient", return_value=fake_client):
+        result = sky_dao.get_all_sky_delegated(cache_max_age_hours=24)
+
+    # Cached path
+    fake_client.get_latest_result.assert_called_once()
+    call_kwargs = fake_client.get_latest_result.call_args.kwargs
+    assert call_kwargs["max_age_hours"] == 24
+    assert call_kwargs["query"].query_id == sky_dao.DUNE_SKY_QUERY_ID
+    fake_client.run_query_dataframe.assert_not_called()
+
+    assert isinstance(result, pd.DataFrame)
+    assert result.index.names == ["delegation_contract", "dt"]
+    assert ("0xabc", "2026-03-01") in result.index
+
+
 def test_get_all_sky_delegated_raises_when_api_key_missing(monkeypatch):
     """If DUNE_API_KEY is not set, raise runtimeError with a clear message."""
     monkeypatch.delenv("DUNE_API_KEY", raising=False)

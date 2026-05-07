@@ -44,6 +44,22 @@ def parse_month(value):
     return period
 
 
+def parse_cache_hours(value: str) -> int:
+    """argparse callback for --cache-hours.
+
+    Accepts a non-negative integer. Negative values are rejected.
+    """
+    try:
+        hours = int(value)
+    except ValueError as e:
+        raise argparse.ArgumentTypeError(f"{value!r} is not an integer") from e
+    if hours < 0:
+        raise argparse.ArgumentTypeError(
+            f"{value!r} is negative; --cache-hours must be 0 or greater"
+        )
+    return hours
+
+
 def build_arg_parser():
     parser = argparse.ArgumentParser(
         prog="ad-voting-metrics",
@@ -60,6 +76,18 @@ def build_arg_parser():
         metavar="MONTH",
         help=(
             "Month to query, e.g. 'April 2026' or '2026-04'. Resolves to the full calendar month."
+        ),
+    )
+    parser.add_argument(
+        "--cache-hours",
+        type=parse_cache_hours,
+        default=None,
+        metavar="N",
+        help=(
+            "If set, reuse a cached Dune execution if it's at most N hours old."
+            "If omitted, executes the Duen query fresh (default behavior)."
+            "Use 24 or so for fast iteration during development; leave unset"
+            "for production monthly run."
         ),
     )
     return parser
@@ -105,7 +133,11 @@ def main(argv=None):
 
     # Get delegate list and SKY ranking
     logger.info("Getting RANKING...")
-    delegate_list_sky, delegate_list_rank = sky.get_delegate_list_sky(df, period)
+    delegate_list_sky, delegate_list_rank = sky.get_delegate_list_sky(
+        df,
+        period,
+        cache_max_age_hours=args.cache_hours,
+    )
 
     df_sky = pd.DataFrame(delegate_list_sky)
     df_ranking = pd.DataFrame(delegate_list_rank)
@@ -170,6 +202,7 @@ def main(argv=None):
         active_delegates=delegates,
         drift_warnings=drift_warnings,
         dune_query_id=sky.DUNE_SKY_QUERY_ID,
+        dune_cache_max_age_hours=args.cache_hours,
         api_delegate_count=roster_result.api_delegate_count,
         api_fetch_succeeded=roster_result.api_fetch_succeeded,
         output_files=output_files,
