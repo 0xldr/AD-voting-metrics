@@ -15,7 +15,7 @@ append entries to a workbook tab; for now they're operator-facing
 artifacts.
 
 Soft-fail: if writing the log throws (permission denied, disk full,
-serialisation error), a stderr warning is logged but the script
+serialization error), a stderr warning is logged but the script
 continues. The CSV outputs are the primary artifacts of a run; the
 reconciliation file is supplementary.
 """
@@ -38,16 +38,20 @@ def build_entry(
     active_delegates: list[Delegate],
     drift_warnings: list[str],
     dune_query_id: int,
+    dune_cache_max_age_hours: int | None,
     api_delegate_count: int,
     api_fetch_succeeded: bool,
     output_files: list[Path],
 ) -> dict:
     """Construct a reconciliation log entry from this run's facts.
 
-    All fields are JSON-serialisable. Timestamps are ISO 8601 in UTC.
+    All fields are JSON-serializable. Timestamps are ISO 8601 in UTC.
     Counts are integers. Drift warnings are the same list cli.py logs
     to stderr — including them here gives a structured record of every
     warning fired during the run.
+
+    dune_cache_max_age_hours is None when the run executes Dune fresh
+    (the safe default), or an integer N when --cache-hours N was used.
 
     api_delegate_count is the count from vote.sky.money's response, or
     0 if api_fetch_succeeded is False (i.e. the API call raised and we
@@ -59,6 +63,8 @@ def build_entry(
     """
     yaml_active = sum(1 for d in yaml_config.delegates if d.endDate is None)
     yaml_exited = sum(1 for d in yaml_config.delegates if d.endDate is not None)
+
+    dune_execution_mode = "fresh" if dune_cache_max_age_hours is None else "cached"
 
     return {
         "run_timestamp": datetime.now(UTC).isoformat(),
@@ -74,6 +80,8 @@ def build_entry(
         "active_during_period": len(active_delegates),
         "drift_warnings": list(drift_warnings),
         "dune_query_id": dune_query_id,
+        "dune_execution_mode": dune_execution_mode,
+        "dune_cache_max_age_hours": dune_cache_max_age_hours,
         "output_files": [str(p) for p in output_files],
     }
 
