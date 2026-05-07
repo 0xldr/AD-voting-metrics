@@ -1,8 +1,9 @@
 import logging
 import os
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from typing import Any
 
+import pandas as pd
 from dateutil import parser
 from dune_client.client import DuneClient
 from dune_client.query import QueryBase
@@ -22,8 +23,8 @@ SKY_EXECUTIVE_URL = "https://vote.sky.money/api/executive"
 
 
 # Define a function to retrieve the SKY for each delegate by date.
-def get_all_sky_delegated():
-    """Fetch SKY delegations per (delegate, date) from Dune.
+def get_all_sky_delegated() -> pd.DataFrame:
+    """Fetch SKY delegations per (delegate, date) from Dune as an indexed DataFrame.
 
     Uses dune-client to execute query DUNE_SKY_QUERY_ID fresh on every call.
     Fresh execution costs Dune credits but ensures the script's monthly
@@ -32,8 +33,6 @@ def get_all_sky_delegated():
     Reads DUNE_API_KEY from the environment. Raises RuntimeError with a
     clear message if unset, rather than letting dune-client fail with an
     opaque auth error from inside the SDK.
-
-    Returns: list of dicts with columns delegation_contract, dt, and runnint_total_balance.
     """
     api_key = os.environ.get("DUNE_API_KEY")
     if not api_key:
@@ -45,26 +44,36 @@ def get_all_sky_delegated():
     dune = DuneClient(api_key=api_key)
     query = QueryBase(query_id=DUNE_SKY_QUERY_ID)
     logger.info("Executing Dune query %d (fresh)...", DUNE_SKY_QUERY_ID)
-    results = dune.run_query(query=query)
-    rows = results.get_rows()
-    logger.info("Dune query returned %d rows", len(rows))
-    return rows
+    df: pd.DataFrame = dune.run_query_dataframe(query=query)
+    logger.info("Dune query returns %d rows", len(df))
+
+    # Normalize for indexed lookup
+    df["delegation_contract"] = df["delegation_contract"].str.lower()
+    df["dt"] = df["dt"].astype(str)
+    return df.set_index(["delegation_contract", "dt"])
 
 
-def get_sky_delegated(data, contract_address, date):
-    # Loop through each item in the list
-    for item in data:
-        # Check if both the contract and date match
+def get_sky_delegated(data: pd.DataFrame, contract_address: str, dt: date) -> float:
+    """Return the running total SKY balance for a (delegate, date) pair.
 
-        if (
-            item.get("delegation_contract").strip().lower() == contract_address.strip().lower()
-            and datetime.strptime(item.get("dt"), "%Y-%m-%d").date() == date
-        ):
-            # Return the running total balance for that match
-            return item.get("running_total_balance")
+    Returns 0 if the (contract, date) combination is not in the dataset.
+    """
+    key = (contract_address.strip().lower(), dt.strftime("%Y-%m-%d"))
+    try:
+        value = data.loc[key, "running_total_balance"]
+    except KeyError:
+        return 0
 
-    # Return 0 if no match is found
-    return 0
+    try:
+        return float(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        logger.warning(
+            "Non-numeric running_total_balance for %s on %s: %r",
+            contract_address,
+            dt,
+            value,
+        )
+        return 0
 
 
 # Define a function to retrieve the total SKY held by each delegate by date.
@@ -105,20 +114,20 @@ def get_delegate_list_sky(df, period: MonthPeriod):
 
     delegate_list_rank = []
     for delegate_name, data in delegate_data_sky["name"].items():
-        for date, data_sky in data.items():
+        for entry_date, data_sky in data.items():
             delegate_list_rank.append(
                 {
                     "Delegate": delegate_name,
                     "Total Delegation": round(data_sky["sky"], 2),
                     "Rank": 1,
-                    "Date": date,
+                    "Date": entry_date,
                 }
             )
     delegate_list_sky = []
     for delegate_contract, data in delegate_data_sky["contract"].items():
-        for date, data_sky in data.items():
+        for entry_date, data_sky in data.items():
             delegate_list_sky.append(
-                {"contract": delegate_contract.lower(), "sky": data_sky["sky"], "date": date}
+                {"contract": delegate_contract.lower(), "sky": data_sky["sky"], "date": entry_date}
             )
 
     return delegate_list_sky, delegate_list_rank
