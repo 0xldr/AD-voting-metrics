@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 OUTPUT_DIR = REPO_ROOT / "output_data"
 YAML_PATH = REPO_ROOT / "delegates.yaml"
-RECONCILIATION_LOG_PATH = OUTPUT_DIR / "reconciliation.log.jsonl"
+RECONCILIATION_LOG_PATH = OUTPUT_DIR / "reconciliation"
 
 
 def parse_month(value):
@@ -71,6 +71,8 @@ def main(argv=None):
         format="%(asctime)s %(levelname)s %(message)s",
         datefmt="%Y-%m-%d %H:%M:%S",
     )
+    # Set Dune to WARNING to reduce terminal noise
+    logging.getLogger("dune_client").setLevel(logging.WARNING)
     load_dotenv()
     parser = build_arg_parser()
     args = parser.parse_args(argv)
