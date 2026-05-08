@@ -101,6 +101,249 @@ def test_end_date_equal_to_start_date_rejected():
 
 
 # ---------------------------------------------------------------------------
+# LevelAssignment — schema and validation
+# ---------------------------------------------------------------------------
+
+
+def _delegate_with_levels(levels: list[dict] | None = None, **overrides) -> Delegate:
+    """Construct a Delegate with optional level assignments and field overrides.
+
+    Defaults to an active delegate aligned 2024-01-01 onwards. Used to keep
+    test bodies focused on the level-related behaviour they exercise.
+    """
+    base = {
+        "name": "TestDelegate",
+        "voteDelegateAddress": "0x0000000000000000000000000000000000000001",
+        "startDate": date(2024, 1, 1),
+        "endDate": None,
+        "levels": levels or [],
+    }
+    base.update(overrides)
+    return Delegate(**base)
+
+
+def test_delegate_with_no_levels_constructs():
+    """The common case: a delegate with no governance level assignment."""
+    d = _delegate_with_levels(levels=[])
+    assert d.levels == []
+    assert d.level_at(date(2026, 1, 1)) is None
+
+
+def test_delegate_with_levels_omitted_constructs():
+    """levels field is optional — omitting it is the same as empty list."""
+    d = Delegate(
+        name="X",
+        voteDelegateAddress="0x0000000000000000000000000000000000000002",
+        startDate=date(2024, 1, 1),
+    )
+    assert d.levels == []
+
+
+def test_level_must_be_1_or_2():
+    """Level 3 in YAML is rejected — it's daily-computed, never YAML-set."""
+    with pytest.raises(ValidationError, match="level must be 1 or 2"):
+        _delegate_with_levels(levels=[{"level": 3, "startDate": date(2025, 12, 1)}])
+
+
+def test_level_zero_rejected():
+    with pytest.raises(ValidationError, match="level must be 1 or 2"):
+        _delegate_with_levels(levels=[{"level": 0, "startDate": date(2025, 12, 1)}])
+
+
+def test_level_negative_rejected():
+    with pytest.raises(ValidationError, match="level must be 1 or 2"):
+        _delegate_with_levels(levels=[{"level": -1, "startDate": date(2025, 12, 1)}])
+
+
+def test_level_assignment_end_must_be_after_start():
+    with pytest.raises(ValidationError, match="must be after"):
+        _delegate_with_levels(
+            levels=[
+                {
+                    "level": 1,
+                    "startDate": date(2025, 12, 1),
+                    "endDate": date(2025, 11, 1),
+                }
+            ]
+        )
+
+
+def test_level_period_must_fit_within_alignment_start():
+    """LevelAssignment can't predate the delegate's alignment startDate."""
+    with pytest.raises(ValidationError, match="before alignment startDate"):
+        _delegate_with_levels(
+            startDate=date(2024, 1, 1),
+            levels=[{"level": 1, "startDate": date(2023, 6, 1)}],
+        )
+
+
+def test_level_period_must_fit_within_alignment_end():
+    """LevelAssignment can't extend past the delegate's alignment endDate."""
+    with pytest.raises(ValidationError, match="after alignment endDate"):
+        _delegate_with_levels(
+            startDate=date(2024, 1, 1),
+            endDate=date(2025, 6, 30),
+            levels=[
+                {
+                    "level": 1,
+                    "startDate": date(2025, 1, 1),
+                    "endDate": date(2025, 12, 31),
+                }
+            ],
+        )
+
+
+def test_open_level_with_exited_delegate_rejected():
+    """A delegate who exited can't have an open-ended level — set both."""
+    with pytest.raises(ValidationError, match="endDate"):
+        _delegate_with_levels(
+            startDate=date(2024, 1, 1),
+            endDate=date(2025, 6, 30),
+            levels=[{"level": 1, "startDate": date(2025, 1, 1), "endDate": None}],
+        )
+
+
+def test_overlapping_levels_rejected():
+    """Two LevelAssignments for the same delegate may not overlap."""
+    with pytest.raises(ValidationError, match="overlap"):
+        _delegate_with_levels(
+            levels=[
+                {
+                    "level": 2,
+                    "startDate": date(2024, 6, 1),
+                    "endDate": date(2025, 6, 30),
+                },
+                {
+                    "level": 1,
+                    "startDate": date(2025, 1, 1),  # overlaps with above
+                    "endDate": date(2025, 12, 31),
+                },
+            ]
+        )
+
+
+def test_levels_with_open_ended_earlier_period_rejected():
+    """An earlier LevelAssignment with no endDate can't be followed by another."""
+    with pytest.raises(ValidationError, match="no endDate"):
+        _delegate_with_levels(
+            levels=[
+                {"level": 2, "startDate": date(2024, 6, 1), "endDate": None},
+                {"level": 1, "startDate": date(2025, 6, 1), "endDate": None},
+            ]
+        )
+
+
+def test_sequential_levels_accepted():
+    """L2 then L1 (or vice versa) with non-overlapping periods is allowed."""
+    d = _delegate_with_levels(
+        startDate=date(2024, 1, 1),
+        levels=[
+            {
+                "level": 2,
+                "startDate": date(2024, 6, 1),
+                "endDate": date(2025, 5, 31),
+            },
+            {
+                "level": 1,
+                "startDate": date(2025, 6, 1),
+                "endDate": None,
+            },
+        ],
+    )
+    assert len(d.levels) == 2
+
+
+def test_adjacent_levels_with_one_day_gap_accepted():
+    """Two LevelAssignments separated by even a single day apart don't overlap."""
+    d = _delegate_with_levels(
+        levels=[
+            {
+                "level": 2,
+                "startDate": date(2024, 6, 1),
+                "endDate": date(2025, 5, 31),
+            },
+            {
+                "level": 1,
+                "startDate": date(2025, 6, 1),
+                "endDate": None,
+            },
+        ]
+    )
+    assert d.level_at(date(2025, 5, 31)) == 2
+    assert d.level_at(date(2025, 6, 1)) == 1
+
+
+# ---------------------------------------------------------------------------
+# Delegate.level_at — daily lookup for L3 eligibility computation
+# ---------------------------------------------------------------------------
+
+
+def test_level_at_returns_none_for_unassigned_delegate():
+    d = _delegate_with_levels(levels=[])
+    assert d.level_at(date(2026, 1, 15)) is None
+
+
+def test_level_at_returns_level_within_period():
+    d = _delegate_with_levels(
+        levels=[{"level": 1, "startDate": date(2025, 12, 1), "endDate": None}]
+    )
+    assert d.level_at(date(2026, 1, 15)) == 1
+
+
+def test_level_at_returns_none_before_period_starts():
+    d = _delegate_with_levels(
+        levels=[{"level": 1, "startDate": date(2025, 12, 1), "endDate": None}]
+    )
+    assert d.level_at(date(2025, 11, 30)) is None
+
+
+def test_level_at_returns_level_on_start_date_inclusive():
+    d = _delegate_with_levels(
+        levels=[{"level": 1, "startDate": date(2025, 12, 1), "endDate": None}]
+    )
+    assert d.level_at(date(2025, 12, 1)) == 1
+
+
+def test_level_at_returns_level_on_end_date_inclusive():
+    """endDate is inclusive: the delegate has the level on that day."""
+    d = _delegate_with_levels(
+        levels=[
+            {
+                "level": 1,
+                "startDate": date(2025, 12, 1),
+                "endDate": date(2026, 3, 31),
+            }
+        ]
+    )
+    assert d.level_at(date(2026, 3, 31)) == 1
+    assert d.level_at(date(2026, 4, 1)) is None
+
+
+def test_level_at_with_sequential_levels():
+    """Across a level transition, returns the correct level for each date."""
+    d = _delegate_with_levels(
+        levels=[
+            {
+                "level": 2,
+                "startDate": date(2024, 6, 1),
+                "endDate": date(2025, 5, 31),
+            },
+            {
+                "level": 1,
+                "startDate": date(2025, 6, 1),
+                "endDate": None,
+            },
+        ]
+    )
+    assert d.level_at(date(2024, 12, 1)) == 2
+    assert d.level_at(date(2025, 5, 31)) == 2
+    assert d.level_at(date(2025, 6, 1)) == 1
+    assert d.level_at(date(2026, 1, 1)) == 1
+    # Before any level period
+    assert d.level_at(date(2024, 1, 1)) is None
+
+
+# ---------------------------------------------------------------------------
 # is_active_during — interval overlap with the queried month
 # ---------------------------------------------------------------------------
 
