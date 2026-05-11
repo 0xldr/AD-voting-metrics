@@ -1,6 +1,6 @@
 import argparse
 import logging
-from datetime import date
+from datetime import UTC, date, datetime
 from pathlib import Path
 
 import pandas as pd
@@ -164,7 +164,7 @@ def main(argv=None):
     logger.info("Getting POLL IDS...")
     POLL_INFO = sky.get_poll_ids(period)
     logger.info("Getting VOTE FROM POLLS...")
-    df = sky.get_vote_poll_ids(POLL_INFO, df, df_sky)
+    df = sky.get_vote_poll_ids(POLL_INFO, df, df_sky, current_datetime=datetime.now(UTC))
 
     # Get SPELL addresses information and vote from SPELL
     logger.info("Getting SPELL addresses...")
