@@ -179,3 +179,114 @@ def test_get_sky_delegated_indexed_lookup_handles_many_dates():
     result = sky_dao.get_sky_delegated(df, target_contract, date(2026, 3, 15))
 
     assert result == 1015.0  # i=10, day=15 -> 10 * 100 + 5
+
+
+# ---------------------------------------------------------------------------
+# determine_vote_status — voting-status logic with close-day grace period
+# ---------------------------------------------------------------------------
+
+
+# Standard 3-day poll spanning 4 calendar days in Dune's daily rollups:
+# 16:00-24:00 on day 0, full days 1 and 2, 0:00-16:00 on day 3 (close day).
+_POLL_DAYS = [date(2026, 4, 1), date(2026, 4, 2), date(2026, 4, 3), date(2026, 4, 4)]
+_POLL_CLOSE = date(2026, 4, 4)
+
+
+def _sky_dict(day0: float, day1: float, day2: float, day3: float) -> dict:
+    return dict(zip(_POLL_DAYS, [day0, day1, day2, day3], strict=True))
+
+
+def test_status_no_sky_anywhere_returns_no_delegated_sky():
+    sky = _sky_dict(0, 0, 0, 0)
+    assert (
+        sky_dao.determine_vote_status(sky, _POLL_CLOSE, delegate_voted=False) == "No Delegated SKY"
+    )
+
+
+def test_empty_sky_dict_returns_no_delegated_sky():
+    """No Dune rows for this delegate in the window (delegate never had any)
+    is treated the same as all-zero. Defensive."""
+    assert (
+        sky_dao.determine_vote_status({}, _POLL_CLOSE, delegate_voted=False) == "No Delegated SKY"
+    )
+
+
+def test_status_voted_with_sky_returns_yes():
+    """Delegate had SKY and voted."""
+    sky = _sky_dict(1000, 1000, 1000, 1000)
+    assert sky_dao.determine_vote_status(sky, _POLL_CLOSE, delegate_voted=True) == "Yes"
+
+
+def test_status_did_not_vote_full_window_returns_no():
+    """Delegate has SKY throughout and did not vote."""
+    sky = _sky_dict(1000, 1000, 1000, 1000)
+    assert sky_dao.determine_vote_status(sky, _POLL_CLOSE, delegate_voted=False) == "No"
+
+
+def test_status_grace_period_close_day_only_no_vote_returns_no_delegated_sky():
+    """Scenario C: zero on days 0-2, non-zero only on close day, didn't vote.
+    The grace period covers this — a delegation arriving same-day as close
+    can't reasonably be acted on.
+    """
+    sky = _sky_dict(0, 0, 0, 1000)
+    assert (
+        sky_dao.determine_vote_status(sky, _POLL_CLOSE, delegate_voted=False) == "No Delegated SKY"
+    )
+
+
+def test_status_grace_period_close_day_only_voted_returns_yes():
+    """Same as above, but they voted anyway. Delegate engaged despite
+    late delegation - count it as Yes"""
+    sky = _sky_dict(0, 0, 0, 1000)
+    assert sky_dao.determine_vote_status(sky, _POLL_CLOSE, delegate_voted=True) == "Yes"
+
+
+def test_status_pre_close_day_delegation_still_returns_no():
+    """non-zero on day 2 and day 3. Didn't vote. They had >24h to vote.
+    Grace period doesn't apply, counts as "no".
+    """
+    sky = _sky_dict(0, 0, 1000, 1000)
+    assert sky_dao.determine_vote_status(sky, _POLL_CLOSE, delegate_voted=False) == "No"
+
+
+def test_status_mid_window_only_returns_no_delegated_sky():
+    """non-zero only on day 1 (mid-window), zero on close day. Didn't vote."""
+    sky = _sky_dict(0, 1000, 0, 0)
+    assert (
+        sky_dao.determine_vote_status(sky, _POLL_CLOSE, delegate_voted=False) == "No Delegated SKY"
+    )
+
+
+def test_status_grief_vector_blocked():
+    sky = _sky_dict(0, 0, 0, 1)
+    assert (
+        sky_dao.determine_vote_status(sky, _POLL_CLOSE, delegate_voted=False) == "No Delegated SKY"
+    )
+
+
+def test_status_mid_window_withdrawal_returns_no_delegated_sky():
+    sky = _sky_dict(1000, 1000, 0, 0)
+    assert (
+        sky_dao.determine_vote_status(sky, _POLL_CLOSE, delegate_voted=False) == "No Delegated SKY"
+    )
+
+
+def test_status_partial_window_date_uses_what_is_present():
+    sky = {date(2026, 4, 4): 1000.0}
+    assert (
+        sky_dao.determine_vote_status(sky, _POLL_CLOSE, delegate_voted=False) == "No Delegated SKY"
+    )
+
+
+def test_status_partial_window_pre_close_only_returns_no_delegated_sky():
+    sky = {date(2026, 4, 2): 1000.0}
+    assert (
+        sky_dao.determine_vote_status(sky, _POLL_CLOSE, delegate_voted=False) == "No Delegated SKY"
+    )
+
+
+def test_status_voted_but_withdrew_before_close_returns_yes():
+    """Edge case. Delegate had SKY and voted. Delegation pulled before
+    poll closes. Delegate still participated - vote stands."""
+    sky = _sky_dict(1000, 1000, 0, 0)
+    assert sky_dao.determine_vote_status(sky, _POLL_CLOSE, delegate_voted=True) == "Yes"

@@ -185,6 +185,41 @@ def get_poll_ids(period: MonthPeriod):
     return poll_info
 
 
+def determine_vote_status(
+    sky_by_date: dict[date, float],
+    poll_end_date: date,
+    delegate_voted: bool,
+) -> str:
+    """Determine the participation status for one (delegate, poll) pair.
+
+    sky_by_date is the delegate's SKY balance per day across the voting window
+    (typically 4 calendar days for a 3 day poll: 16:00-24:00 on day 0, full
+    days 1 and 2, 0:00-16:00 on day 3). Missing dates are treated as zero.
+
+    poll_end_date is the poll's close day (when voting ends at 16:00 UTC).
+    delegate_voted is True if the delegate cast a vote on this poll.
+
+    Returns one of: "Yes", "No", or "No Delegated SKY".
+
+    A delegate is counted as a "No" vote if BOTH of these criteria are true:
+      1. They had non-zero SKY delegated on the close day, AND
+      2. They had non-zero SKY delegated on at least one prior day in the
+      window.
+
+    If either fails, status is "No Delegated SKY".
+    """
+    if delegate_voted:
+        return "Yes"
+
+    close_day_sky = sky_by_date.get(poll_end_date, 0.0)
+    had_sky_before_close = any(sky != 0 for d, sky in sky_by_date.items() if d < poll_end_date)
+
+    if close_day_sky == 0 or not had_sky_before_close:
+        return "No Delegated SKY"
+
+    return "No"
+
+
 # Define a function to confirm the voting of each delegate in the conducted polls.
 def get_vote_poll_ids(poll_info, df, df_sky):
     for poll in poll_info:
@@ -200,7 +235,7 @@ def get_vote_poll_ids(poll_info, df, df_sky):
             address = row["Delegate Contract"]
             first_delegate_date = datetime.strptime(row["Start Date"], "%Y-%m-%d").date()
             # Check if the address voted in this poll
-            voted = any(
+            delegate_voted = any(
                 voter["voter"].lower() == address.lower()
                 for voter in data.get("votesByAddress", [])
             )
@@ -214,16 +249,16 @@ def get_vote_poll_ids(poll_info, df, df_sky):
                 & (df_sky["date"] <= end_date)
             ]
 
-            for _index, delegate_sky_available in delegates_sky_available.iterrows():
-                if delegate_sky_available["sky"] != 0:
-                    voted = "Yes" if voted else "No"
-                    break
-                voted = "No Delegated SKY"
+            sky_by_date: dict[date, float] = {
+                row_sky["date"]: float(row_sky["sky"])
+                for _, row_sky in delegates_sky_available.iterrows()
+            }
+            status = determine_vote_status(sky_by_date, end_date, delegate_voted)
 
             if first_delegate_date > end_date:
-                voted = "Not Started"
+                status = "Not Started"
 
-            vote_statuses.append(voted)
+            vote_statuses.append(status)
 
         # Add a new column to the DataFrame with the poll id as the header
         df[str(poll["pollId"])] = vote_statuses
