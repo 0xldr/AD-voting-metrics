@@ -93,7 +93,7 @@ def build_arg_parser():
     return parser
 
 
-def main(argv=None) -> None:
+def main(argv: list[str] | None) -> None:
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s %(levelname)s %(message)s",
