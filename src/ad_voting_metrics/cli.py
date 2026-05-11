@@ -85,7 +85,7 @@ def build_arg_parser():
         metavar="N",
         help=(
             "If set, reuse a cached Dune execution if it's at most N hours old."
-            "If omitted, executes the Duen query fresh (default behavior)."
+            "If omitted, executes the Dune query fresh (default behavior)."
             "Use 24 or so for fast iteration during development; leave unset"
             "for production monthly run."
         ),
@@ -93,7 +93,7 @@ def build_arg_parser():
     return parser
 
 
-def main(argv: list[str] | None) -> None:
+def main(argv: list[str] | None = None) -> None:
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s %(levelname)s %(message)s",
