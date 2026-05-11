@@ -1,6 +1,6 @@
 import logging
 import os
-from datetime import date, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from typing import Any
 
 import pandas as pd
@@ -189,6 +189,7 @@ def determine_vote_status(
     sky_by_date: dict[date, float],
     poll_end_date: date,
     delegate_voted: bool,
+    current_datetime: datetime,
 ) -> str:
     """Determine the participation status for one (delegate, poll) pair.
 
@@ -196,10 +197,20 @@ def determine_vote_status(
     (typically 4 calendar days for a 3 day poll: 16:00-24:00 on day 0, full
     days 1 and 2, 0:00-16:00 on day 3). Missing dates are treated as zero.
 
-    poll_end_date is the poll's close day (when voting ends at 16:00 UTC).
-    delegate_voted is True if the delegate cast a vote on this poll.
+    poll_end_date is the poll's close day. Voting on SKY polls ends at 16:00
+    UTC on that day; this function constructs the close datetime internally
+    for comparison.
+    delegate_voted is True if the delegate cast a vote on this poll as of
+    the latest API check.
+    current_datetime is the timezone-aware datetime metrics are being computed
+    at - used to detect polls still in their voting window at the time of the
+    run.
 
-    Returns one of: "Yes", "No", or "No Delegated SKY".
+    Returns one of: "Yes", "No", "No Delegated SKY", or "Voting Open".
+
+    If the poll is still open (current_datetime < 16:00 UTC on
+    poll_end_date), the result is still in flux. We treat in-progress
+    polls positively:
 
     A delegate is counted as a "No" vote if BOTH of these criteria are true:
       1. They had non-zero SKY delegated on the close day, AND
@@ -208,6 +219,19 @@ def determine_vote_status(
 
     If either fails, status is "No Delegated SKY".
     """
+    poll_close_at = datetime(
+        poll_end_date.year,
+        poll_end_date.month,
+        poll_end_date.day,
+        16,
+        0,
+        0,
+        tzinfo=UTC,
+    )
+
+    if current_datetime < poll_close_at:
+        return "Yes" if delegate_voted else "Voting Open"
+
     if delegate_voted:
         return "Yes"
 
@@ -221,7 +245,7 @@ def determine_vote_status(
 
 
 # Define a function to confirm the voting of each delegate in the conducted polls.
-def get_vote_poll_ids(poll_info, df, df_sky):
+def get_vote_poll_ids(poll_info, df, df_sky, current_datetime: datetime):
     for poll in poll_info:
         # Initialize an empty list to store vote status (Yes, Pending verification,No Delegated SKY or Not Started)
         vote_statuses = []
@@ -253,7 +277,7 @@ def get_vote_poll_ids(poll_info, df, df_sky):
                 row_sky["date"]: float(row_sky["sky"])
                 for _, row_sky in delegates_sky_available.iterrows()
             }
-            status = determine_vote_status(sky_by_date, end_date, delegate_voted)
+            status = determine_vote_status(sky_by_date, end_date, delegate_voted, current_datetime)
 
             if first_delegate_date > end_date:
                 status = "Not Started"

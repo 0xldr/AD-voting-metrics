@@ -36,6 +36,7 @@ def test_discounted_set_contests():
             {
                 "Not Started",
                 "Exited",
+                "Voting Open",
                 "No Delegated SKY",
                 "Not included",
                 "Pending verification",

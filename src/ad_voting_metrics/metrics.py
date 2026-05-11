@@ -19,6 +19,11 @@ their alignment timing and SKY balance during the voting window:
   - "Exited": the delegate's alignment endDate is before this poll's startDate -i.e.,
   they had already exited when the poll opened, so non-participation isn't held against
   them. Symmetric to "Not Started" on the other temporal boundary.
+  - "Voting Open": the poll's voting window had not yet closed at the time metrics were
+  computed. Delegates who already voted are "Yes"; non-voters get this status
+  (rather than "No") because the result is still in flux and not voting yet isn't a
+  final answer. Goes in DISCOUNTED so it doesn't affect participation % until the poll
+  closes and the data is rerun.
   - "No Delegated SKY": the delegate had zero SKY delegated to them on every day
   of the poll's voting window
   - "Not included": operator-flagged poll to exclude (governance exception,
@@ -53,6 +58,7 @@ DISCOUNTED = frozenset(
     {
         "Not Started",
         "Exited",
+        "Voting Open",
         "No Delegated SKY",
         "Not included",
         "Pending verification",
