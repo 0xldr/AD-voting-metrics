@@ -29,6 +29,13 @@ their alignment timing and SKY balance during the voting window:
   - "Not included": operator-flagged poll to exclude (governance exception,
     data error, etc.) — set manually, not by the script
   - "Pending verification": spell vote recorded but not yet verified
+  (spell-specific status that requires manual confirmation); also used
+  by the Communication Master tab to mark cells that have not yet been reviewed
+  by the operator
+  - "Did Not Vote": derived value for communication metrics, used when a delegate did
+  not vote on a poll (participation = "No"). There is nothing to communicate about on
+  a poll that a delegate did not vote on, so the poll is excluded from the communication
+  percentage.
 
 The participation percentage matches the existing formula:
 
@@ -62,6 +69,7 @@ DISCOUNTED = frozenset(
         "No Delegated SKY",
         "Not included",
         "Pending verification",
+        "Did not vote",
     }
 )
 
@@ -135,3 +143,109 @@ def participation_pct_for_window(
         if is_in_window(ps, window_start, window_end)
     ]
     return participation_pct(in_window_statuses)
+
+
+def apply_participation_cross_reference(
+    participation_statuses: Sequence[str],
+    communication_statuses: Sequence[str],
+) -> list[str]:
+    """Apply the participation cross-reference rule to communication data.
+
+    For each (poll, delegate) pair:
+
+      - participation = "Yes" → communication passes through unchanged.
+        The delegate participated; whatever the operator recorded is the
+        truth.
+      - participation = "No" → communication is overridden to "Did not
+        vote". There's nothing to communicate about a poll the delegate
+        didn't engage with; the discount keeps it out of the comm
+        denominator.
+      - participation in DISCOUNTED (Not Started, Exited, Voting Open,
+        No Delegated SKY, Not included, Pending verification) →
+        communication is overridden to that same participation status.
+        Polls outside the delegate's alignment period or otherwise
+        ineligible for participation can't meaningfully contribute to a
+        communication metric either. Mirroring the participation status
+        into communication keeps both denominators in sync.
+      - participation = anything else (unknown status) → communication
+        passes through. Don't silently lose data on unrecognized
+        statuses; let count_statuses flag them later.
+
+    The two sequences must be parallel and equal-length. Mismatched
+    lengths raise ValueError.
+
+    Returns a new list (does not mutate inputs).
+    """
+    if len(participation_statuses) != len(communication_statuses):
+        raise ValueError(
+            f"participation_statuses and communication_statuses must be the "
+            f"same length (got {len(participation_statuses)}) and "
+            f"{len(communication_statuses)}"
+        )
+    result = []
+    for p, c in zip(participation_statuses, communication_statuses, strict=True):
+        if p in NOT_PARTICIPATED:
+            result.append("Did not vote")
+        elif p in DISCOUNTED:
+            # Mirror the discounted participation
+            result.append(p)
+        else:
+            # "Yes" or any unknown status
+            result.append(c)
+
+    return result
+
+
+def communication_pct(
+    participation_statuses: Sequence[str],
+    communication_statuses: Sequence[str],
+) -> float | None:
+    """Communication percentage: Yes / (Yes + No) on the cross-referenced
+    communication status list.
+
+    Applies apply_participation_cross_reference first (overriding "No"
+    participation to "Did not vote" communication), then runs the same
+    Yes/(Yes+No) calculation as participation_pct. Returns None for an
+    empty denominator, matching the "No Data" sentinel pattern.
+
+    The two sequences must be parallel and equal-length. Length mismatch
+    raises ValueError via apply_participation_cross_reference.
+
+    Note: this function does not enforce the "communication must be within
+    7 days of poll end date" rule. That rule is followed by the operator at
+    data entry time — operators only record "Yes" for communications that
+    happened in the window. The script trusts what's in the workbook.
+    """
+    effective = apply_participation_cross_reference(participation_statuses, communication_statuses)
+    return participation_pct(effective)
+
+
+def communication_pct_for_window(
+    poll_starts: Sequence[date],
+    participation_statuses: Sequence[str],
+    communication_statuses: Sequence[str],
+    window_start: date | None,
+    window_end: date,
+) -> float | None:
+    """Communication percentage filtered to polls within the given window.
+
+    poll_starts, participation_statuses, and communication_statuses must
+    be three parallel sequences of equal length, one entry per poll.
+    Window membership uses the same is_in_window check as participation
+    (keyed on poll start date).
+
+    Mismatched lengths raise ValueError.
+    """
+    n = len(poll_starts)
+    if len(participation_statuses) != n or len(communication_statuses) != n:
+        raise ValueError(
+            f"poll_starts, participation_statuses, and communication_statuses "
+            f"must all be the same length (got {n}, "
+            f"{len(participation_statuses)}, {len(communication_statuses)})"
+        )
+    in_window_indices = [
+        i for i, ps in enumerate(poll_starts) if is_in_window(ps, window_start, window_end)
+    ]
+    p_filtered = [participation_statuses[i] for i in in_window_indices]
+    c_filtered = [communication_statuses[i] for i in in_window_indices]
+    return communication_pct(p_filtered, c_filtered)
