@@ -114,3 +114,58 @@ def get_workbook(
             f"with that email as Editor in Google Sheets, then re-run. "
             f"Original error: {e}"
         ) from e
+
+
+# ------------------------------------------------------------
+# Tab management - list, create-or-get, clear.
+# ------------------------------------------------------------
+
+
+def list_tab_names(workbook: gspread.Spreadsheet) -> list[str]:
+    """Return the title of every worksheet/tab in the workbook, in order.
+
+    Thin wrapper over gspread; exists so callers can ask "does this tab
+    exist?" without fishing through the gspread API directly, and so we
+    have a single point to add caching or logging later if needed.
+    """
+    return [ws.title for ws in workbook.worksheets()]
+
+
+def get_or_create_tab(
+    workbook: gspread.Spreadsheet,
+    title: str,
+    *,
+    rows: int,
+    cols: int,
+) -> gspread.Worksheet:
+    """
+    Return the worksheet with the given title, creating it if absent.
+
+    rows and cols are required (keyword-only) - callers should size tabs
+    based on the data they're about to write, not on arbitrary defaults.
+    They apply only when creating a new tab; existing tabs keep their
+    current dimensions regardless of what's passed. Resizing on every
+    call would shrink/grow tabs unpredictably and risk losing operator-
+    set sizing.
+
+    Title matching is exact and case-sensitive (the underlying gspread
+    behavior). Google Sheets allows tab titles up to 100 chars and forbids
+    `[`, `]`, `*`, `?`, `:`, `/`, `\\`.
+    """
+    try:
+        return workbook.worksheet(title)
+    except gspread.exceptions.WorksheetNotFound:
+        return workbook.add_worksheet(title=title, rows=rows, cols=cols)
+
+
+def clear_tab(worksheet: gspread.Worksheet) -> None:
+    """Wipe all cell values in the worksheet, leaving formatting intact.
+
+    Uses gspread's worksheet.clear(), which clears cell values but
+    preserves column widths, frozen rows, conditional formatting, and
+    other operator-set sheet formatting. This is the right level for
+    our re-write workflow — operators set up formatting once and
+    re-runs preserve it. A "factory reset" that wipes formatting too
+    would need a separate function.
+    """
+    worksheet.clear()

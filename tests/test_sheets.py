@@ -288,3 +288,170 @@ def test_get_workbook_real_credentials_opens_spreadsheet():
     # the API. If auth or sharing is broken, this raises here.
     assert isinstance(workbook.title, str)
     assert workbook.title  # non-empty
+
+
+# ---------------------------------------------------------------------------
+# Tab management — list_tab_names, get_or_create_tab, clear_tab
+# ---------------------------------------------------------------------------
+
+
+def test_list_tab_names_returns_titles_in_order():
+    """Wraps workbook.worksheets() and returns just the titles."""
+    fake_ws1 = MagicMock(title="Daily Data")
+    fake_ws2 = MagicMock(title="Participation Raw Data")
+    fake_ws3 = MagicMock(title="Compensation")
+    workbook = MagicMock()
+    workbook.worksheets.return_value = [fake_ws1, fake_ws2, fake_ws3]
+
+    result = sheets.list_tab_names(workbook)
+
+    assert result == ["Daily Data", "Participation Raw Data", "Compensation"]
+
+
+def test_list_tab_names_empty_workbook_returns_empty_list():
+    """An (impossible in practice — every Sheets workbook has at least one
+    tab) but the function should handle it without surprise."""
+    workbook = MagicMock()
+    workbook.worksheets.return_value = []
+
+    assert sheets.list_tab_names(workbook) == []
+
+
+def test_get_or_create_tab_returns_existing_tab():
+    """If the worksheet exists, return it without trying to create."""
+    existing_ws = MagicMock(spec=gspread.Worksheet)
+    workbook = MagicMock()
+    workbook.worksheet.return_value = existing_ws
+
+    result = sheets.get_or_create_tab(workbook, "Daily Data", rows=100, cols=10)
+
+    assert result is existing_ws
+    workbook.worksheet.assert_called_once_with("Daily Data")
+    workbook.add_worksheet.assert_not_called()
+
+
+def test_get_or_create_tab_creates_when_missing():
+    """If the worksheet doesn't exist, create it with the given dimensions."""
+    created_ws = MagicMock(spec=gspread.Worksheet)
+    workbook = MagicMock()
+    workbook.worksheet.side_effect = gspread.exceptions.WorksheetNotFound
+    workbook.add_worksheet.return_value = created_ws
+
+    result = sheets.get_or_create_tab(workbook, "New Tab", rows=500, cols=20)
+
+    assert result is created_ws
+    workbook.add_worksheet.assert_called_once_with(title="New Tab", rows=500, cols=20)
+
+
+def test_get_or_create_tab_does_not_resize_existing_tab():
+    """Existing tab is returned regardless of the rows/cols passed.
+    Resizing on every call would shrink/grow tabs unpredictably."""
+    existing_ws = MagicMock(spec=gspread.Worksheet)
+    workbook = MagicMock()
+    workbook.worksheet.return_value = existing_ws
+
+    sheets.get_or_create_tab(workbook, "Existing", rows=999, cols=99)
+
+    # add_worksheet not called → no resize attempt
+    workbook.add_worksheet.assert_not_called()
+    # existing_ws.resize() should not be called either
+    existing_ws.resize.assert_not_called()
+
+
+def test_get_or_create_tab_requires_keyword_only_rows_cols():
+    """rows and cols are keyword-only — passing positionally is a TypeError.
+    Forces callers to be explicit about size."""
+    workbook = MagicMock()
+    workbook.worksheet.return_value = MagicMock(spec=gspread.Worksheet)
+
+    with pytest.raises(TypeError):
+        # Attempting positional args should fail
+        sheets.get_or_create_tab(workbook, "Tab", 100, 10)  # type: ignore[misc]
+
+
+def test_clear_tab_calls_worksheet_clear():
+    """clear_tab delegates to gspread's worksheet.clear() which wipes
+    values while preserving formatting."""
+    worksheet = MagicMock(spec=gspread.Worksheet)
+
+    sheets.clear_tab(worksheet)
+
+    worksheet.clear.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# Tab management — integration tests against the real workbook
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def _temp_tab(request):
+    """Yield a unique temp-tab title; clean up the tab after the test.
+
+    Used by integration tests that need to create a tab to exercise.
+    The teardown deletes the tab even if the test failed, so we don't
+    accumulate cruft in the test workbook.
+    """
+    import uuid
+
+    tab_name = f"_test_temp_{uuid.uuid4().hex[:8]}"
+
+    def cleanup():
+        try:
+            workbook = sheets.get_workbook()
+            try:
+                ws = workbook.worksheet(tab_name)
+                workbook.del_worksheet(ws)
+            except gspread.exceptions.WorksheetNotFound:
+                pass  # tab was never created or already deleted
+        except Exception:
+            # Even if cleanup fails, don't mask the underlying test result.
+            # Operator can manually delete leftover _test_temp_* tabs.
+            pass
+
+    request.addfinalizer(cleanup)
+    return tab_name
+
+
+@pytest.mark.integration
+def test_list_tab_names_returns_real_tabs():
+    """The real workbook has at least one tab; list returns it."""
+    workbook = sheets.get_workbook()
+    names = sheets.list_tab_names(workbook)
+    assert len(names) >= 1
+    assert all(isinstance(n, str) for n in names)
+
+
+@pytest.mark.integration
+def test_get_or_create_tab_creates_and_finds_real_tab(_temp_tab):
+    """Create a real tab, verify it shows up, fetch it again, get
+    the same one back. Teardown deletes it."""
+    workbook = sheets.get_workbook()
+
+    # First call creates
+    created = sheets.get_or_create_tab(workbook, _temp_tab, rows=50, cols=5)
+    assert created.title == _temp_tab
+    assert _temp_tab in sheets.list_tab_names(workbook)
+
+    # Second call returns the same tab (doesn't create a duplicate)
+    fetched = sheets.get_or_create_tab(workbook, _temp_tab, rows=999, cols=99)
+    assert fetched.id == created.id
+
+
+@pytest.mark.integration
+def test_clear_tab_wipes_real_cells(_temp_tab):
+    """Write some data, clear, verify the cells are empty."""
+    workbook = sheets.get_workbook()
+    ws = sheets.get_or_create_tab(workbook, _temp_tab, rows=10, cols=3)
+
+    # Write some data
+    ws.update(values=[["hello", "world"], ["foo", "bar"]], range_name="A1:B2")
+
+    # Verify it's there
+    assert ws.acell("A1").value == "hello"
+
+    # Clear
+    sheets.clear_tab(ws)
+
+    # Verify it's gone
+    assert ws.acell("A1").value is None
