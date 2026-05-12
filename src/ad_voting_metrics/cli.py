@@ -64,12 +64,33 @@ def build_arg_parser():
     parser = argparse.ArgumentParser(
         prog="ad-voting-metrics",
         description=(
-            "Generate AD voting metrics CSVs for a single month. "
-            "Reads the aligned-delegate roster, fetches SKY delegations and "
-            "poll/spell vote data, and writes CSVs to output_data/."
+            "Generate AD voting metrics for a single month. The workflow "
+            "is two-step: `fetch` pulls SKY delegations and poll/spell vote "
+            "data and writes the raw participation tabs to the workbook "
+            "(and CSVs to output_data/ for the current transition period). "
+            "An operator then reviews communication entries manually. "
+            "`finalize` reads the operator-reviewed communication data and "
+            "writes the Compensation tab."
         ),
     )
-    parser.add_argument(
+    subparsers = parser.add_subparsers(
+        dest="command",
+        required=True,
+        metavar="COMMAND",
+        help="The pipeline stage to run.",
+    )
+
+    fetch_parser = subparsers.add_parser(
+        "fetch",
+        help="Pull data from Dune + APIs and write participation tabs.",
+        description=(
+            "Step 1 of the monthly pipeline. Pulls SKY delegations from "
+            "Dune Analytics and poll/spell vote data from vote.sky.money, "
+            "computes participation status per (poll, delegate), and "
+            "reviews communication before running 'finalize'."
+        ),
+    )
+    fetch_parser.add_argument(
         "--month",
         required=True,
         type=parse_month,
@@ -78,18 +99,41 @@ def build_arg_parser():
             "Month to query, e.g. 'April 2026' or '2026-04'. Resolves to the full calendar month."
         ),
     )
-    parser.add_argument(
+    fetch_parser.add_argument(
         "--cache-hours",
         type=parse_cache_hours,
         default=None,
         metavar="N",
         help=(
-            "If set, reuse a cached Dune execution if it's at most N hours old."
-            "If omitted, executes the Dune query fresh (default behavior)."
-            "Use 24 or so for fast iteration during development; leave unset"
+            "If set, reuse a cached Dune execution if it's at most N hours old. "
+            "If omitted, executes the Dune query fresh (default behavior). "
+            "Use 24 or so for fast iteration during development; leave unset "
             "for production monthly run."
         ),
     )
+
+    finalize_parser = subparsers.add_parser(
+        "finalize",
+        help="Compute final metrics and write Compensation tab.",
+        description=(
+            "Step 2 of the monthly pipeline. Reads the operator-reviewed "
+            "Communication Master tab from the workbook, computes "
+            "participation and communication percentages, runs Level 3 "
+            "eligibility, and writes the Compensation tab. Does not "
+            "re-fetch from Dune."
+        ),
+    )
+    finalize_parser.add_argument(
+        "--month",
+        required=True,
+        type=parse_month,
+        metavar="MONTH",
+        help=(
+            "Month to finalize, e.g. 'April 2026' or '2026-04'. Must match - "
+            "a month previously processed by `fetch`."
+        ),
+    )
+
     return parser
 
 
@@ -114,20 +158,9 @@ def check_period_has_ended(period: MonthPeriod, today: date) -> None:
         )
 
 
-def main(argv: list[str] | None = None) -> None:
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s %(levelname)s %(message)s",
-        datefmt="%Y-%m-%d %H:%M:%S",
-    )
-    # Set Dune to WARNING to reduce terminal noise
-    logging.getLogger("dune_client").setLevel(logging.WARNING)
-    load_dotenv()
-    parser = build_arg_parser()
-    args = parser.parse_args(argv)
+def _run_fetch(args: argparse.Namespace) -> None:
+    """Execute the fetch stage: pull from Dune + APIs, write raw participation."""
     period = args.month
-
-    check_period_has_ended(period, today=datetime.now(UTC).date())
 
     logger.info(
         "Querying %s (%s through %s)", period, period.start.isoformat(), period.end.isoformat()
@@ -231,3 +264,34 @@ def main(argv: list[str] | None = None) -> None:
         output_files=output_files,
     )
     write_entry(RECONCILIATION_LOG_PATH, period, entry)
+
+
+def _run_finalize(args: argparse.Namespace) -> None:
+    """Execute the finalize stage: read communication, compute metrics, write Compensation tab."""
+
+    period = args.month
+    logger.info("Finalize requested for %s", period)
+    raise SystemExit("`finalize` is not yet implemented.")
+
+
+def main(argv: list[str] | None = None) -> None:
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s %(message)s",
+        datefmt="%Y-%m%d %H-%M-%S",
+    )
+    # Set Dune to WARNING to reduce terminal noise
+    logging.getLogger("dune-client").setLevel(logging.WARNING)
+    load_dotenv()
+    parser = build_arg_parser()
+    args = parser.parse_args(argv)
+
+    check_period_has_ended(args.month, today=datetime.now(UTC).date())
+
+    if args.command == "fetch":
+        _run_fetch(args)
+    elif args.command == "finalize":
+        _run_finalize(args)
+    else:
+        # argparse should already have rejected this; defensive fallback
+        raise SystemExit(f"Unknown command: {args.command!r}")
