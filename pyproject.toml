@@ -15,6 +15,8 @@ dependencies = [
     "pydantic>=2.0,<3",
     "pyyaml>=6.0,<7",
     "dune-client>=1.10,<2",
+    "gspread>=6.0,<7",
+    "google-auth>=2.0,<3",
 ]
 
 [project.optional-dependencies]
@@ -58,6 +60,10 @@ ignore = [
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = [
+    "integration: tests that hit live external services (Google Sheets, etc.). Skipped by default; run with `pytest -m integration`.",
+]
+addopts = "-m 'not integration'"
 
 [tool.mypy]
 files = ["src"]
