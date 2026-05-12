@@ -106,3 +106,103 @@ def test_check_period_has_ended_handles_leap_year():
     assert check_period_has_ended(period, today=date(2024, 3, 1)) is None
     with pytest.raises(SystemExit, match="2024-03-01"):
         check_period_has_ended(period, today=date(2024, 2, 29))
+
+
+# ---------------------------------------------------------------------------
+# Subcommand structure — build_arg_parser
+# ---------------------------------------------------------------------------
+
+
+def test_parser_fetch_subcommand_parses_month_and_cache_hours():
+    """The fetch subcommand takes --month and --cache-hours."""
+    from ad_voting_metrics.cli import build_arg_parser
+
+    parser = build_arg_parser()
+    args = parser.parse_args(["fetch", "--month", "April 2026", "--cache-hours", "24"])
+
+    assert args.command == "fetch"
+    assert isinstance(args.month, MonthPeriod)
+    assert args.month.year == 2026
+    assert args.month.month == 4
+    assert args.cache_hours == 24
+
+
+def test_parser_fetch_subcommand_cache_hours_optional():
+    """--cache-hours defaults to None when omitted."""
+    from ad_voting_metrics.cli import build_arg_parser
+
+    parser = build_arg_parser()
+    args = parser.parse_args(["fetch", "--month", "April 2026"])
+
+    assert args.command == "fetch"
+    assert args.cache_hours is None
+
+
+def test_parser_finalize_subcommand_parses_month():
+    """The finalize subcommand takes --month."""
+    from ad_voting_metrics.cli import build_arg_parser
+
+    parser = build_arg_parser()
+    args = parser.parse_args(["finalize", "--month", "April 2026"])
+
+    assert args.command == "finalize"
+    assert isinstance(args.month, MonthPeriod)
+    assert args.month.year == 2026
+    assert args.month.month == 4
+
+
+def test_parser_finalize_does_not_accept_cache_hours():
+    """--cache-hours is a fetch-only flag; argparse rejects it on finalize."""
+    from ad_voting_metrics.cli import build_arg_parser
+
+    parser = build_arg_parser()
+    with pytest.raises(SystemExit):
+        parser.parse_args(["finalize", "--month", "April 2026", "--cache-hours", "24"])
+
+
+def test_parser_requires_subcommand():
+    """Calling without a subcommand exits with argparse's usage error."""
+    from ad_voting_metrics.cli import build_arg_parser
+
+    parser = build_arg_parser()
+    with pytest.raises(SystemExit):
+        parser.parse_args([])
+
+
+def test_parser_unknown_subcommand_rejected():
+    """A subcommand not in {fetch, finalize} exits with argparse error."""
+    from ad_voting_metrics.cli import build_arg_parser
+
+    parser = build_arg_parser()
+    with pytest.raises(SystemExit):
+        parser.parse_args(["bogus", "--month", "April 2026"])
+
+
+def test_parser_both_subcommands_require_month():
+    """--month is required on both subcommands."""
+    from ad_voting_metrics.cli import build_arg_parser
+
+    parser = build_arg_parser()
+    with pytest.raises(SystemExit):
+        parser.parse_args(["fetch"])
+    with pytest.raises(SystemExit):
+        parser.parse_args(["finalize"])
+
+
+# ---------------------------------------------------------------------------
+# _run_finalize stub
+# ---------------------------------------------------------------------------
+
+
+def test_run_finalize_stub_raises_not_implemented(monkeypatch):
+    """The finalize stub raises SystemExit with a clear "not yet implemented"
+    message so operators running it early get unambiguous feedback rather
+    than silent success."""
+    from ad_voting_metrics.cli import _run_finalize
+
+    fake_args = argparse.Namespace(
+        command="finalize",
+        month=MonthPeriod(year=2026, month=1),
+    )
+    with pytest.raises(SystemExit, match="not yet implemented"):
+        _run_finalize(fake_args)
