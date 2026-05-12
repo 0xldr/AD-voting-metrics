@@ -50,7 +50,7 @@ def test_get_all_sky_delegated_calls_run_query_dataframe(monkeypatch):
 
 
 def test_get_all_sky_delegated_uses_cache_when_cache_hours_set(monkeypatch):
-    """When cache_max_age_hours is provided, get_latest_resultis called
+    """When cache_max_age_hours is provided, get_latest_result is called
     instead of run_query_dataframe, with the threshold passed through."""
     monkeypatch.setenv("DUNE_API_KEY", "fake-key")
 
