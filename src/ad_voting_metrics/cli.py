@@ -98,7 +98,7 @@ def check_period_has_ended(period: MonthPeriod, today: date) -> None:
 
     Metrics for an in-progress period are unreliable: poll close-day rules
     can't be applied to polls still in their voting window, the SKY-ranking
-    snapshot is incomplete, and the operator workflow assuems a closed period
+    snapshot is incomplete, and the operator workflow assumes a closed period
     boundary.
 
     `today` should be the current UTC date - periods are UTC-anchored
