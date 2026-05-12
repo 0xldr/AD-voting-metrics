@@ -1,6 +1,6 @@
 import argparse
 import logging
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 
 import pandas as pd
@@ -93,6 +93,27 @@ def build_arg_parser():
     return parser
 
 
+def check_period_has_ended(period: MonthPeriod, today: date) -> None:
+    """Raise SystemExit if the period hasn't ended on or before today.
+
+    Metrics for an in-progress period are unreliable: poll close-day rules
+    can't be applied to polls still in their voting window, the SKY-ranking
+    snapshot is incomplete, and the operator workflow assuems a closed period
+    boundary.
+
+    `today` should be the current UTC date - periods are UTC-anchored
+    (polls close at 16:00 UTC).
+    """
+    if today <= period.end:
+        next_day = period.end + timedelta(days=1)
+        raise SystemExit(
+            f"Refusing to compute metrics for {period}: the period has not yet "
+            f"ended (UTC date is {today.isoformat()}, period ends "
+            f"{period.end.isoformat()}). Re-run on or after "
+            f"{next_day.isoformat()} UTC."
+        )
+
+
 def main(argv: list[str] | None = None) -> None:
     logging.basicConfig(
         level=logging.INFO,
@@ -105,6 +126,8 @@ def main(argv: list[str] | None = None) -> None:
     parser = build_arg_parser()
     args = parser.parse_args(argv)
     period = args.month
+
+    check_period_has_ended(period, today=datetime.now(UTC).date())
 
     logger.info(
         "Querying %s (%s through %s)", period, period.start.isoformat(), period.end.isoformat()
