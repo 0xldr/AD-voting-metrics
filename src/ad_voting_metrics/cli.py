@@ -3,6 +3,7 @@ import logging
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 
+import gspread
 import pandas as pd
 from dotenv import load_dotenv
 
@@ -235,6 +236,33 @@ def _run_fetch(args: argparse.Namespace) -> None:
     output_files.append(output_csv)
     logger.info("Participation vote data saved to %s", output_csv)
 
+    # Open the workbook once and reuse for all writers below. Failures are
+    # handled per-writer so one tab's problem doesn't drop the others. The
+    # CSV outputs above are always written before this block, so they
+    # remain available as a fallback during the transition phase.
+    workbook: gspread.Spreadsheet | None
+    try:
+        workbook = sheets.get_workbook()
+    except RuntimeError as e:
+        logger.error("Could not open Sheets workbook: %s", e)
+        logger.error("CSV outputs in output_date/ are complete; skipping Sheets writes.")
+        workbook = None
+
+    # Write Participation Raw Data BEFORE custom_sort, which transposes df.
+    # The writer expects the per-delegate-rows shape.
+    if workbook is not None:
+        try:
+            sheets.write_participation_raw_data(
+                workbook,
+                period,
+                df,
+                POLL_INFO,
+                SPELL_INFO,
+            )
+            logger.info("Participation Raw Data tab written to workbook for %s", period)
+        except (RuntimeError, gspread.exceptions.APIError) as e:
+            logger.error("Could not write Participation Raw Data tab: %s", e)
+
     df = sky.custom_sort(df, hardcoded_order, POLL_INFO, SPELL_INFO)
 
     output_csv = OUTPUT_DIR / "sky.csv"
@@ -247,14 +275,13 @@ def _run_fetch(args: argparse.Namespace) -> None:
     output_files.append(output_csv)
     logger.info("Ranking data saved to %s", output_csv)
 
-    # Also write Daily Data to workbook.
-    try:
-        workbook = sheets.get_workbook()
-        sheets.write_daily_data(workbook, period, df_ranking)
-        logger.info("Daily Data written to workbook for %s", period)
-    except RuntimeError as e:
-        logger.error("Could not write to Sheets workbook: %s", e)
-        logger.error("CSV outputs in output_data/ are still complete.")
+    # Daily Data — uses df_ranking (independent of df).
+    if workbook is not None:
+        try:
+            sheets.write_daily_data(workbook, period, df_ranking)
+            logger.info("Daily Data written to workbook for %s", period)
+        except (RuntimeError, gspread.exceptions.APIError) as e:
+            logger.error("Could not write Daily Data to tab: %s", e)
 
     output_csv = OUTPUT_DIR / "vote_participation_final_transposed.csv"
     df.to_csv(output_csv, header=False, index=True)
