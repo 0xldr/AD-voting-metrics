@@ -26,7 +26,10 @@ import os
 from pathlib import Path
 
 import gspread
+import pandas as pd
 from google.oauth2.service_account import Credentials
+
+from .period import MonthPeriod
 
 # Scopes required to read/write spreadsheets and open them by ID. The Drive
 # scope is needed because gspread uses Drive APIs for open_by key.
@@ -169,3 +172,71 @@ def clear_tab(worksheet: gspread.Worksheet) -> None:
     would need a separate function.
     """
     worksheet.clear()
+
+
+# ---------------------------------------------------
+# Writers - populate workbook tabs from script data
+# ---------------------------------------------------
+
+
+# Daily Data tab schema. The columns mirror the existing df_ranking
+# dataframe shape so the writer can copy values straight through without
+# reshaping. Stored as a tuple so it's pinned and testable.
+DAILY_DATA_COLUMNS: tuple[str, ...] = ("Date", "Delegate", "Total Delegation", "Rank")
+
+
+def _daily_data_tab_title(period: MonthPeriod) -> str:
+    """Tab title for a month's Daily Data, e.g. 'Daily Data April 2026."""
+    return f"Daily Data {period}"
+
+
+def write_daily_data(
+    workbook: gspread.Spreadsheet,
+    period: MonthPeriod,
+    df_ranking: pd.DataFrame,
+) -> gspread.Worksheet:
+    """Write the Daily Data tab for a period from the ranking dataframe."""
+    missing = [c for c in DAILY_DATA_COLUMNS if c not in df_ranking.columns]
+    if missing:
+        raise ValueError(
+            f"df_ranking is missing required columns: {missing}. Has: {list(df_ranking.columns)}"
+        )
+
+    subset = df_ranking[list(DAILY_DATA_COLUMNS)].copy()
+    subset["Date"] = subset["Date"].apply(
+        lambda d: "" if pd.isna(d) else (d.isoformat() if hasattr(d, "isoformat") else str(d))
+    )
+
+    header = list(DAILY_DATA_COLUMNS)
+    rows = [
+        [row["Date"], row["Delegate"], float(row["Total Delegation"]), int(row["Rank"])]
+        for _, row in subset.iterrows()
+    ]
+    values = [header, *rows]
+
+    title = _daily_data_tab_title(period)
+    worksheet = get_or_create_tab(
+        workbook,
+        title,
+        rows=max(len(values) + 10, 100),
+        cols=max(len(header), 4),
+    )
+
+    clear_tab(worksheet)
+
+    end_col_letter = _col_to_a1(len(header))
+    range_name = f"A1:{end_col_letter}{len(values)}"
+    worksheet.update(values=values, range_name=range_name)
+
+    return worksheet
+
+
+def _col_to_a1(col_index: int) -> str:
+    if col_index < 1:
+        raise ValueError(f"col_index must be >= 1, got {col_index}")
+    result = ""
+    n = col_index
+    while n > 0:
+        n, remainder = divmod(n - 1, 26)
+        result = chr(ord("A") + remainder) + result
+    return result
