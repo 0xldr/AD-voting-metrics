@@ -162,10 +162,10 @@ def get_poll_ids(period: MonthPeriod):
         response.raise_for_status()
         data = response.json()
         # Make the API request
-        paginationInfo = data.get("paginationInfo", [])
+        pagination_info = data.get("paginationInfo", [])
         polls = data.get("polls", [])
 
-        if not paginationInfo:
+        if not pagination_info:
             break
         if not polls:
             break
@@ -176,10 +176,10 @@ def get_poll_ids(period: MonthPeriod):
             if period.start <= start_date_poll <= period.end:
                 poll_info.append(poll)
 
-        if paginationInfo["numPages"] == 1:
+        if pagination_info["numPages"] == 1:
             all_found = True
 
-        if paginationInfo["numPages"] == page:
+        if pagination_info["numPages"] == page:
             all_found = True
 
     return poll_info
@@ -295,7 +295,7 @@ def get_execute_ids(period: MonthPeriod):
     spell_info = []
     start = 0
     limit = 100
-    while start < 10000000:
+    while start < 10_000_000:
         base_url = f"{SKY_EXECUTIVE_URL}?start={start}&limit={limit}"
         response = get_session().get(base_url, headers=HEADERS, timeout=HTTP_TIMEOUT)
 
@@ -388,8 +388,8 @@ def custom_sort(df, hardcoded_order, poll_info, spell_info):
 
     # Lists to store the values
     title_list = []
-    startDate_list = []
-    endDate_list = []
+    start_date_list = []
+    end_date_list = []
 
     # Search for objects and store values in lists
     for column_name in column_names:
@@ -405,22 +405,22 @@ def custom_sort(df, hardcoded_order, poll_info, spell_info):
             title_list.append(object_found["title"])
 
             if isinstance(object_found["startDate"], str):
-                startDate_list.append(parser.parse(object_found["startDate"]).date())
+                start_date_list.append(parser.parse(object_found["startDate"]).date())
             else:
-                startDate_list.append(object_found["startDate"])
+                start_date_list.append(object_found["startDate"])
 
             try:
                 if isinstance(object_found["endDate"], str):
-                    endDate_list.append(parser.parse(object_found["endDate"]).date())
+                    end_date_list.append(parser.parse(object_found["endDate"]).date())
                 else:
-                    endDate_list.append(object_found["endDate"])
+                    end_date_list.append(object_found["endDate"])
             except Exception:
-                endDate_list.append("N/A")
+                end_date_list.append("N/A")
 
         else:
             title_list.append("Title")
-            startDate_list.append("Start Date")
-            endDate_list.append("End Date")
+            start_date_list.append("Start Date")
+            end_date_list.append("End Date")
 
     # Identify the missing rows in hardcoded_order.
     missing_rows = [
@@ -455,8 +455,8 @@ def custom_sort(df, hardcoded_order, poll_info, spell_info):
 
     transposed_df = sorted_df.transpose()
 
-    transposed_df.insert(0, "Start Date", startDate_list)
-    transposed_df.insert(1, "End Date", endDate_list)
+    transposed_df.insert(0, "Start Date", start_date_list)
+    transposed_df.insert(1, "End Date", end_date_list)
     transposed_df.insert(2, "Title", title_list)
 
     return transposed_df

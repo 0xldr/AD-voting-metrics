@@ -220,15 +220,15 @@ def _run_fetch(args: argparse.Namespace) -> None:
 
     # Get poll IDs information and vote from polls
     logger.info("Getting POLL IDS...")
-    POLL_INFO = sky.get_poll_ids(period)
+    poll_info = sky.get_poll_ids(period)
     logger.info("Getting VOTE FROM POLLS...")
-    df = sky.get_vote_poll_ids(POLL_INFO, df, df_sky, current_datetime=datetime.now(UTC))
+    df = sky.get_vote_poll_ids(poll_info, df, df_sky, current_datetime=datetime.now(UTC))
 
     # Get SPELL addresses information and vote from SPELL
     logger.info("Getting SPELL addresses...")
-    SPELL_INFO = sky.get_execute_ids(period)
+    spell_info = sky.get_execute_ids(period)
     logger.info("Getting VOTE FROM SPELL...")
-    df = sky.get_vote_execute_ids(SPELL_INFO, df, df_sky)
+    df = sky.get_vote_execute_ids(spell_info, df, df_sky)
 
     # Save data to CSV files
     output_csv = OUTPUT_DIR / "vote_participation.csv"
@@ -256,8 +256,8 @@ def _run_fetch(args: argparse.Namespace) -> None:
                 workbook,
                 period,
                 df,
-                POLL_INFO,
-                SPELL_INFO,
+                poll_info,
+                spell_info,
             )
             logger.info("Participation Raw Data tab written to workbook for %s", period)
         except (RuntimeError, gspread.exceptions.APIError) as e:
@@ -274,8 +274,8 @@ def _run_fetch(args: argparse.Namespace) -> None:
                 workbook,
                 period,
                 df,
-                POLL_INFO,
-                SPELL_INFO,
+                poll_info,
+                spell_info,
             )
             logger.info("Communication Master tab written to workbook for %s", period)
         except ValueError as e:
@@ -283,7 +283,7 @@ def _run_fetch(args: argparse.Namespace) -> None:
         except (RuntimeError, gspread.exceptions.APIError) as e:
             logger.error("Could not write Communication Master tab: %s", e)
 
-    df = sky.custom_sort(df, hardcoded_order, POLL_INFO, SPELL_INFO)
+    df = sky.custom_sort(df, hardcoded_order, poll_info, spell_info)
 
     output_csv = OUTPUT_DIR / "sky.csv"
     df_sky.to_csv(output_csv, index=False)
