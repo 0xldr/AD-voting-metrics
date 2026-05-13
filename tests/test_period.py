@@ -21,7 +21,7 @@ def test_construct_with_valid_year_and_month():
 
 @pytest.mark.parametrize("month", [0, 13, -1, 100])
 def test_invalid_month_rejected(month):
-    with pytest.raises(ValueError, match="month must be 1..12"):
+    with pytest.raises(ValueError, match=r"month must be 1..12"):
         MonthPeriod(year=2026, month=month)
 
 
@@ -41,7 +41,7 @@ def test_frozen():
     # Should be immutable.
     p = MonthPeriod(year=2026, month=4)
     with pytest.raises((AttributeError, TypeError)):
-        p.year = 2027  # type: ignore[misc]
+        p.year = 2027
 
 
 # ---------------------------------------------------------------------------

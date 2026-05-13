@@ -15,7 +15,7 @@ import gspread
 import pandas as pd
 import pytest
 
-from ad_voting_metrics import sheets
+import ad_voting_metrics.sheets as sheets
 from ad_voting_metrics.period import MonthPeriod
 
 # ---------------------------------------------------------------------------
@@ -68,7 +68,7 @@ def test_get_workbook_both_env_vars_missing_raises_service_account_first(monkeyp
 def test_get_workbook_error_message_points_at_env_example(monkeypatch):
     """The error message tells the operator where to look for the fix."""
     monkeypatch.delenv("GOOGLE_SERVICE_ACCOUNT_FILE", raising=False)
-    with pytest.raises(RuntimeError, match=".env.example"):
+    with pytest.raises(RuntimeError, match=r"\.env\.example"):
         sheets.get_workbook(workbook_id="anything")
 
 
@@ -231,7 +231,7 @@ def test_get_workbook_api_error_message_includes_sa_email(tmp_path):
     with (
         patch.object(sheets.Credentials, "from_service_account_file", return_value=fake_creds),
         patch.object(sheets.gspread, "authorize", return_value=fake_client),
-        pytest.raises(RuntimeError, match="scripted@my-project.iam.gserviceaccount.com"),
+        pytest.raises(RuntimeError, match=r"scripted@my-project\.iam\.gserviceaccount\.com"),
     ):
         sheets.get_workbook(
             service_account_file=sa_file,
@@ -359,7 +359,7 @@ def test_get_or_create_tab_requires_keyword_only_rows_cols():
 
     with pytest.raises(TypeError):
         # Attempting positional args should fail
-        sheets.get_or_create_tab(workbook, "Tab", 100, 10)  # type: ignore[misc]
+        sheets.get_or_create_tab(workbook, "Tab", 100, 10)
 
 
 def test_clear_tab_calls_worksheet_clear():

@@ -12,6 +12,8 @@ Use `get_session()` to retrieve the cached session. Do not instantiate
 `requests.Session()` directly.
 """
 
+from functools import cache
+
 import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
@@ -25,10 +27,8 @@ HTTP_TIMEOUT = (5, 30)
 # not be retried.
 _RETRY_STATUSES = (429, 500, 502, 503, 504)
 
-# Module-level cache. Initialized on first get_session() call.
-_session_instance: requests.Session | None = None
 
-
+@cache
 def get_session() -> requests.Session:
     """Return the shared requests.Session, creating it on first call.
 
@@ -41,23 +41,22 @@ def get_session() -> requests.Session:
     urllib3 default. POST/PUT/DELETE retries would require an allowlist
     we don't currently set.
 
-    Tests that mock HTTP traffic should reset _session_instance to None
+    Backed by functools.cache rather than a module-level global — the
+    first call constructs the session, subsequent calls return the same
+    object. Tests that mock HTTP traffic should call get_session.cache_clear()
     in a fixture so a fresh session picks up their mocks rather than a
     leftover from another test.
     """
-    global _session_instance
-    if _session_instance is None:
-        retry = Retry(
-            total=3,
-            connect=3,
-            read=3,
-            backoff_factor=1,
-            status_forcelist=_RETRY_STATUSES,
-            raise_on_status=False,
-        )
-        adapter = HTTPAdapter(max_retries=retry)
-        s = requests.Session()
-        s.mount("https://", adapter)
-        s.mount("http://", adapter)
-        _session_instance = s
-    return _session_instance
+    retry = Retry(
+        total=3,
+        connect=3,
+        read=3,
+        backoff_factor=1,
+        status_forcelist=_RETRY_STATUSES,
+        raise_on_status=False,
+    )
+    adapter = HTTPAdapter(max_retries=retry)
+    s = requests.Session()
+    s.mount("https://", adapter)
+    s.mount("http://", adapter)
+    return s
