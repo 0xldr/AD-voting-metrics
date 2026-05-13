@@ -31,6 +31,7 @@ import pandas as pd
 from google.oauth2.service_account import Credentials
 from gspread.utils import rowcol_to_a1
 
+from .metrics import DISCOUNTED, NOT_PARTICIPATED, PARTICIPATED
 from .period import MonthPeriod
 
 # Scopes required to read/write spreadsheets and open them by ID. The Drive
@@ -463,6 +464,223 @@ def write_participation_raw_data(
     clear_tab(worksheet)
 
     end_cell = rowcol_to_a1(len(values), len(values[0]))
+    range_name = f"A1:{end_cell}"
+    worksheet.update(values=values, range_name=range_name)
+
+    return worksheet
+
+
+COMMUNICATION_MASTER_TAB_TITLE = "Communication Master"
+
+# Default value for cells where the operator needs to review.
+COMMUNICATION_PENDING_DEFAULT = "Pending verification"
+
+
+def _isblank(value: str | None) -> bool:
+    """Treat empty/None/whitespace-only as blank - operator-set cells have
+    real content. Matches the spreadsheet notion of 'blank' for the
+    fill-on-write logic.
+    """
+    if value is None:
+        return True
+    return not value.strip()
+
+
+def _read_communication_master_existing(
+    worksheet: gspread.Worksheet,
+) -> tuple[list[str], dict[str, list[str]]]:
+    """Read the existing Communication Master tab.
+
+    Returns (header, rows_by_poll_id) where:
+        - header is the list of column names exactly as found in row 1
+        - rows_by_poll_id maps poll_id (from column A) to the row's cell
+        values, padded/truncated to header length.
+
+    Empty worksheets return an empty header and empty dict - the caller
+    treats this as a fresh start.
+
+    Skips rows where the Poll Id (column A) is blank.
+    """
+    all_rows = worksheet.get_all_values()
+    if not all_rows or len(all_rows) < 1:
+        return [], {}
+
+    header = all_rows[0]
+    if not header:
+        return [], {}
+
+    rows_by_poll_id: dict[str, list[str]] = {}
+    n_cols = len(header)
+    for row in all_rows[1:]:
+        if not row or not row[0].strip():
+            continue
+        poll_id = row[0]
+        # Pad short rows so every entry has n_cols cells; truncate long ones
+        if len(row) < n_cols:
+            row = row + [""] * (n_cols - len(row))
+        elif len(row) > n_cols:
+            row = row[:n_cols]
+        rows_by_poll_id[poll_id] = row
+
+    return header, rows_by_poll_id
+
+
+def write_communication_master(
+    workbook: gspread.Spreadsheet,
+    period: MonthPeriod,
+    df: pd.DataFrame,
+    poll_info: list[dict],
+    spell_info: list[dict],
+) -> gspread.Worksheet:
+    """Write the workbook-wide Communication Master tab.
+
+    Layout matches Participation Raw Data:
+    """
+    if "Delegate Name" not in df.columns:
+        raise ValueError("df must have a 'Delegate Name' columns")
+
+    delegate_names = df["Delegate Name"].tolist()
+    fixed_cols = {"Delegate Name", "Delegate Contract", "Start Date"}
+    poll_columns = [c for c in df.columns if c not in fixed_cols]
+
+    # Get-or-create the workbook-wide tab.
+    worksheet = get_or_create_tab(
+        workbook,
+        COMMUNICATION_MASTER_TAB_TITLE,
+        rows=max(len(poll_columns) + 100, 200),
+        cols=max(len(PARTICIPATION_METADATA_COLUMNS) + len(delegate_names), 10),
+    )
+
+    existing_header, existing_rows = _read_communication_master_existing(worksheet)
+
+    # Determine the output header. First fetch (empty tab): header is
+    # metadata + current roster delegates. Subsequent fetches: preserve
+    # existing header (column order is operator-visible) and validate
+    # that every active delegate has a column
+    if not existing_header:
+        header: list[str] = [*PARTICIPATION_METADATA_COLUMNS, *delegate_names]
+    else:
+        header = list(existing_header)
+        # Fatal check: every active-roster delegate must be in the header.
+        # Delegates in the header but not in df are fine (historical).
+        existing_columns_set = set(existing_header)
+        missing = [n for n in delegate_names if n not in existing_columns_set]
+        if missing:
+            raise ValueError(
+                f"Communication Master is missing column(s) for delegate(s): "
+                f"{missing}. Add a column header with the exact delegate name "
+                f"for each missing delegate to the Communication Master tab, "
+                f"then re-run. (Columns can't be auto-added - operators control "
+                f"column placement and naming.)"
+            )
+
+    # Build column_index: where each delegate's column is in the header.
+    # Metadata columns occupy positions 0..3.
+    n_metadata = len(PARTICIPATION_METADATA_COLUMNS)
+    delegate_col_index: dict[str, int] = {}
+    for i, col in enumerate(header):
+        if i >= n_metadata:
+            delegate_col_index[col] = i
+
+    # Index df rows by delegate name -> row Series (for participation lookups).
+    df_by_delegate: dict[str, pd.Series] = {
+        str(row["Delegate Name"]): row for _, row in df.iterrows()
+    }
+    current_roster = set(df_by_delegate.keys())
+
+    # Build merged rows by poll id. For each poll/spell column in df:
+    #   - if poll already in existing rows: take existing row, fill blanks
+    #   - if poll is new: build a fresh row with pending/cross-ref defaults
+    # Plus: preserve existing rows for polls not in current df (historical).
+    merged_rows: dict[str, list[str]] = {}
+
+    for poll_id, row in existing_rows.items():
+        if len(row) < len(header):
+            row = row + [""] * (len(header) - len(row))
+        merged_rows[poll_id] = list(row)
+
+    for poll_id in poll_columns:
+        poll_id_str = str(poll_id)
+        metadata = _lookup_poll_or_spell(poll_id_str, poll_info, spell_info)
+        if metadata is None:
+            start_date_iso = ""
+            end_date_iso = ""
+            title = ""
+        else:
+            start_date_iso = _coerce_date(metadata.get("startDate"))
+            end_date_iso = _coerce_date(metadata.get("endDate"))
+            title = str(metadata.get("title", ""))
+
+        participation_per_col: list[str] = [""] * len(header)
+        for col_name, col_idx in delegate_col_index.items():
+            # Active roster delegate - look up their participation status
+            # for this poll. df has the poll_id as a column with per-row
+            # delegate statuses
+            if col_name in current_roster:
+                p_status = str(df_by_delegate[col_name].get(poll_id, ""))
+                participation_per_col[col_idx] = p_status
+            # else: not in current roster + leave participation blank
+            # default will also be blank
+
+        default_comm_per_col: list[str] = [""] * len(header)
+        for col_name, col_idx in delegate_col_index.items():
+            if col_name not in current_roster:
+                continue
+            p = participation_per_col[col_idx]
+            if p in NOT_PARTICIPATED:
+                default_comm_per_col[col_idx] = "Did not vote"
+            elif p in DISCOUNTED:
+                default_comm_per_col[col_idx] = p
+            elif p in PARTICIPATED:
+                default_comm_per_col[col_idx] = COMMUNICATION_PENDING_DEFAULT
+            else:
+                default_comm_per_col[col_idx] = ""
+
+        if poll_id_str in merged_rows:
+            row = merged_rows[poll_id_str]
+            for i, current_val in enumerate([poll_id_str, start_date_iso, end_date_iso, title]):
+                if _isblank(row[i]):
+                    row[i] = current_val
+            # Fill delegate-column blanks with the default:
+            for col_idx in delegate_col_index.values():
+                if _isblank(row[col_idx]):
+                    row[col_idx] = default_comm_per_col[col_idx]
+            merged_rows[poll_id_str] = row
+        else:
+            row = [""] * len(header)
+            row[0] = poll_id_str
+            row[1] = start_date_iso
+            row[2] = end_date_iso
+            row[3] = title
+            for col_idx in delegate_col_index.values():
+                row[col_idx] = default_comm_per_col[col_idx]
+            merged_rows[poll_id_str] = row
+
+    def _sort_key(item: tuple[str, list[str]]) -> tuple[int, str]:
+        _, row = item
+        start = row[1] if len(row) > 1 else ""
+        try:
+            datetime.fromisoformat(start.replace("Z", "+00:00"))
+            return (0, start)
+        except ValueError:
+            return (1, "")
+
+    items = list(merged_rows.items())
+    items.sort(
+        key=lambda item: _sort_key(item),
+        reverse=False,
+    )
+    rank0 = [it for it in items if _sort_key(it)[0] == 0]
+    rank1 = [it for it in items if _sort_key(it)[0] == 1]
+    rank0.reverse()
+    items = rank0 + rank1
+
+    rows: list[list[object]] = [list(row) for _, row in items]
+    values: list[list[object]] = [list(header), *rows]
+
+    clear_tab(worksheet)
+
+    end_cell = rowcol_to_a1(len(values), len(header))
     range_name = f"A1:{end_cell}"
     worksheet.update(values=values, range_name=range_name)
 

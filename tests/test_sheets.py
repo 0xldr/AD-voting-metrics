@@ -461,7 +461,6 @@ def _make_ranking_df():
     Mirrors the shape produced by cli.py's _run_fetch after rank assignment:
     columns Date, Delegate, Total Delegation, Rank. Dates as date objects.
     """
-
     return pd.DataFrame(
         {
             "Date": [date(2026, 4, 1), date(2026, 4, 1), date(2026, 4, 2)],
@@ -486,6 +485,8 @@ def _empty_existing_ws(workbook):
     """Make a fresh MagicMock worksheet returning no existing rows.
 
     Used for first-fetch tests where the tab is empty (or doesn't exist).
+    get_or_create_tab path: workbook.worksheet returns the ws; get_all_values
+    returns []. Returns the ws so tests can inspect calls.
     """
     fake_ws = MagicMock(spec=gspread.Worksheet)
     fake_ws.get_all_values.return_value = []
@@ -1257,3 +1258,437 @@ def test_write_participation_raw_data_to_real_workbook(_temp_tab, monkeypatch):
     assert ws.acell("D2").value == "Approve SubDAO X"
     assert ws.acell("E2").value == "Yes"
     assert ws.acell("F2").value == "No"
+
+
+# ---------------------------------------------------------------------------
+# write_communication_master — Communication Master tab writer
+# ---------------------------------------------------------------------------
+
+
+def _empty_existing_comm_ws(workbook):
+    """Make a fresh MagicMock worksheet for first-fetch Communication Master."""
+    fake_ws = MagicMock(spec=gspread.Worksheet)
+    fake_ws.get_all_values.return_value = []
+    workbook.worksheet.return_value = fake_ws
+    return fake_ws
+
+
+def test_communication_master_tab_title_constant():
+    """Workbook-wide tab name."""
+    assert sheets.COMMUNICATION_MASTER_TAB_TITLE == "Communication Master"
+
+
+def test_communication_master_pending_default_constant():
+    """The default for new cells where the operator needs to review."""
+    assert sheets.COMMUNICATION_PENDING_DEFAULT == "Pending verification"
+
+
+def test_isblank_true_for_empty_none_whitespace():
+    assert sheets._isblank("") is True
+    assert sheets._isblank(None) is True
+    assert sheets._isblank("   ") is True
+    assert sheets._isblank("\t\n") is True
+
+
+def test_isblank_false_for_real_values():
+    assert sheets._isblank("Yes") is False
+    assert sheets._isblank("Pending verification") is False
+    assert sheets._isblank("Did not vote") is False
+
+
+def test_write_communication_master_missing_df_column_raises():
+    """The df must have a 'Delegate Name' column for the writer to find
+    the active roster."""
+    df_bad = pd.DataFrame({"NotTheRightColumn": ["foo"]})
+    workbook = MagicMock()
+    period = MonthPeriod(year=2026, month=4)
+
+    with pytest.raises(ValueError, match="Delegate Name"):
+        sheets.write_communication_master(
+            workbook,
+            period,
+            df_bad,
+            _make_poll_info(),
+            _make_spell_info(),
+        )
+
+
+def test_write_communication_master_first_fetch_creates_header():
+    """First fetch (empty tab): header is metadata columns + delegate names
+    from df, in df row order."""
+    df = _make_participation_df()
+    workbook = MagicMock()
+    fake_ws = _empty_existing_comm_ws(workbook)
+    period = MonthPeriod(year=2026, month=4)
+
+    sheets.write_communication_master(
+        workbook,
+        period,
+        df,
+        _make_poll_info(),
+        _make_spell_info(),
+    )
+
+    values = fake_ws.update.call_args.kwargs["values"]
+    assert values[0] == [
+        "Poll Id",
+        "Start Date",
+        "End Date",
+        "Title",
+        "BLUE",
+        "Cloaky",
+        "BONAPUBLICA",
+    ]
+
+
+def test_write_communication_master_first_fetch_pending_for_yes_participation():
+    """For first-fetch new poll rows where participation = 'Yes', the
+    communication cell defaults to 'Pending verification' for operator
+    review."""
+    # Fixture: poll 12345 has all 3 delegates as "Yes" - except cloaky is "No"
+    # Use a simplified df where everyone said Yes
+    df = pd.DataFrame(
+        {
+            "Delegate Name": ["BLUE", "Cloaky"],
+            "Delegate Contract": ["0xaaa", "0xbbb"],
+            "Start Date": ["2025-12-01", "2025-12-01"],
+            "12345": ["Yes", "Yes"],
+        }
+    )
+    workbook = MagicMock()
+    fake_ws = _empty_existing_comm_ws(workbook)
+    period = MonthPeriod(year=2026, month=4)
+
+    sheets.write_communication_master(
+        workbook,
+        period,
+        df,
+        _make_poll_info(),
+        _make_spell_info(),
+    )
+
+    values = fake_ws.update.call_args.kwargs["values"]
+    # Row for poll 12345: metadata + Pending verification for both delegates
+    assert len(values) == 2
+    assert values[1][4] == "Pending verification"  # BLUE
+    assert values[1][5] == "Pending verification"  # Cloaky
+
+
+def test_write_communication_master_first_fetch_did_not_vote_for_no_participation():
+    """participation = 'No' → communication = 'Did not vote' (cross-ref)."""
+    df = pd.DataFrame(
+        {
+            "Delegate Name": ["BLUE", "Cloaky"],
+            "Delegate Contract": ["0xaaa", "0xbbb"],
+            "Start Date": ["2025-12-01", "2025-12-01"],
+            "12345": ["Yes", "No"],  # Cloaky didn't vote
+        }
+    )
+    workbook = MagicMock()
+    fake_ws = _empty_existing_comm_ws(workbook)
+    period = MonthPeriod(year=2026, month=4)
+
+    sheets.write_communication_master(
+        workbook,
+        period,
+        df,
+        _make_poll_info(),
+        _make_spell_info(),
+    )
+
+    values = fake_ws.update.call_args.kwargs["values"]
+    assert values[1][4] == "Pending verification"  # BLUE (Yes → needs review)
+    assert values[1][5] == "Did not vote"  # Cloaky (No → cross-ref)
+
+
+def test_write_communication_master_first_fetch_mirrors_discounted():
+    """participation in DISCOUNTED → communication mirrors that status."""
+    df = pd.DataFrame(
+        {
+            "Delegate Name": ["BLUE", "Cloaky", "BONAPUBLICA"],
+            "Delegate Contract": ["0xaaa", "0xbbb", "0xccc"],
+            "Start Date": ["2025-12-01", "2025-12-01", "2025-12-01"],
+            "12345": ["Not Started", "Exited", "No Delegated SKY"],
+        }
+    )
+    workbook = MagicMock()
+    fake_ws = _empty_existing_comm_ws(workbook)
+    period = MonthPeriod(year=2026, month=4)
+
+    sheets.write_communication_master(
+        workbook,
+        period,
+        df,
+        _make_poll_info(),
+        _make_spell_info(),
+    )
+
+    values = fake_ws.update.call_args.kwargs["values"]
+    assert values[1][4] == "Not Started"
+    assert values[1][5] == "Exited"
+    assert values[1][6] == "No Delegated SKY"
+
+
+def test_write_communication_master_missing_column_raises():
+    """Subsequent fetch with a new delegate in YAML but no column in the
+    existing tab → fatal error with clear instructions."""
+    df = pd.DataFrame(
+        {
+            "Delegate Name": ["BLUE", "Cloaky", "NewDelegate"],  # NewDelegate added
+            "Delegate Contract": ["0xaaa", "0xbbb", "0xccc"],
+            "Start Date": ["2025-12-01", "2025-12-01", "2026-04-01"],
+            "12345": ["Yes", "Yes", "Yes"],
+        }
+    )
+    workbook = MagicMock()
+    fake_ws = MagicMock(spec=gspread.Worksheet)
+    # Existing tab has only BLUE and Cloaky columns
+    fake_ws.get_all_values.return_value = [
+        ["Poll Id", "Start Date", "End Date", "Title", "BLUE", "Cloaky"],
+        ["12344", "2026-03-01", "2026-03-04", "Old poll", "Yes", "No"],
+    ]
+    workbook.worksheet.return_value = fake_ws
+    period = MonthPeriod(year=2026, month=4)
+
+    with pytest.raises(ValueError, match="NewDelegate"):
+        sheets.write_communication_master(
+            workbook,
+            period,
+            df,
+            _make_poll_info(),
+            _make_spell_info(),
+        )
+
+
+def test_write_communication_master_preserves_operator_edits():
+    """Existing non-blank cells are preserved (operator edits).
+    Only blank cells get filled with the cross-reference default."""
+    df = pd.DataFrame(
+        {
+            "Delegate Name": ["BLUE", "Cloaky"],
+            "Delegate Contract": ["0xaaa", "0xbbb"],
+            "Start Date": ["2025-12-01", "2025-12-01"],
+            "12345": ["Yes", "Yes"],
+        }
+    )
+    workbook = MagicMock()
+    fake_ws = MagicMock(spec=gspread.Worksheet)
+    # Existing tab has poll 12345 with operator-set "Yes" for BLUE,
+    # and blank for Cloaky
+    fake_ws.get_all_values.return_value = [
+        ["Poll Id", "Start Date", "End Date", "Title", "BLUE", "Cloaky"],
+        ["12345", "2026-04-05", "2026-04-08", "Approve SubDAO X", "Yes", ""],
+    ]
+    workbook.worksheet.return_value = fake_ws
+    period = MonthPeriod(year=2026, month=4)
+
+    sheets.write_communication_master(
+        workbook,
+        period,
+        df,
+        _make_poll_info(),
+        _make_spell_info(),
+    )
+
+    values = fake_ws.update.call_args.kwargs["values"]
+    # Find the poll 12345 row
+    row_12345 = next(r for r in values[1:] if r[0] == "12345")
+    assert row_12345[4] == "Yes"  # BLUE — operator edit preserved
+    assert row_12345[5] == "Pending verification"  # Cloaky — was blank, now default
+
+
+def test_write_communication_master_preserves_historical_polls():
+    """Polls in the existing tab but not in the current fetch are kept."""
+    df = pd.DataFrame(
+        {
+            "Delegate Name": ["BLUE", "Cloaky"],
+            "Delegate Contract": ["0xaaa", "0xbbb"],
+            "Start Date": ["2025-12-01", "2025-12-01"],
+            "12345": ["Yes", "Yes"],
+        }
+    )
+    workbook = MagicMock()
+    fake_ws = MagicMock(spec=gspread.Worksheet)
+    fake_ws.get_all_values.return_value = [
+        ["Poll Id", "Start Date", "End Date", "Title", "BLUE", "Cloaky"],
+        ["12340", "2026-03-01", "2026-03-04", "March poll", "Yes", "No"],
+        ["12341", "2026-03-15", "2026-03-18", "Another March poll", "No", "Yes"],
+    ]
+    workbook.worksheet.return_value = fake_ws
+    period = MonthPeriod(year=2026, month=4)
+
+    sheets.write_communication_master(
+        workbook,
+        period,
+        df,
+        _make_poll_info(),
+        _make_spell_info(),
+    )
+
+    values = fake_ws.update.call_args.kwargs["values"]
+    poll_ids = [r[0] for r in values[1:]]
+    # All three polls present: two historical + one new
+    assert "12340" in poll_ids
+    assert "12341" in poll_ids
+    assert "12345" in poll_ids
+
+
+def test_write_communication_master_historical_delegate_cells_blank_for_new_polls():
+    """A column for a delegate no longer in df (removed from YAML) is
+    preserved, but new poll rows leave that column blank (we don't know
+    their alignment dates)."""
+    df = pd.DataFrame(
+        {
+            "Delegate Name": ["BLUE"],  # Cloaky no longer in roster
+            "Delegate Contract": ["0xaaa"],
+            "Start Date": ["2025-12-01"],
+            "12345": ["Yes"],
+        }
+    )
+    workbook = MagicMock()
+    fake_ws = MagicMock(spec=gspread.Worksheet)
+    fake_ws.get_all_values.return_value = [
+        ["Poll Id", "Start Date", "End Date", "Title", "BLUE", "Cloaky"],
+        # Existing historical poll with operator-set values for both
+        ["12340", "2026-03-01", "2026-03-04", "March poll", "Yes", "No"],
+    ]
+    workbook.worksheet.return_value = fake_ws
+    period = MonthPeriod(year=2026, month=4)
+
+    sheets.write_communication_master(
+        workbook,
+        period,
+        df,
+        _make_poll_info(),
+        _make_spell_info(),
+    )
+
+    values = fake_ws.update.call_args.kwargs["values"]
+    # Find the new poll row (12345)
+    row_12345 = next(r for r in values[1:] if r[0] == "12345")
+    assert row_12345[4] == "Pending verification"  # BLUE (in roster, Yes participation)
+    # Cloaky column at index 5: blank since not in current roster
+    assert row_12345[5] == ""
+
+
+def test_write_communication_master_sort_order_start_date_descending():
+    """Output sorted by Start Date descending (newest first)."""
+    df = pd.DataFrame(
+        {
+            "Delegate Name": ["BLUE"],
+            "Delegate Contract": ["0xaaa"],
+            "Start Date": ["2025-12-01"],
+            "12345": ["Yes"],
+            "12346": ["Yes"],
+        }
+    )
+    workbook = MagicMock()
+    fake_ws = _empty_existing_comm_ws(workbook)
+    period = MonthPeriod(year=2026, month=4)
+
+    sheets.write_communication_master(
+        workbook,
+        period,
+        df,
+        _make_poll_info(),
+        _make_spell_info(),
+    )
+
+    values = fake_ws.update.call_args.kwargs["values"]
+    # Poll 12346 starts April 15; poll 12345 starts April 5 — 12346 first
+    poll_ids = [r[0] for r in values[1:]]
+    assert poll_ids[0] == "12346"
+    assert poll_ids[1] == "12345"
+
+
+def test_write_communication_master_clears_before_writing():
+    df = _make_participation_df()
+    workbook = MagicMock()
+    fake_ws = _empty_existing_comm_ws(workbook)
+    period = MonthPeriod(year=2026, month=4)
+
+    sheets.write_communication_master(
+        workbook,
+        period,
+        df,
+        _make_poll_info(),
+        _make_spell_info(),
+    )
+
+    fake_ws.clear.assert_called_once()
+    fake_ws.update.assert_called_once()
+
+
+def test_write_communication_master_returns_worksheet():
+    df = _make_participation_df()
+    workbook = MagicMock()
+    fake_ws = _empty_existing_comm_ws(workbook)
+    period = MonthPeriod(year=2026, month=4)
+
+    result = sheets.write_communication_master(
+        workbook,
+        period,
+        df,
+        _make_poll_info(),
+        _make_spell_info(),
+    )
+
+    assert result is fake_ws
+
+
+def test_write_communication_master_uses_correct_tab_name():
+    df = _make_participation_df()
+    workbook = MagicMock()
+    fake_ws = MagicMock(spec=gspread.Worksheet)
+    fake_ws.get_all_values.return_value = []
+    workbook.worksheet.side_effect = gspread.exceptions.WorksheetNotFound
+    workbook.add_worksheet.return_value = fake_ws
+    period = MonthPeriod(year=2026, month=4)
+
+    sheets.write_communication_master(
+        workbook,
+        period,
+        df,
+        _make_poll_info(),
+        _make_spell_info(),
+    )
+
+    call = workbook.add_worksheet.call_args
+    assert call.kwargs["title"] == "Communication Master"
+
+
+# ---------------------------------------------------------------------------
+# write_communication_master — integration test against the real workbook
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.integration
+def test_write_communication_master_to_real_workbook(_temp_tab, monkeypatch):
+    """End-to-end: first-fetch write, read back, verify defaults are applied."""
+    df = _make_participation_df()
+    monkeypatch.setattr(
+        sheets,
+        "COMMUNICATION_MASTER_TAB_TITLE",
+        _temp_tab,
+    )
+
+    workbook = sheets.get_workbook()
+    period = MonthPeriod(year=2026, month=4)
+    ws = sheets.write_communication_master(
+        workbook,
+        period,
+        df,
+        _make_poll_info(),
+        _make_spell_info(),
+    )
+
+    # Header
+    assert ws.acell("A1").value == "Poll Id"
+    assert ws.acell("E1").value == "BLUE"
+    # Spell 0xspell001 sorts first — startDate April 20 is latest among the
+    # fixture (poll 12346 starts Apr 15, poll 12345 starts Apr 5).
+    assert ws.acell("A2").value == "0xspell001"
+    # BLUE's communication cell for the spell. Fixture participation column
+    # has "Yes" for BLUE on the spell, so cross-ref defaults to Pending
+    # verification.
+    assert ws.acell("E2").value == "Pending verification"  # BLUE
