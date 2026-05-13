@@ -263,6 +263,26 @@ def _run_fetch(args: argparse.Namespace) -> None:
         except (RuntimeError, gspread.exceptions.APIError) as e:
             logger.error("Could not write Participation Raw Data tab: %s", e)
 
+    # Communication Master — workbook-wide, merges new polls into the existing
+    # tab. Uses the same pre-transpose df shape as participation. ValueError
+    # raised here (missing-column fatal check) needs special handling: the
+    # operator must add the column, so propagate the message clearly rather
+    # than swallow it like a transient API error.
+    if workbook is not None:
+        try:
+            sheets.write_communication_master(
+                workbook,
+                period,
+                df,
+                POLL_INFO,
+                SPELL_INFO,
+            )
+            logger.info("Communication Master tab written to workbook for %s", period)
+        except ValueError as e:
+            logger.error("Communication Master writer rejected the data: %s", e)
+        except (RuntimeError, gspread.exceptions.APIError) as e:
+            logger.error("Could not write Communication Master tab: %s", e)
+
     df = sky.custom_sort(df, hardcoded_order, POLL_INFO, SPELL_INFO)
 
     output_csv = OUTPUT_DIR / "sky.csv"
