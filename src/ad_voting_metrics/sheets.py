@@ -517,10 +517,12 @@ def _read_communication_master_existing(
         poll_id = row[0]
         # Pad short rows so every entry has n_cols cells; truncate long ones
         if len(row) < n_cols:
-            row = row + [""] * (n_cols - len(row))
+            normalized_row = row + [""] * (n_cols - len(row))
         elif len(row) > n_cols:
-            row = row[:n_cols]
-        rows_by_poll_id[poll_id] = row
+            normalized_row = row[:n_cols]
+        else:
+            normalized_row = row
+        rows_by_poll_id[poll_id] = normalized_row
 
     return header, rows_by_poll_id
 
@@ -577,10 +579,7 @@ def write_communication_master(
     # Build column_index: where each delegate's column is in the header.
     # Metadata columns occupy positions 0..3.
     n_metadata = len(PARTICIPATION_METADATA_COLUMNS)
-    delegate_col_index: dict[str, int] = {}
-    for i, col in enumerate(header):
-        if i >= n_metadata:
-            delegate_col_index[col] = i
+    delegate_col_index: dict[str, int] = {col: i for i, col in enumerate(header) if i >= n_metadata}
 
     # Index df rows by delegate name -> row Series (for participation lookups).
     df_by_delegate: dict[str, pd.Series] = {
@@ -595,9 +594,8 @@ def write_communication_master(
     merged_rows: dict[str, list[str]] = {}
 
     for poll_id, row in existing_rows.items():
-        if len(row) < len(header):
-            row = row + [""] * (len(header) - len(row))
-        merged_rows[poll_id] = list(row)
+        padded_row = row + [""] * (len(header) - len(row)) if len(row) < len(header) else row
+        merged_rows[poll_id] = list(padded_row)
 
     for poll_id in poll_columns:
         poll_id_str = str(poll_id)
@@ -667,7 +665,7 @@ def write_communication_master(
 
     items = list(merged_rows.items())
     items.sort(
-        key=lambda item: _sort_key(item),
+        key=_sort_key,
         reverse=False,
     )
     rank0 = [it for it in items if _sort_key(it)[0] == 0]

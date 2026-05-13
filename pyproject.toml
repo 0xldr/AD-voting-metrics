@@ -33,6 +33,9 @@ test = [
 [tool.setuptools.packages.find]
 where = ["src"]
 
+[tool.setuptools.package-data]
+ad_voting_metrics = ["py.typed"]
+
 [tool.ruff]
 line-length = 100
 target-version = "py311"
@@ -49,6 +52,17 @@ select = [
     "RET",
     "PTH",
     "PIE",
+    "C4",   # comprehension simplifications
+    "RUF",  # ruff-specific
+    "A",    # builtin shadowing
+    "ICN",  # import conventions
+    "N",    # pep8-naming
+    "PERF", # performance
+    "PLE",  # pylint errors
+    # PL - selective pylint refactor/warning rules
+    "PLW2901", # for-loop variable overwritten in body
+    "PLR1714", # multi-equality -> in {...}
+    "PLR5501", # collapsible elif
 ]
 ignore = [
     "E501",  # line too long — too noisy for legacy code, will tighten later
@@ -56,7 +70,13 @@ ignore = [
 ]
 
 [tool.ruff.lint.per-file-ignores]
-"tests/*" = ["F401"]  # unused imports often appear in test fixtures
+"tests/*" = [
+    "F401", # unused imports often appear in test fixtures
+    "N806", # camelCase locals (mostly mirroring API field names in fixtures)
+    ]
+"src/ad_voting_metrics/roster.py" = [
+    "N815", # Pydantic field names match YAML schema (startDate, endDate, etc.)
+]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
@@ -66,7 +86,7 @@ markers = [
 addopts = "-m 'not integration'"
 
 [tool.mypy]
-files = ["src"]
+files = ["src", "tests"]
 warn_redundant_casts = true
 warn_unused_ignores = true
 warn_return_any = true

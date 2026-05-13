@@ -26,6 +26,7 @@ import logging
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import date
+from itertools import pairwise
 from pathlib import Path
 
 import pandas as pd
@@ -133,7 +134,7 @@ class Delegate(BaseModel):
         if len(self.levels) < 2:
             return self
         sorted_levels = sorted(self.levels, key=lambda la: la.startDate)
-        for prev, curr in zip(sorted_levels, sorted_levels[1:], strict=False):
+        for prev, curr in pairwise(sorted_levels):
             if prev.endDate is None:
                 raise ValueError(
                     f"LevelAssignment starting {prev.startDate} for delegate "

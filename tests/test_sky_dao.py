@@ -6,7 +6,7 @@ from unittest.mock import MagicMock, patch
 import pandas as pd
 import pytest
 
-from ad_voting_metrics import sky_dao
+import ad_voting_metrics.sky_dao as sky_dao
 
 # ---------------------------------------------------------------------------
 # get_all_sky_delegated — dune-client integration and DataFrame return shape

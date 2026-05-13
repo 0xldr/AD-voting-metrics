@@ -2,6 +2,7 @@
 
 from datetime import date
 from pathlib import Path
+from typing import Any, cast
 
 import pytest
 import yaml
@@ -80,7 +81,7 @@ def test_name_must_be_non_empty():
 
 
 def test_end_date_must_be_after_start():
-    with pytest.raises(ValidationError, match="endDate.*must be after"):
+    with pytest.raises(ValidationError, match=r"endDate.*must be after"):
         Delegate(
             name="Frank",
             voteDelegateAddress="0x1234567890abcdef1234567890abcdef12345678",
@@ -91,7 +92,7 @@ def test_end_date_must_be_after_start():
 
 def test_end_date_equal_to_start_date_rejected():
     # endDate must be *strictly* after startDate, so equal dates should also be rejected.
-    with pytest.raises(ValidationError, match="endDate.*must be after"):
+    with pytest.raises(ValidationError, match=r"endDate.*must be after"):
         Delegate(
             name="Grace",
             voteDelegateAddress="0x1234567890abcdef1234567890abcdef12345678",
@@ -111,7 +112,7 @@ def _delegate_with_levels(levels: list[dict] | None = None, **overrides) -> Dele
     Defaults to an active delegate aligned 2024-01-01 onwards. Used to keep
     test bodies focused on the level-related behaviour they exercise.
     """
-    base = {
+    base: dict[str, Any] = {
         "name": "TestDelegate",
         "voteDelegateAddress": "0x0000000000000000000000000000000000000001",
         "startDate": date(2024, 1, 1),
@@ -119,7 +120,7 @@ def _delegate_with_levels(levels: list[dict] | None = None, **overrides) -> Dele
         "levels": levels or [],
     }
     base.update(overrides)
-    return Delegate(**base)
+    return Delegate(**cast(Any, base))
 
 
 def test_delegate_with_no_levels_constructs():
