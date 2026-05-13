@@ -6,6 +6,7 @@ from pathlib import Path
 import pandas as pd
 from dotenv import load_dotenv
 
+from . import sheets
 from . import sky_dao as sky
 from .period import MonthPeriod
 from .reconciliation import build_entry, write_entry
@@ -245,6 +246,15 @@ def _run_fetch(args: argparse.Namespace) -> None:
     df_ranking.to_csv(output_csv, index=False)
     output_files.append(output_csv)
     logger.info("Ranking data saved to %s", output_csv)
+
+    # Also write Daily Data to workbook.
+    try:
+        workbook = sheets.get_workbook()
+        sheets.write_daily_data(workbook, period, df_ranking)
+        logger.info("Daily Data written to workbook for %s", period)
+    except RuntimeError as e:
+        logger.error("Could not write to Sheets workbook: %s", e)
+        logger.error("CSV outputs in output_data/ are still complete.")
 
     output_csv = OUTPUT_DIR / "vote_participation_final_transposed.csv"
     df.to_csv(output_csv, header=False, index=True)

@@ -7,6 +7,7 @@ vars and verifies end-to-end connectivity.
 """
 
 import json
+from datetime import date
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -14,6 +15,7 @@ import gspread
 import pytest
 
 from ad_voting_metrics import sheets
+from ad_voting_metrics.period import MonthPeriod
 
 # ---------------------------------------------------------------------------
 # SCOPES — pinned so an accidental edit fails the test
@@ -455,3 +457,241 @@ def test_clear_tab_wipes_real_cells(_temp_tab):
 
     # Verify it's gone
     assert ws.acell("A1").value is None
+
+
+# ---------------------------------------------------------------------------
+# write_daily_data — Daily Data tab writer
+# ---------------------------------------------------------------------------
+
+
+def _make_ranking_df():
+    import pandas as pd
+
+    return pd.DataFrame(
+        {
+            "Date": [date(2026, 4, 1), date(2026, 4, 1), date(2026, 4, 2)],
+            "Delegate": ["BLUE", "Cloaky", "BLUE"],
+            "Total Delegation": [1234567.89, 987654.32, 1234999.99],
+            "Rank": [1, 2, 1],
+        }
+    )
+
+
+def test_daily_data_columns_pinned():
+    """The column tuple is pinned so an accidental edit fails the test."""
+    assert sheets.DAILY_DATA_COLUMNS == ("Date", "Delegate", "Total Delegation", "Rank")
+
+
+def test_daily_data_tab_title():
+    """Tab title format: 'Daily Data {period}'. Matches MonthPeriod.__str__."""
+    period = MonthPeriod(year=2026, month=4)
+    assert sheets._daily_data_tab_title(period) == "Daily Data April 2026"
+
+
+def test_write_daily_data_missing_columns_raises():
+    """The dataframe must have at least the four expected columns."""
+    import pandas as pd
+
+    df_bad = pd.DataFrame({"Date": [date(2026, 4, 1)], "Delegate": ["BLUE"]})
+    workbook = MagicMock()
+    period = MonthPeriod(year=2026, month=4)
+
+    with pytest.raises(ValueError, match="missing required columns"):
+        sheets.write_daily_data(workbook, period, df_bad)
+
+
+def test_write_daily_data_creates_tab_with_correct_title():
+    """Tab title is 'Daily Data {period}'."""
+    df = _make_ranking_df()
+    workbook = MagicMock()
+    fake_ws = MagicMock(spec=gspread.Worksheet)
+    workbook.worksheet.side_effect = gspread.exceptions.WorksheetNotFound
+    workbook.add_worksheet.return_value = fake_ws
+    period = MonthPeriod(year=2026, month=4)
+
+    sheets.write_daily_data(workbook, period, df)
+
+    # get_or_create_tab was called via add_worksheet (since worksheet raised)
+    call = workbook.add_worksheet.call_args
+    assert call.kwargs["title"] == "Daily Data April 2026"
+
+
+def test_write_daily_data_clears_existing_tab_before_writing():
+    """Re-runs overwrite: clear is called before update."""
+    df = _make_ranking_df()
+    workbook = MagicMock()
+    fake_ws = MagicMock(spec=gspread.Worksheet)
+    workbook.worksheet.return_value = fake_ws
+    period = MonthPeriod(year=2026, month=4)
+
+    sheets.write_daily_data(workbook, period, df)
+
+    # clear() called once on the existing worksheet
+    fake_ws.clear.assert_called_once()
+    # update() called once with values
+    fake_ws.update.assert_called_once()
+
+
+def test_write_daily_data_writes_header_and_rows():
+    """The values written are header followed by data rows."""
+    df = _make_ranking_df()
+    workbook = MagicMock()
+    fake_ws = MagicMock(spec=gspread.Worksheet)
+    workbook.worksheet.return_value = fake_ws
+    period = MonthPeriod(year=2026, month=4)
+
+    sheets.write_daily_data(workbook, period, df)
+
+    update_kwargs = fake_ws.update.call_args.kwargs
+    values = update_kwargs["values"]
+
+    # First row is the header
+    assert values[0] == ["Date", "Delegate", "Total Delegation", "Rank"]
+    # Three data rows after header
+    assert len(values) == 4
+    # First data row matches our fixture (date as ISO string, numerics as native)
+    assert values[1] == ["2026-04-01", "BLUE", 1234567.89, 1]
+    assert values[2] == ["2026-04-01", "Cloaky", 987654.32, 2]
+    assert values[3] == ["2026-04-02", "BLUE", 1234999.99, 1]
+
+
+def test_write_daily_data_range_matches_data_shape():
+    """The A1 range passed to update() matches the values shape exactly."""
+    df = _make_ranking_df()
+    workbook = MagicMock()
+    fake_ws = MagicMock(spec=gspread.Worksheet)
+    workbook.worksheet.return_value = fake_ws
+    period = MonthPeriod(year=2026, month=4)
+
+    sheets.write_daily_data(workbook, period, df)
+
+    update_kwargs = fake_ws.update.call_args.kwargs
+    # 4 columns (A:D), 4 rows (header + 3 data rows)
+    assert update_kwargs["range_name"] == "A1:D4"
+
+
+def test_write_daily_data_handles_pandas_timestamps():
+    """Dates can arrive as pandas Timestamps; they get ISO-formatted too."""
+    import pandas as pd
+
+    df = pd.DataFrame(
+        {
+            "Date": pd.to_datetime(["2026-04-01", "2026-04-02"]),
+            "Delegate": ["BLUE", "Cloaky"],
+            "Total Delegation": [100.0, 200.0],
+            "Rank": [1, 2],
+        }
+    )
+    workbook = MagicMock()
+    fake_ws = MagicMock(spec=gspread.Worksheet)
+    workbook.worksheet.return_value = fake_ws
+    period = MonthPeriod(year=2026, month=4)
+
+    sheets.write_daily_data(workbook, period, df)
+
+    values = fake_ws.update.call_args.kwargs["values"]
+    # Date strings should be ISO format (Timestamp.isoformat() includes time;
+    # we don't strip it here but it should at least start with the date)
+    assert values[1][0].startswith("2026-04-01")
+    assert values[2][0].startswith("2026-04-02")
+
+
+def test_write_daily_data_extra_columns_ignored():
+    """If df_ranking has extra columns beyond the four required, they're
+    ignored — only the canonical four are written."""
+    import pandas as pd
+
+    df = pd.DataFrame(
+        {
+            "Date": [date(2026, 4, 1)],
+            "Delegate": ["BLUE"],
+            "Total Delegation": [100.0],
+            "Rank": [1],
+            "ExtraColumn": ["ignored"],
+        }
+    )
+    workbook = MagicMock()
+    fake_ws = MagicMock(spec=gspread.Worksheet)
+    workbook.worksheet.return_value = fake_ws
+    period = MonthPeriod(year=2026, month=4)
+
+    sheets.write_daily_data(workbook, period, df)
+
+    values = fake_ws.update.call_args.kwargs["values"]
+    assert values[0] == ["Date", "Delegate", "Total Delegation", "Rank"]
+    assert len(values[1]) == 4
+    assert "ignored" not in values[1]
+
+
+def test_write_daily_data_empty_dataframe_writes_header_only():
+    """An empty df_ranking writes just the header row."""
+    import pandas as pd
+
+    df = pd.DataFrame(columns=["Date", "Delegate", "Total Delegation", "Rank"])
+    workbook = MagicMock()
+    fake_ws = MagicMock(spec=gspread.Worksheet)
+    workbook.worksheet.return_value = fake_ws
+    period = MonthPeriod(year=2026, month=4)
+
+    sheets.write_daily_data(workbook, period, df)
+
+    values = fake_ws.update.call_args.kwargs["values"]
+    assert values == [["Date", "Delegate", "Total Delegation", "Rank"]]
+    assert fake_ws.update.call_args.kwargs["range_name"] == "A1:D1"
+
+
+def test_write_daily_data_returns_worksheet():
+    """The function returns the worksheet for caller convenience."""
+    df = _make_ranking_df()
+    workbook = MagicMock()
+    fake_ws = MagicMock(spec=gspread.Worksheet)
+    workbook.worksheet.return_value = fake_ws
+    period = MonthPeriod(year=2026, month=4)
+
+    result = sheets.write_daily_data(workbook, period, df)
+
+    assert result is fake_ws
+
+
+# ---------------------------------------------------------------------------
+# write_daily_data — integration test against the real workbook
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.integration
+def test_write_daily_data_to_real_workbook(_temp_tab, monkeypatch):
+    """End-to-end: write a small Daily Data set, read it back, verify
+    cells match. Uses a temp tab via monkeypatching the tab-title helper."""
+    import pandas as pd
+
+    df = pd.DataFrame(
+        {
+            "Date": [date(2026, 4, 1), date(2026, 4, 2)],
+            "Delegate": ["TestDelegateA", "TestDelegateB"],
+            "Total Delegation": [123.45, 678.90],
+            "Rank": [1, 2],
+        }
+    )
+
+    # Force the writer to use our temp tab name instead of "Daily Data ..."
+    monkeypatch.setattr(sheets, "_daily_data_tab_title", lambda period: _temp_tab)
+
+    workbook = sheets.get_workbook()
+    period = MonthPeriod(year=2026, month=4)
+    ws = sheets.write_daily_data(workbook, period, df)
+
+    # Read back: header in row 1, data in rows 2-3
+    assert ws.acell("A1").value == "Date"
+    assert ws.acell("B1").value == "Delegate"
+    assert ws.acell("C1").value == "Total Delegation"
+    assert ws.acell("D1").value == "Rank"
+    assert ws.acell("A2").value == "2026-04-01"
+    assert ws.acell("B2").value == "TestDelegateA"
+    # Numeric cells come back as strings via acell().value; cast for comparison
+    # Assert non-None first so pyright narrows from `str | None` to `str`.
+    c2 = ws.acell("C2").value
+    assert c2 is not None
+    assert float(c2) == 123.45
+    d2 = ws.acell("D2").value
+    assert d2 is not None
+    assert int(d2) == 1
