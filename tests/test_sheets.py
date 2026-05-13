@@ -12,6 +12,7 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import gspread
+import pandas as pd
 import pytest
 
 from ad_voting_metrics import sheets
@@ -460,7 +461,6 @@ def _make_ranking_df():
     Mirrors the shape produced by cli.py's _run_fetch after rank assignment:
     columns Date, Delegate, Total Delegation, Rank. Dates as date objects.
     """
-    import pandas as pd
 
     return pd.DataFrame(
         {
@@ -477,16 +477,24 @@ def test_daily_data_columns_pinned():
     assert sheets.DAILY_DATA_COLUMNS == ("Date", "Delegate", "Total Delegation", "Rank")
 
 
-def test_daily_data_tab_title():
-    """Tab title format: 'Daily Data {period}'. Matches MonthPeriod.__str__."""
-    period = MonthPeriod(year=2026, month=4)
-    assert sheets._daily_data_tab_title(period) == "Daily Data April 2026"
+def test_daily_data_tab_title_constant():
+    """Workbook-wide tab name (no period suffix)."""
+    assert sheets.DAILY_DATA_TAB_TITLE == "Daily Data"
+
+
+def _empty_existing_ws(workbook):
+    """Make a fresh MagicMock worksheet returning no existing rows.
+
+    Used for first-fetch tests where the tab is empty (or doesn't exist).
+    """
+    fake_ws = MagicMock(spec=gspread.Worksheet)
+    fake_ws.get_all_values.return_value = []
+    workbook.worksheet.return_value = fake_ws
+    return fake_ws
 
 
 def test_write_daily_data_missing_columns_raises():
     """The dataframe must have at least the four expected columns."""
-    import pandas as pd
-
     df_bad = pd.DataFrame({"Date": [date(2026, 4, 1)], "Delegate": ["BLUE"]})
     workbook = MagicMock()
     period = MonthPeriod(year=2026, month=4)
@@ -495,80 +503,265 @@ def test_write_daily_data_missing_columns_raises():
         sheets.write_daily_data(workbook, period, df_bad)
 
 
-def test_write_daily_data_creates_tab_with_correct_title():
-    """Tab title is 'Daily Data {period}'."""
+def test_write_daily_data_uses_workbook_wide_tab_name():
+    """The tab name is 'Daily Data' regardless of period - workbook-wide."""
     df = _make_ranking_df()
     workbook = MagicMock()
     fake_ws = MagicMock(spec=gspread.Worksheet)
+    fake_ws.get_all_values.return_value = []
     workbook.worksheet.side_effect = gspread.exceptions.WorksheetNotFound
     workbook.add_worksheet.return_value = fake_ws
     period = MonthPeriod(year=2026, month=4)
 
     sheets.write_daily_data(workbook, period, df)
 
-    # get_or_create_tab was called via add_worksheet (since worksheet raised)
     call = workbook.add_worksheet.call_args
-    assert call.kwargs["title"] == "Daily Data April 2026"
+    assert call.kwargs["title"] == "Daily Data"
 
 
-def test_write_daily_data_clears_existing_tab_before_writing():
-    """Re-runs overwrite: clear is called before update."""
+def test_write_daily_data_first_fetch_writes_header_and_rows():
+    """First-ever fetch: empty existing tab, writes header + data."""
     df = _make_ranking_df()
     workbook = MagicMock()
-    fake_ws = MagicMock(spec=gspread.Worksheet)
-    workbook.worksheet.return_value = fake_ws
+    fake_ws = _empty_existing_ws(workbook)
     period = MonthPeriod(year=2026, month=4)
 
     sheets.write_daily_data(workbook, period, df)
 
-    # clear() called once on the existing worksheet
-    fake_ws.clear.assert_called_once()
-    # update() called once with values
-    fake_ws.update.assert_called_once()
-
-
-def test_write_daily_data_writes_header_and_rows():
-    """The values written are header followed by data rows."""
-    df = _make_ranking_df()
-    workbook = MagicMock()
-    fake_ws = MagicMock(spec=gspread.Worksheet)
-    workbook.worksheet.return_value = fake_ws
-    period = MonthPeriod(year=2026, month=4)
-
-    sheets.write_daily_data(workbook, period, df)
-
-    update_kwargs = fake_ws.update.call_args.kwargs
-    values = update_kwargs["values"]
-
-    # First row is the header
+    values = fake_ws.update.call_args.kwargs["values"]
     assert values[0] == ["Date", "Delegate", "Total Delegation", "Rank"]
-    # Three data rows after header
+    # 3 data rows from fixture, sorted (date asc, rank asc) — fixture already
+    # in that order: (Apr 1, BLUE, 1), (Apr 1, Cloaky, 2), (Apr 2, BLUE, 1)
     assert len(values) == 4
-    # First data row matches our fixture (date as ISO string, numerics as native)
     assert values[1] == ["2026-04-01", "BLUE", 1234567.89, 1]
     assert values[2] == ["2026-04-01", "Cloaky", 987654.32, 2]
     assert values[3] == ["2026-04-02", "BLUE", 1234999.99, 1]
 
 
-def test_write_daily_data_range_matches_data_shape():
-    """The A1 range passed to update() matches the values shape exactly."""
+def test_write_daily_data_clears_before_writing():
+    """Always clear before writing the merged state."""
     df = _make_ranking_df()
     workbook = MagicMock()
+    fake_ws = _empty_existing_ws(workbook)
+    period = MonthPeriod(year=2026, month=4)
+
+    sheets.write_daily_data(workbook, period, df)
+
+    fake_ws.clear.assert_called_once()
+    fake_ws.update.assert_called_once()
+
+
+def test_write_daily_data_preserves_existing_rows_for_other_dates():
+    """Existing rows for dates NOT in the current fetch stay in the merged
+    output. Workbook-wide tab accumulates across months."""
+    # Current fetch covers April 2026, rank-1 BLUE only
+    df = pd.DataFrame(
+        {
+            "Date": [date(2026, 4, 1)],
+            "Delegate": ["BLUE"],
+            "Total Delegation": [100.0],
+            "Rank": [1],
+        }
+    )
+    # Existing tab has a March 2026 row (different month, should be preserved)
+    workbook = MagicMock()
     fake_ws = MagicMock(spec=gspread.Worksheet)
+    fake_ws.get_all_values.return_value = [
+        ["Date", "Delegate", "Total Delegation", "Rank"],
+        ["2026-03-15", "BLUE", "50.0", "2"],
+    ]
     workbook.worksheet.return_value = fake_ws
     period = MonthPeriod(year=2026, month=4)
 
     sheets.write_daily_data(workbook, period, df)
 
+    values = fake_ws.update.call_args.kwargs["values"]
+    # Header + March row (preserved) + April row (new) = 3 rows
+    assert len(values) == 3
+    # Sort order is (date asc, rank asc), so March first
+    assert values[1] == ["2026-03-15", "BLUE", 50.0, 2]
+    assert values[2] == ["2026-04-01", "BLUE", 100.0, 1]
+
+
+def test_write_daily_data_overwrites_existing_rows_for_current_dates():
+    """For dates IN the current fetch, existing values get overwritten —
+    re-runs are idempotent."""
+    df = pd.DataFrame(
+        {
+            "Date": [date(2026, 4, 1)],
+            "Delegate": ["BLUE"],
+            "Total Delegation": [999.99],  # different from existing 100.0
+            "Rank": [1],
+        }
+    )
+    workbook = MagicMock()
+    fake_ws = MagicMock(spec=gspread.Worksheet)
+    fake_ws.get_all_values.return_value = [
+        ["Date", "Delegate", "Total Delegation", "Rank"],
+        ["2026-04-01", "BLUE", "100.0", "5"],  # stale, should be replaced
+    ]
+    workbook.worksheet.return_value = fake_ws
+    period = MonthPeriod(year=2026, month=4)
+
+    sheets.write_daily_data(workbook, period, df)
+
+    values = fake_ws.update.call_args.kwargs["values"]
+    # Just header + the overwritten April row
+    assert len(values) == 2
+    # Values from the new df, not the existing tab
+    assert values[1] == ["2026-04-01", "BLUE", 999.99, 1]
+
+
+def test_write_daily_data_raises_on_roster_drift():
+    """For a date in both existing and new data, if the delegate count
+    differs (someone added/removed from roster mid-period), raise."""
+    # Current fetch has 2 delegates for April 1
+    df = pd.DataFrame(
+        {
+            "Date": [date(2026, 4, 1), date(2026, 4, 1)],
+            "Delegate": ["BLUE", "Cloaky"],
+            "Total Delegation": [100.0, 200.0],
+            "Rank": [1, 2],
+        }
+    )
+    # Existing tab has 3 delegates for April 1 (drift!)
+    workbook = MagicMock()
+    fake_ws = MagicMock(spec=gspread.Worksheet)
+    fake_ws.get_all_values.return_value = [
+        ["Date", "Delegate", "Total Delegation", "Rank"],
+        ["2026-04-01", "BLUE", "100.0", "1"],
+        ["2026-04-01", "Cloaky", "200.0", "2"],
+        ["2026-04-01", "OldDelegate", "50.0", "3"],  # extra
+    ]
+    workbook.worksheet.return_value = fake_ws
+    period = MonthPeriod(year=2026, month=4)
+
+    with pytest.raises(ValueError, match="Roster drift"):
+        sheets.write_daily_data(workbook, period, df)
+
+
+def test_write_daily_data_no_drift_when_dates_dont_overlap():
+    """If existing and new data don't share any dates, no drift check
+    fires even if delegate counts per date differ."""
+    df = pd.DataFrame(
+        {
+            "Date": [date(2026, 4, 1), date(2026, 4, 1)],
+            "Delegate": ["BLUE", "Cloaky"],
+            "Total Delegation": [100.0, 200.0],
+            "Rank": [1, 2],
+        }
+    )
+    workbook = MagicMock()
+    fake_ws = MagicMock(spec=gspread.Worksheet)
+    # March data has 1 delegate, April has 2 — different counts but different
+    # dates, so no drift check fires.
+    fake_ws.get_all_values.return_value = [
+        ["Date", "Delegate", "Total Delegation", "Rank"],
+        ["2026-03-15", "BLUE", "50.0", "1"],
+    ]
+    workbook.worksheet.return_value = fake_ws
+    period = MonthPeriod(year=2026, month=4)
+
+    # Should not raise
+    sheets.write_daily_data(workbook, period, df)
+
+
+def test_write_daily_data_handles_unparseable_existing_rows():
+    """Malformed rows in the existing tab are dropped — defensive against
+    operator edits or upstream corruption. We lose the bad row but keep
+    the tab functional."""
+    df = pd.DataFrame(
+        {
+            "Date": [date(2026, 4, 1)],
+            "Delegate": ["BLUE"],
+            "Total Delegation": [100.0],
+            "Rank": [1],
+        }
+    )
+    workbook = MagicMock()
+    fake_ws = MagicMock(spec=gspread.Worksheet)
+    fake_ws.get_all_values.return_value = [
+        ["Date", "Delegate", "Total Delegation", "Rank"],
+        ["2026-03-15", "BLUE", "not-a-number", "1"],  # bad numeric → dropped
+        ["2026-03-16", "Cloaky", "50.0", "2"],  # good
+    ]
+    workbook.worksheet.return_value = fake_ws
+    period = MonthPeriod(year=2026, month=4)
+
+    sheets.write_daily_data(workbook, period, df)
+
+    values = fake_ws.update.call_args.kwargs["values"]
+    # Header + March 16 good row + April 1 new row = 3 rows (Mar 15 dropped)
+    assert len(values) == 3
+
+
+def test_write_daily_data_handles_unrecognised_existing_header():
+    """An existing tab with the wrong header shape is treated as empty
+    (the clear-and-rewrite step below replaces it cleanly)."""
+    df = pd.DataFrame(
+        {
+            "Date": [date(2026, 4, 1)],
+            "Delegate": ["BLUE"],
+            "Total Delegation": [100.0],
+            "Rank": [1],
+        }
+    )
+    workbook = MagicMock()
+    fake_ws = MagicMock(spec=gspread.Worksheet)
+    fake_ws.get_all_values.return_value = [
+        ["WrongColumn", "Stuff", "Here", "Doesn'tMatter"],
+        ["junk", "junk", "junk", "junk"],
+    ]
+    workbook.worksheet.return_value = fake_ws
+    period = MonthPeriod(year=2026, month=4)
+
+    sheets.write_daily_data(workbook, period, df)
+
+    values = fake_ws.update.call_args.kwargs["values"]
+    # Just header + the new April row; existing junk discarded
+    assert len(values) == 2
+    assert values[0] == ["Date", "Delegate", "Total Delegation", "Rank"]
+
+
+def test_write_daily_data_sort_order_date_then_rank():
+    """Merged output is sorted by (Date ascending, Rank ascending)."""
+    df = pd.DataFrame(
+        {
+            "Date": [date(2026, 4, 2), date(2026, 4, 1), date(2026, 4, 1)],
+            "Delegate": ["BLUE", "Cloaky", "BLUE"],
+            "Total Delegation": [10.0, 20.0, 30.0],
+            "Rank": [1, 2, 1],
+        }
+    )
+    workbook = MagicMock()
+    fake_ws = _empty_existing_ws(workbook)
+    period = MonthPeriod(year=2026, month=4)
+
+    sheets.write_daily_data(workbook, period, df)
+
+    values = fake_ws.update.call_args.kwargs["values"]
+    # Expect: April 1 rank 1 (BLUE), April 1 rank 2 (Cloaky), April 2 rank 1 (BLUE)
+    assert values[1] == ["2026-04-01", "BLUE", 30.0, 1]
+    assert values[2] == ["2026-04-01", "Cloaky", 20.0, 2]
+    assert values[3] == ["2026-04-02", "BLUE", 10.0, 1]
+
+
+def test_write_daily_data_range_matches_data_shape():
+    """The A1 range passed to update() matches the values shape."""
+    df = _make_ranking_df()
+    workbook = MagicMock()
+    fake_ws = _empty_existing_ws(workbook)
+    period = MonthPeriod(year=2026, month=4)
+
+    sheets.write_daily_data(workbook, period, df)
+
     update_kwargs = fake_ws.update.call_args.kwargs
-    # 4 columns (A:D), 4 rows (header + 3 data rows)
+    # 4 columns, 4 rows (header + 3 data) — fixture has 3 distinct rows
     assert update_kwargs["range_name"] == "A1:D4"
 
 
 def test_write_daily_data_handles_pandas_timestamps():
-    """Dates can arrive as pandas Timestamps; they get ISO-formatted too."""
-    import pandas as pd
-
+    """Dates can arrive as pandas Timestamps; they get ISO-formatted."""
     df = pd.DataFrame(
         {
             "Date": pd.to_datetime(["2026-04-01", "2026-04-02"]),
@@ -578,24 +771,18 @@ def test_write_daily_data_handles_pandas_timestamps():
         }
     )
     workbook = MagicMock()
-    fake_ws = MagicMock(spec=gspread.Worksheet)
-    workbook.worksheet.return_value = fake_ws
+    fake_ws = _empty_existing_ws(workbook)
     period = MonthPeriod(year=2026, month=4)
 
     sheets.write_daily_data(workbook, period, df)
 
     values = fake_ws.update.call_args.kwargs["values"]
-    # Date strings should be ISO format (Timestamp.isoformat() includes time;
-    # we don't strip it here but it should at least start with the date)
-    assert values[1][0].startswith("2026-04-01")
-    assert values[2][0].startswith("2026-04-02")
+    assert values[1][0] == "2026-04-01"
+    assert values[2][0] == "2026-04-02"
 
 
 def test_write_daily_data_extra_columns_ignored():
-    """If df_ranking has extra columns beyond the four required, they're
-    ignored — only the canonical four are written."""
-    import pandas as pd
-
+    """Extra columns in df_ranking beyond the canonical four are ignored."""
     df = pd.DataFrame(
         {
             "Date": [date(2026, 4, 1)],
@@ -606,8 +793,7 @@ def test_write_daily_data_extra_columns_ignored():
         }
     )
     workbook = MagicMock()
-    fake_ws = MagicMock(spec=gspread.Worksheet)
-    workbook.worksheet.return_value = fake_ws
+    fake_ws = _empty_existing_ws(workbook)
     period = MonthPeriod(year=2026, month=4)
 
     sheets.write_daily_data(workbook, period, df)
@@ -618,14 +804,11 @@ def test_write_daily_data_extra_columns_ignored():
     assert "ignored" not in values[1]
 
 
-def test_write_daily_data_empty_dataframe_writes_header_only():
-    """An empty df_ranking writes just the header row."""
-    import pandas as pd
-
+def test_write_daily_data_empty_dataframe_with_empty_existing():
+    """No new rows AND no existing rows: writes header only."""
     df = pd.DataFrame(columns=["Date", "Delegate", "Total Delegation", "Rank"])
     workbook = MagicMock()
-    fake_ws = MagicMock(spec=gspread.Worksheet)
-    workbook.worksheet.return_value = fake_ws
+    fake_ws = _empty_existing_ws(workbook)
     period = MonthPeriod(year=2026, month=4)
 
     sheets.write_daily_data(workbook, period, df)
@@ -639,8 +822,7 @@ def test_write_daily_data_returns_worksheet():
     """The function returns the worksheet for caller convenience."""
     df = _make_ranking_df()
     workbook = MagicMock()
-    fake_ws = MagicMock(spec=gspread.Worksheet)
-    workbook.worksheet.return_value = fake_ws
+    fake_ws = _empty_existing_ws(workbook)
     period = MonthPeriod(year=2026, month=4)
 
     result = sheets.write_daily_data(workbook, period, df)
@@ -655,10 +837,8 @@ def test_write_daily_data_returns_worksheet():
 
 @pytest.mark.integration
 def test_write_daily_data_to_real_workbook(_temp_tab, monkeypatch):
-    """End-to-end: write a small Daily Data set, read it back, verify
-    cells match. Uses a temp tab via monkeypatching the tab-title helper."""
-    import pandas as pd
-
+    """End-to-end: write a small Daily Data set, read back, verify cells.
+    Uses a temp tab via monkeypatching the workbook-wide tab name."""
     df = pd.DataFrame(
         {
             "Date": [date(2026, 4, 1), date(2026, 4, 2)],
@@ -668,8 +848,8 @@ def test_write_daily_data_to_real_workbook(_temp_tab, monkeypatch):
         }
     )
 
-    # Force the writer to use our temp tab name instead of "Daily Data ..."
-    monkeypatch.setattr(sheets, "_daily_data_tab_title", lambda period: _temp_tab)
+    # Force the writer to use our temp tab name instead of the real one
+    monkeypatch.setattr(sheets, "DAILY_DATA_TAB_TITLE", _temp_tab)
 
     workbook = sheets.get_workbook()
     period = MonthPeriod(year=2026, month=4)
@@ -682,8 +862,6 @@ def test_write_daily_data_to_real_workbook(_temp_tab, monkeypatch):
     assert ws.acell("D1").value == "Rank"
     assert ws.acell("A2").value == "2026-04-01"
     assert ws.acell("B2").value == "TestDelegateA"
-    # Numeric cells come back as strings via acell().value; cast for comparison.
-    # Assert non-None first so pyright narrows from `str | None` to `str`.
     c2 = ws.acell("C2").value
     assert c2 is not None
     assert float(c2) == 123.45
@@ -705,8 +883,6 @@ def _make_participation_df():
     column per poll/spell ID with the per-delegate status. Mirrors the
     df shape after get_vote_poll_ids + get_vote_execute_ids.
     """
-    import pandas as pd
-
     return pd.DataFrame(
         {
             "Delegate Name": ["BLUE", "Cloaky", "BONAPUBLICA"],
@@ -797,8 +973,6 @@ def test_coerce_date_handles_datetime():
 
 
 def test_coerce_date_handles_pandas_timestamp():
-    import pandas as pd
-
     ts = pd.Timestamp("2026-04-05 12:30")
     assert sheets._coerce_date(ts) == "2026-04-05"
 
@@ -959,8 +1133,6 @@ def test_write_participation_unknown_poll_id_has_blank_metadata():
     the row with blank metadata cells but keep the status data. This is
     defensive — a transient API inconsistency shouldn't drop participation
     data."""
-    import pandas as pd
-
     df = pd.DataFrame(
         {
             "Delegate Name": ["BLUE"],
@@ -988,8 +1160,6 @@ def test_write_participation_unknown_poll_id_has_blank_metadata():
 
 def test_write_participation_zero_polls_writes_header_only():
     """A delegate-only df with no poll/spell columns writes just the header."""
-    import pandas as pd
-
     df = pd.DataFrame(
         {
             "Delegate Name": ["BLUE", "Cloaky"],
