@@ -357,9 +357,13 @@ def test_get_or_create_tab_requires_keyword_only_rows_cols():
     workbook = MagicMock()
     workbook.worksheet.return_value = MagicMock(spec=gspread.Worksheet)
 
+    # Look up the callable via getattr so static type-checkers can't see the
+    # signature and complain about the deliberate positional misuse below.
+    # We're testing the runtime rejection, which is what callers actually hit.
+    fn = getattr(sheets, "get_or_create_tab")  # noqa: B009
     with pytest.raises(TypeError):
         # Attempting positional args should fail
-        sheets.get_or_create_tab(workbook, "Tab", 100, 10)
+        fn(workbook, "Tab", 100, 10)
 
 
 def test_clear_tab_calls_worksheet_clear():

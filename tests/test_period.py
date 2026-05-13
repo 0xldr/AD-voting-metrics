@@ -41,7 +41,9 @@ def test_frozen():
     # Should be immutable.
     p = MonthPeriod(year=2026, month=4)
     with pytest.raises((AttributeError, TypeError)):
-        p.year = 2027
+        # Use setattr() so static type-checkers don't flag the assignment;
+        # we deliberately want to attempt the forbidden write at runtime.
+        setattr(p, "year", 2027)  # noqa: B010
 
 
 # ---------------------------------------------------------------------------
