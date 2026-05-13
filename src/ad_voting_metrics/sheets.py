@@ -181,15 +181,47 @@ def clear_tab(worksheet: gspread.Worksheet) -> None:
 # ---------------------------------------------------
 
 
-# Daily Data tab schema. The columns mirror the existing df_ranking
-# dataframe shape so the writer can copy values straight through without
-# reshaping. Stored as a tuple so it's pinned and testable.
+# Daily Data tab schema. Long format, one row per (date, delegate).
+# Workbook-wide tab: accumulates rows across all months ever fetched.
+# The dataframe shape mirrors df_ranking from sky_dao so values copy
+# through without reshaping
 DAILY_DATA_COLUMNS: tuple[str, ...] = ("Date", "Delegate", "Total Delegation", "Rank")
 
+DAILY_DATA_TAB_TITLE = "Daily Data"
 
-def _daily_data_tab_title(period: MonthPeriod) -> str:
-    """Tab title for a month's Daily Data, e.g. 'Daily Data April 2026."""
-    return f"Daily Data {period}"
+
+def _read_daily_data_existing(
+    worksheet: gspread.Worksheet,
+) -> dict[tuple[str, str], tuple[float, int]]:
+    """Read the existing Daily Data tab into a dict keyed at (date, delegate).
+
+    Returns a mapping from (date_iso_str, delegate_name) to (sky, rank).
+    Empty worksheets (no header or no data) return an empty dict - the caller
+    treats a missing/empty tab the same as a fresh start.
+    """
+    all_rows = worksheet.get_all_values()
+    if not all_rows or len(all_rows) < 2:
+        return {}
+
+    header = all_rows[0]
+    if header != list(DAILY_DATA_COLUMNS):
+        return {}
+
+    existing: dict[tuple[str, str], tuple[float, int]] = {}
+    for row in all_rows[1:]:
+        if len(row) < 4:
+            continue
+        date_str, delegate, sky_str, rank_str = row[0], row[1], row[2], row[3]
+        if not date_str or not delegate:
+            continue
+        try:
+            sky = float(sky_str)
+            rank = int(rank_str)
+        except (ValueError, TypeError):
+            continue
+        existing[(date_str, delegate)] = (sky, rank)
+
+    return existing
 
 
 def write_daily_data(
@@ -197,7 +229,7 @@ def write_daily_data(
     period: MonthPeriod,
     df_ranking: pd.DataFrame,
 ) -> gspread.Worksheet:
-    """Write the Daily Data tab for a period from the ranking dataframe."""
+    """Write the workbook-wide Daily Data tab, merging in the current fetch."""
     missing = [c for c in DAILY_DATA_COLUMNS if c not in df_ranking.columns]
     if missing:
         raise ValueError(
@@ -207,20 +239,68 @@ def write_daily_data(
     subset = df_ranking[list(DAILY_DATA_COLUMNS)].copy()
     subset["Date"] = subset["Date"].apply(_coerce_date)
 
-    header = list(DAILY_DATA_COLUMNS)
-    rows = [
-        [row["Date"], row["Delegate"], float(row["Total Delegation"]), int(row["Rank"])]
-        for _, row in subset.iterrows()
-    ]
-    values = [header, *rows]
+    new_rows: dict[tuple[str, str], tuple[float, int]] = {}
+    new_counts_by_date: dict[str, int] = {}
+    for _, row in subset.iterrows():
+        date_str = str(row["Date"])
+        delegate = str(row["Delegate"])
+        sky = float(row["Total Delegation"])
+        rank = int(row["Rank"])
+        new_rows[(date_str, delegate)] = (sky, rank)
+        new_counts_by_date[date_str] = new_counts_by_date.get(date_str, 0) + 1
 
-    title = _daily_data_tab_title(period)
+    # Get-or-create the workbook-wide tab. Size generously; clear-and-rewrite
+    # at the end takes care of the actual cell count.
     worksheet = get_or_create_tab(
         workbook,
-        title,
-        rows=max(len(values) + 10, 100),
-        cols=max(len(header), 4),
+        DAILY_DATA_TAB_TITLE,
+        rows=max(len(new_rows) + 100, 200),
+        cols=max(len(DAILY_DATA_COLUMNS), 4),
     )
+
+    existing = _read_daily_data_existing(worksheet)
+
+    # Roster drift check: dates present in both existing and new data
+    # should have the same delegate count.
+    existing_counts_by_date: dict[str, int] = {}
+    for date_str, _delegate in existing:
+        existing_counts_by_date[date_str] = existing_counts_by_date.get(date_str, 0) + 1
+
+    for date_str, new_count in new_counts_by_date.items():
+        if date_str in existing_counts_by_date:
+            existing_count = existing_counts_by_date[date_str]
+            if existing_count != new_count:
+                raise ValueError(
+                    f"Roster drift detected for date {date_str}: existing Daily Data "
+                    f"has {existing_count} delegate rows, current fetch for {period} "
+                    f"has {new_count}. The active-delegate count for that date "
+                    f"changed between fetches. Reconcile manually (roster YAML) "
+                    f"vs Communication Master / Daily Data) before re-running."
+                )
+    # Merge: existing rows for dates NOT in the current fetch stay; rows for
+    # dates IN the current fetch get overwritten by new_rows values.
+    dates_in_new = set(new_counts_by_date.keys())
+    merged: dict[tuple[str, str], tuple[float, int]] = {}
+    for key, value in existing.items():
+        date_str, _delegate = key
+        if date_str not in dates_in_new:
+            merged[key] = value
+    merged.update(new_rows)
+
+    # Sort merged rows: (Date ascending, Rank ascending). Chronological with
+    # rank ordering within each day.
+    sorted_keys = sorted(
+        merged.keys(),
+        key=lambda k: (k[0], merged[k][1]),  # (date_str, rank)
+    )
+
+    header: list[object] = list(DAILY_DATA_COLUMNS)
+    rows: list[list[object]] = []
+    for key in sorted_keys:
+        date_str, delegate = key
+        sky, rank = merged[key]
+        rows.append([date_str, delegate, sky, rank])
+    values: list[list[object]] = [header, *rows]
 
     clear_tab(worksheet)
 
