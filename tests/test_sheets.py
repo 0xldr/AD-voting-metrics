@@ -7,7 +7,9 @@ vars and verifies end-to-end connectivity.
 """
 
 import json
-from datetime import date
+import math
+import uuid
+from datetime import date, datetime
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -389,8 +391,6 @@ def _temp_tab(request):
     The teardown deletes the tab even if the test failed, so we don't
     accumulate cruft in the test workbook.
     """
-    import uuid
-
     tab_name = f"_test_temp_{uuid.uuid4().hex[:8]}"
 
     def cleanup():
@@ -972,9 +972,7 @@ def test_coerce_date_handles_date():
 
 def test_coerce_date_handles_datetime():
     """datetime → ISO date string, time portion dropped."""
-    from datetime import datetime as dt
-
-    assert sheets._coerce_date(dt(2026, 4, 5, 12, 30)) == "2026-04-05"
+    assert sheets._coerce_date(datetime(2026, 4, 5, 12, 30)) == "2026-04-05"
 
 
 def test_coerce_date_handles_pandas_timestamp():
@@ -1006,8 +1004,6 @@ def test_coerce_date_unparseable_string_passes_through():
 
 def test_coerce_date_handles_none_and_nan():
     """None and NaN both produce empty string."""
-    import math
-
     assert sheets._coerce_date(None) == ""
     assert sheets._coerce_date(math.nan) == ""
 

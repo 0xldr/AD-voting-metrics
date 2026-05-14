@@ -6,7 +6,7 @@ run timestamp, with soft-fail on errors.
 """
 
 import json
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 
 from ad_voting_metrics.period import MonthPeriod
@@ -184,8 +184,6 @@ def test_build_entry_includes_all_output_files():
 
 def test_build_entry_run_timestamp_is_iso_with_tz():
     """run_timestamp should be parseable as an ISO 8601 datetime in UTC."""
-    from datetime import datetime
-
     entry = build_entry(
         period=_sample_period(),
         yaml_path=Path("/tmp/delegates.yaml"),
