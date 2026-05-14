@@ -145,8 +145,7 @@ def get_or_create_tab(
     rows: int,
     cols: int,
 ) -> gspread.Worksheet:
-    """
-    Return the worksheet with the given title, creating it if absent.
+    r"""Return the worksheet with the given title, creating it if absent.
 
     rows and cols are required (keyword-only) - callers should size tabs
     based on the data they're about to write, not on arbitrary defaults.
@@ -157,7 +156,7 @@ def get_or_create_tab(
 
     Title matching is exact and case-sensitive (the underlying gspread
     behavior). Google Sheets allows tab titles up to 100 chars and forbids
-    `[`, `]`, `*`, `?`, `:`, `/`, `\\`.
+    `[`, `]`, `*`, `?`, `:`, `/`, `\` — we don't validate here,
     """
     try:
         return workbook.worksheet(title)

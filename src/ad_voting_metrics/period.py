@@ -1,4 +1,4 @@
-"""Domain type for "a single calendar month."
+"""Domain type for a single calendar month.
 
 The script processes one month at a time. Carrying the month identity
 (year + month) explicitly is more useful than carrying a (start_date, end_date)

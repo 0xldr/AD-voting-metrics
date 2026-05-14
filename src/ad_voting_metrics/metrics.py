@@ -113,7 +113,7 @@ def is_in_window(
     window_start: date | None,
     window_end: date,
 ) -> bool:
-    """True if poll_start falls within [window_start, window_end] inclusive.
+    """Return True if poll_start falls within [window_start, window_end] inclusive.
 
     window_start may be None to denote an unbounded-back window. Production
     callers always pass a concrete date (six months before window_end), but

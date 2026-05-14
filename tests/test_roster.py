@@ -118,7 +118,7 @@ def _delegate_with_levels(
     """Construct a Delegate with optional level assignments and field overrides.
 
     Defaults to an active delegate aligned 2024-01-01 onwards. Used to keep
-    test bodies focused on the level-related behaviour they exercise.
+    test bodies focused on the level-related behavior they exercise.
 
     Each Delegate field becomes an explicit keyword-only parameter with a
     typed default. No splat / cast(Any, ...) needed.
@@ -140,7 +140,7 @@ def test_delegate_with_no_levels_constructs():
 
 
 def test_delegate_with_levels_omitted_constructs():
-    """levels field is optional — omitting it is the same as empty list."""
+    """Levels field is optional — omitting it is the same as empty list."""
     d = Delegate(
         name="X",
         vote_delegate_address="0x0000000000000000000000000000000000000002",
@@ -528,7 +528,6 @@ def test_load_delegates_schema_violation(tmp_path):
 
 def test_real_delegates_yaml():
     """The committed delegates.yaml at the repo root must load without errors."""
-
     repo_root = Path(__file__).resolve().parent.parent
     yaml_path = repo_root / "delegates.yaml"
     config = load_delegates(yaml_path)
