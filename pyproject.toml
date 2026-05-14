@@ -106,9 +106,7 @@ ignore = [
     # D-rule deferrals — these will be addressed in subsequent commits when
     # docstrings get a focused content/verbosity pass. Each removal here
     # corresponds to a planned docstring-quality commit.
-    "D100",  # undocumented-public-module
     "D103",  # undocumented-public-function
-    "D104",  # undocumented-public-package
     "D105",  # undocumented-magic-method
     "D205",  # blank line required between summary line and description
 ]

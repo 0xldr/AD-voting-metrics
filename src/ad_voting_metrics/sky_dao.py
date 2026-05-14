@@ -1,3 +1,11 @@
+"""Data access layer: Dune for daily SKY balances, vote.sky.money for polls and spells.
+
+Fetches the raw inputs that the metrics pipeline operates on. Owns the
+close-day vote-status rule (see `determine_vote_status`) and the
+chronological sort that groups polls and spells in the participation
+output.
+"""
+
 import logging
 import os
 from datetime import UTC, date, datetime, timedelta
@@ -383,7 +391,7 @@ def custom_sort(df, hardcoded_order, poll_info, spell_info):
 
     # Build the human-readable Delegate column
     df.insert(df.columns.get_loc("Delegate Contract") + 1, "Delegate", df["Delegate Name"])
-    df.drop(["Delegate Name"], axis=1)
+    df = df.drop(["Delegate Name"], axis=1)
 
     # Get the names of all columns in the DataFrame
     column_names = df.columns
@@ -441,9 +449,9 @@ def custom_sort(df, hardcoded_order, poll_info, spell_info):
     sorted_df = df.sort_values(by="SortKey")
 
     # Remove the SortKey column if no longer needed
-    sorted_df.drop(columns=["SortKey"])
+    sorted_df = sorted_df.drop(columns=["SortKey"])
 
-    sorted_df.rename(columns={"Delegate Contract": "", "Delegate": "Poll Id"})
+    sorted_df = sorted_df.rename(columns={"Delegate Contract": "", "Delegate": "Poll Id"})
 
     transposed_df = sorted_df.transpose()
 
