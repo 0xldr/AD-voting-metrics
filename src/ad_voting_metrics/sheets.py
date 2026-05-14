@@ -350,29 +350,20 @@ def _lookup_poll_or_spell(
     return None
 
 
-def _coerce_date(value: object) -> str:
+def _coerce_date(value: date | datetime | None) -> str:
     """Convert a date/datetime/Timestamp/str to ISO date string.
 
     Used for the Start Date / End Date columns. Date-only ISO format
-    for date objects; for datetimes and timestamps, take just the
-    date portion. Strings already is ISO format pass through.
-    None/NaN becomes empty string.
+    for date objects; for datetimes and pandas
+    Timestamps (which subclass datetime), take just the date portion.
+    None becomes empty string.
     """
     if value is None:
         return ""
-    if isinstance(value, float) and pd.isna(value):
-        return ""
     if isinstance(value, datetime):
+        # datetime (and pd.Timestamp, which subclasses datetime) — take date portion
         return value.date().isoformat()
-    if isinstance(value, date):
-        return value.isoformat()
-    if isinstance(value, str):
-        try:
-            parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
-            return parsed.date().isoformat()
-        except ValueError:
-            return value
-    return str(value)
+    return value.isoformat()
 
 
 def write_participation_raw_data(
