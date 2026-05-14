@@ -112,9 +112,11 @@ def test_count_statuses_unknown_statuses_flagged():
 
 
 def test_count_statuses_exited_goes_to_discounted():
-    """An 'Exited' status (delegate exited before poll started) is discounted,
-    same as 'Not Started' (delegate aligned after poll ended). Symmetric
-    on the other temporal boundary.
+    """Count 'Exited' as discounted, symmetric with 'Not Started'.
+
+    Exited means the delegate exited before the poll started; Not Started
+    means they aligned after the poll ended. Both temporal-boundary
+    statuses belong in discounted.
     """
     counts = count_statuses(["Yes", "Exited", "Exited"])
     assert counts.participated == 1
@@ -123,8 +125,9 @@ def test_count_statuses_exited_goes_to_discounted():
 
 
 def test_participation_pct_exited_excluded_from_denominator():
-    """Like Not Started, Exited polls don't count toward the percentage —
-    a delegate isn't penalized for polls that opened after their exit.
+    """Exclude Exited polls from the percentage denominator.
+
+    A delegate isn't penalized for polls that opened after their exit.
     """
     assert participation_pct(["Yes", "Exited", "Exited", "Exited"]) == 1.0
 
@@ -171,8 +174,9 @@ def test_participation_pct_discounted_excluded_from_denominator():
 
 
 def test_participation_pct_unknown_silently_ignored():
-    """Unknown statuses don't crash and don't enter the calculation. Use
-    count_statuses if you want to detect them.
+    """Ignore unknown statuses silently rather than crashing.
+
+    Use count_statuses if you need to detect them.
     """
     assert participation_pct(["Yes", "No", "Mystery"]) == 0.5
 
@@ -292,8 +296,9 @@ def test_pct_for_window_empty_inputs_returns_none():
 
 
 def test_cross_ref_overrides_no_to_did_not_vote():
-    """The core rule: participation = 'No' forces communication to
-    'Did not vote', regardless of what was actually recorded.
+    """Force communication to 'Did Not Vote' when participation is 'No'.
+
+    Overrides anything else that has been recorded.
     """
     result = apply_participation_cross_reference(
         participation_statuses=["No", "No", "No"],
@@ -312,11 +317,11 @@ def test_cross_ref_preserves_yes_participation_communication():
 
 
 def test_cross_ref_mirrors_discounted_participation_to_communication():
-    """For participation in DISCOUNTED, communication is overridden to
-    match the participation status. Polls outside the delegate's
-    alignment period or otherwise ineligible for participation can't
-    contribute to a communication metric either; mirroring keeps both
-    metrics' denominators in sync.
+    """Mirror DISCOUNTED participation statuses into communication.
+
+    Polls oustide the delegate's alignment period (or otherwise
+    ineligible for participation) can't contribute to a communication
+    metric either; mirroring keeps both metrics' denominators in sync.
     """
     result = apply_participation_cross_reference(
         participation_statuses=["Not Started", "Exited", "Voting Open", "No Delegated SKY"],
@@ -326,7 +331,8 @@ def test_cross_ref_mirrors_discounted_participation_to_communication():
 
 
 def test_cross_ref_mixed_participation_applies_each_rule():
-    """Mix of participation statuses, each gets the right transformation:
+    """Apply the right transformation per status in a mixed import.
+
     Yes → passthrough; No → Did not vote; DISCOUNTED → mirror.
     """
     result = apply_participation_cross_reference(
@@ -386,9 +392,11 @@ def test_communication_pct_half_communicated():
 
 
 def test_communication_pct_did_not_vote_polls_are_discounted():
-    """Polls where participation = 'No' get cross-referenced to 'Did not
-    vote' and discounted — neither numerator nor denominator. So a delegate
-    with 1 communicated + 1 not-voted = 100%, not 50%.
+    """Discount 'Did not vote' polls from both numerator and denominator.
+
+    Polls where participation = 'No' get cross-referenced to 'Did not
+    vote'. A delegate with 1 communicated and 1 not-voted scores 100%,
+    not 50%.
     """
     pct = communication_pct(
         participation_statuses=["Yes", "No"],
@@ -398,9 +406,10 @@ def test_communication_pct_did_not_vote_polls_are_discounted():
 
 
 def test_communication_pct_recorded_communication_ignored_when_did_not_vote():
-    """If operator recorded communication on a poll the delegate didn't
-    vote on, the cross-reference overrides it. The recorded 'Yes' doesn't
-    inflate the percentage.
+    """Override recorded communication when the delegate didn't vote.
+
+    A recorded 'Yes' on a poll the delegate didn't vote on doesn't
+    inflate the percentage - the cross-reference overrides it.
     """
     pct = communication_pct(
         participation_statuses=["No", "No", "No"],
@@ -411,8 +420,9 @@ def test_communication_pct_recorded_communication_ignored_when_did_not_vote():
 
 
 def test_communication_pct_only_discounted_participation_returns_none():
-    """If every poll has discounted participation (Not Started, Exited,
-    etc.), no polls are votable so communication has nothing to count.
+    """Return None when every poll has discounted participation.
+
+    No votable polls means communication has nothing to count.
     """
     pct = communication_pct(
         participation_statuses=["Not Started", "Exited", "No Delegated SKY"],
@@ -422,9 +432,9 @@ def test_communication_pct_only_discounted_participation_returns_none():
 
 
 def test_communication_pct_pending_verification_in_communication_discounted():
-    """Communication status of 'Pending verification' is in DISCOUNTED
-    (operator hasn't reviewed it yet). Discounted from the calculation
-    until reviewed.
+    """Discount 'Pending verification' from the communication calculation.
+
+    The operator hasn't reviewed the call yet; it stays out until they do.
     """
     pct = communication_pct(
         participation_statuses=["Yes", "Yes", "Yes"],
@@ -435,8 +445,10 @@ def test_communication_pct_pending_verification_in_communication_discounted():
 
 
 def test_communication_pct_realistic_mix():
-    """A realistic distribution: most polls had participation, a few
-    didn't, and operator has reviewed most communication cells.
+    """Exercise a realistic distribution of statuses.
+
+    Most polls had participation, a few didn't, and operator has
+    reviewed most communication cells.
     """
     pct = communication_pct(
         participation_statuses=(
@@ -473,9 +485,7 @@ def test_communication_pct_mismatched_lengths_raises():
 
 
 def test_communication_pct_for_window_filters_to_window():
-    """Polls outside the window are excluded before cross-reference and
-    percentage calculation.
-    """
+    """Filter out-of-window polls before cross-reference and calculation."""
     poll_starts = [
         date(2026, 1, 5),  # before window
         date(2026, 4, 10),  # in window
