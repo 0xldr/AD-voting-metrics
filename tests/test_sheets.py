@@ -886,7 +886,7 @@ def _make_participation_df():
     Shape: one row per delegate. Columns: Delegate Name, Delegate Contract,
     Start Date (delegate alignment start, unused by writer), then one
     column per poll/spell ID with the per-delegate status. Mirrors the
-    df shape after get_vote_poll_ids + get_vote_execute_ids.
+    df shape after get_vote_poll_ids + get_vote_executive_ids.
     """
     return pd.DataFrame(
         {
