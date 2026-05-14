@@ -74,9 +74,6 @@ ignore = [
     "F401", # unused imports often appear in test fixtures
     "N806", # camelCase locals (mostly mirroring API field names in fixtures)
     ]
-"src/ad_voting_metrics/roster.py" = [
-    "N815", # Pydantic field names match YAML schema (startDate, endDate, etc.)
-]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
@@ -87,6 +84,7 @@ addopts = "-m 'not integration'"
 
 [tool.mypy]
 files = ["src", "tests"]
+plugins = ["pydantic.mypy"]
 warn_redundant_casts = true
 warn_unused_ignores = true
 warn_return_any = true

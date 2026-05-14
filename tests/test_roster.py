@@ -12,6 +12,7 @@ from ad_voting_metrics.period import MonthPeriod
 from ad_voting_metrics.roster import (
     Delegate,
     DelegatesConfig,
+    LevelAssignment,
     build_roster_for_period,
     load_delegates,
     merge_with_api,
@@ -26,30 +27,30 @@ from ad_voting_metrics.roster import (
 def test_construct_active_delegate():
     d = Delegate(
         name="Alice",
-        voteDelegateAddress="0x1234567890abcdef1234567890abcdef12345678",
-        startDate=date(2025, 1, 1),
-        endDate=None,
+        vote_delegate_address="0x1234567890abcdef1234567890abcdef12345678",
+        start_date=date(2025, 1, 1),
+        end_date=None,
     )
     assert d.name == "Alice"
-    assert d.endDate is None
+    assert d.end_date is None
 
 
 def test_construct_exited_delegate():
     d = Delegate(
         name="Bob",
-        voteDelegateAddress="0xabcdef1234567890abcdef1234567890abcdef12",
-        startDate=date(2024, 1, 1),
-        endDate=date(2024, 6, 30),
+        vote_delegate_address="0xabcdef1234567890abcdef1234567890abcdef12",
+        start_date=date(2024, 1, 1),
+        end_date=date(2024, 6, 30),
     )
-    assert d.endDate == date(2024, 6, 30)
+    assert d.end_date == date(2024, 6, 30)
 
 
 def test_address_must_be_lowercase_hex():
     with pytest.raises(ValidationError, match="String should match pattern"):
         Delegate(
             name="Charlie",
-            voteDelegateAddress="0x1234567890ABCDef1234567890abcdef1234567",
-            startDate=date(2025, 1, 1),
+            vote_delegate_address="0x1234567890ABCDef1234567890abcdef1234567",
+            start_date=date(2025, 1, 1),
         )
 
 
@@ -57,8 +58,8 @@ def test_address_must_be_40_hex_digits():
     with pytest.raises(ValidationError, match="String should match pattern"):
         Delegate(
             name="Dave",
-            voteDelegateAddress="0x12345",
-            startDate=date(2025, 1, 1),
+            vote_delegate_address="0x12345",
+            start_date=date(2025, 1, 1),
         )
 
 
@@ -66,8 +67,8 @@ def test_address_must_have_0x_prefix():
     with pytest.raises(ValidationError, match="String should match pattern"):
         Delegate(
             name="Eve",
-            voteDelegateAddress="1234567890abcdef1234567890abcdef12345678",
-            startDate=date(2025, 1, 1),
+            vote_delegate_address="1234567890abcdef1234567890abcdef12345678",
+            start_date=date(2025, 1, 1),
         )
 
 
@@ -75,8 +76,8 @@ def test_name_must_be_non_empty():
     with pytest.raises(ValidationError, match="name must be non-empty"):
         Delegate(
             name="   ",
-            voteDelegateAddress="0x1234567890abcdef1234567890abcdef12345678",
-            startDate=date(2025, 1, 1),
+            vote_delegate_address="0x1234567890abcdef1234567890abcdef12345678",
+            start_date=date(2025, 1, 1),
         )
 
 
@@ -84,9 +85,9 @@ def test_end_date_must_be_after_start():
     with pytest.raises(ValidationError, match=r"endDate.*must be after"):
         Delegate(
             name="Frank",
-            voteDelegateAddress="0x1234567890abcdef1234567890abcdef12345678",
-            startDate=date(2025, 1, 1),
-            endDate=date(2024, 12, 31),
+            vote_delegate_address="0x1234567890abcdef1234567890abcdef12345678",
+            start_date=date(2025, 1, 1),
+            end_date=date(2024, 12, 31),
         )
 
 
@@ -95,9 +96,9 @@ def test_end_date_equal_to_start_date_rejected():
     with pytest.raises(ValidationError, match=r"endDate.*must be after"):
         Delegate(
             name="Grace",
-            voteDelegateAddress="0x1234567890abcdef1234567890abcdef12345678",
-            startDate=date(2025, 1, 1),
-            endDate=date(2025, 1, 1),
+            vote_delegate_address="0x1234567890abcdef1234567890abcdef12345678",
+            start_date=date(2025, 1, 1),
+            end_date=date(2025, 1, 1),
         )
 
 
@@ -114,12 +115,16 @@ def _delegate_with_levels(levels: list[dict] | None = None, **overrides) -> Dele
     """
     base: dict[str, Any] = {
         "name": "TestDelegate",
-        "voteDelegateAddress": "0x0000000000000000000000000000000000000001",
-        "startDate": date(2024, 1, 1),
-        "endDate": None,
+        "vote_delegate_address": "0x0000000000000000000000000000000000000001",
+        "start_date": date(2024, 1, 1),
+        "end_date": None,
         "levels": levels or [],
     }
     base.update(overrides)
+    # cast(Any, ...) makes the splat opaque to mypy — the dict has mixed
+    # types by design and we can't usefully annotate it more strictly. The
+    # tests exercise Pydantic's runtime validation, which is the real
+    # contract.
     return Delegate(**cast(Any, base))
 
 
@@ -134,10 +139,82 @@ def test_delegate_with_levels_omitted_constructs():
     """levels field is optional — omitting it is the same as empty list."""
     d = Delegate(
         name="X",
-        voteDelegateAddress="0x0000000000000000000000000000000000000002",
-        startDate=date(2024, 1, 1),
+        vote_delegate_address="0x0000000000000000000000000000000000000002",
+        start_date=date(2024, 1, 1),
     )
     assert d.levels == []
+
+
+# Aliases: the model accepts both camelCase (matching the YAML schema operators
+# author) and snake_case (the Python attribute names used internally). The
+# attribute access is always snake_case.
+
+
+def test_delegate_accepts_camel_case_aliases_for_yaml_compatibility():
+    """The model accepts camelCase keys that mirror the YAML schema. This
+    is the path exercised by DelegatesConfig.model_validate when loading
+    YAML files, where keys arrive as camelCase strings.
+
+    Uses model_validate({...}) rather than kwargs so the test exercises
+    exactly the same code path that load_delegates() does, and doesn't
+    depend on pyright understanding populate_by_name for keyword
+    arguments (which varies by pyright version).
+    """
+    d = Delegate.model_validate(
+        {
+            "name": "A",
+            "voteDelegateAddress": "0x0000000000000000000000000000000000000003",
+            "startDate": date(2024, 1, 1),
+            "endDate": None,
+        }
+    )
+    # Internal attributes are always snake_case regardless of input form.
+    assert d.name == "A"
+    assert d.vote_delegate_address == "0x0000000000000000000000000000000000000003"
+    assert d.start_date == date(2024, 1, 1)
+    assert d.end_date is None
+
+
+def test_delegate_accepts_snake_case_for_python_construction():
+    """The model also accepts snake_case keys — the canonical Python
+    attribute names. Useful when internal callers construct Delegate
+    objects programmatically (rather than from YAML)."""
+    d = Delegate.model_validate(
+        {
+            "name": "B",
+            "vote_delegate_address": "0x0000000000000000000000000000000000000004",
+            "start_date": date(2024, 1, 1),
+            "end_date": date(2025, 1, 1),
+        }
+    )
+    assert d.vote_delegate_address == "0x0000000000000000000000000000000000000004"
+    assert d.start_date == date(2024, 1, 1)
+    assert d.end_date == date(2025, 1, 1)
+
+
+def test_level_assignment_accepts_both_aliases_and_snake_case():
+    """LevelAssignment has the same alias behaviour on its date fields."""
+    # camelCase (YAML form)
+    la_yaml = LevelAssignment.model_validate(
+        {
+            "level": 1,
+            "startDate": date(2024, 1, 1),
+            "endDate": None,
+        }
+    )
+    assert la_yaml.start_date == date(2024, 1, 1)
+    assert la_yaml.end_date is None
+
+    # snake_case (Python form)
+    la_py = LevelAssignment.model_validate(
+        {
+            "level": 2,
+            "start_date": date(2024, 1, 1),
+            "end_date": None,
+        }
+    )
+    assert la_py.start_date == date(2024, 1, 1)
+    assert la_py.end_date is None
 
 
 def test_level_must_be_1_or_2():
@@ -173,7 +250,7 @@ def test_level_period_must_fit_within_alignment_start():
     """LevelAssignment can't predate the delegate's alignment startDate."""
     with pytest.raises(ValidationError, match="before alignment startDate"):
         _delegate_with_levels(
-            startDate=date(2024, 1, 1),
+            start_date=date(2024, 1, 1),
             levels=[{"level": 1, "startDate": date(2023, 6, 1)}],
         )
 
@@ -182,8 +259,8 @@ def test_level_period_must_fit_within_alignment_end():
     """LevelAssignment can't extend past the delegate's alignment endDate."""
     with pytest.raises(ValidationError, match="after alignment endDate"):
         _delegate_with_levels(
-            startDate=date(2024, 1, 1),
-            endDate=date(2025, 6, 30),
+            start_date=date(2024, 1, 1),
+            end_date=date(2025, 6, 30),
             levels=[
                 {
                     "level": 1,
@@ -198,8 +275,8 @@ def test_open_level_with_exited_delegate_rejected():
     """A delegate who exited can't have an open-ended level — set both."""
     with pytest.raises(ValidationError, match="endDate"):
         _delegate_with_levels(
-            startDate=date(2024, 1, 1),
-            endDate=date(2025, 6, 30),
+            start_date=date(2024, 1, 1),
+            end_date=date(2025, 6, 30),
             levels=[{"level": 1, "startDate": date(2025, 1, 1), "endDate": None}],
         )
 
@@ -237,7 +314,7 @@ def test_levels_with_open_ended_earlier_period_rejected():
 def test_sequential_levels_accepted():
     """L2 then L1 (or vice versa) with non-overlapping periods is allowed."""
     d = _delegate_with_levels(
-        startDate=date(2024, 1, 1),
+        start_date=date(2024, 1, 1),
         levels=[
             {
                 "level": 2,
@@ -352,9 +429,9 @@ def test_level_at_with_sequential_levels():
 def _delegate(start: date, end: date | None = None) -> Delegate:
     return Delegate(
         name="Harry",
-        voteDelegateAddress="0x1234567890abcdef1234567890abcdef12345678",
-        startDate=start,
-        endDate=end,
+        vote_delegate_address="0x1234567890abcdef1234567890abcdef12345678",
+        start_date=start,
+        end_date=end,
     )
 
 
@@ -435,8 +512,8 @@ def test_duplicate_addresses_rejected():
     with pytest.raises(ValidationError, match="Duplicate voteDelegateAddress"):
         DelegatesConfig(
             delegates=[
-                Delegate(name="A", voteDelegateAddress=addr, startDate=date(2025, 1, 1)),
-                Delegate(name="B", voteDelegateAddress=addr, startDate=date(2025, 2, 1)),
+                Delegate(name="A", vote_delegate_address=addr, start_date=date(2025, 1, 1)),
+                Delegate(name="B", vote_delegate_address=addr, start_date=date(2025, 2, 1)),
             ]
         )
 
@@ -477,7 +554,7 @@ def test_load_delegates_with_exited_delegate(tmp_path):
     p.write_text(yaml_text)
     config = load_delegates(p)
     assert len(config.delegates) == 2
-    assert config.delegates[1].endDate == date(2024, 6, 30)
+    assert config.delegates[1].end_date == date(2024, 6, 30)
 
 
 def test_load_delegates_file_not_found(tmp_path):
@@ -526,8 +603,8 @@ def test_real_delegates_yaml():
     assert len(config.delegates) > 0
     for d in config.delegates:
         assert d.name
-        assert d.voteDelegateAddress.startswith("0x")
-        assert len(d.voteDelegateAddress) == 42
+        assert d.vote_delegate_address.startswith("0x")
+        assert len(d.vote_delegate_address) == 42
 
 
 # ---------------------------------------------------------------------------
@@ -548,7 +625,7 @@ def test_merge_no_drift():
     addr = "0xfc48fbca739079aab08216c4d5e506b96593753d"
     yaml_config = DelegatesConfig(
         delegates=[
-            Delegate(name="Active", voteDelegateAddress=addr, startDate=date(2024, 1, 1)),
+            Delegate(name="Active", vote_delegate_address=addr, start_date=date(2024, 1, 1)),
         ]
     )
     api = [_api_entry("Active", addr)]
@@ -561,7 +638,7 @@ def test_merge_yaml_active_api_absent_warns():
     addr = "0xfc48fbca739079aab08216c4d5e506b96593753d"
     yaml_config = DelegatesConfig(
         delegates=[
-            Delegate(name="GhostlyActive", voteDelegateAddress=addr, startDate=date(2024, 1, 1)),
+            Delegate(name="GhostlyActive", vote_delegate_address=addr, start_date=date(2024, 1, 1)),
         ]
     )
     api: list[dict] = []  # API doesn't return this delegate
@@ -578,9 +655,9 @@ def test_merge_yaml_exited_api_absent_no_warn():
         delegates=[
             Delegate(
                 name="LegitimatelyExited",
-                voteDelegateAddress=addr,
-                startDate=date(2024, 1, 1),
-                endDate=date(2025, 6, 30),
+                vote_delegate_address=addr,
+                start_date=date(2024, 1, 1),
+                end_date=date(2025, 6, 30),
             ),
         ]
     )
@@ -595,9 +672,9 @@ def test_merge_yaml_exited_api_present_warns():
         delegates=[
             Delegate(
                 name="ExitedButReappearing",
-                voteDelegateAddress=addr,
-                startDate=date(2024, 1, 1),
-                endDate=date(2025, 6, 30),
+                vote_delegate_address=addr,
+                start_date=date(2024, 1, 1),
+                end_date=date(2025, 6, 30),
             ),
         ]
     )
@@ -622,7 +699,7 @@ def test_merge_address_case_insensitive():
     addr_mixed = "0xFc48fBcA739079aaB08216C4d5E506B96593753d"
     yaml_config = DelegatesConfig(
         delegates=[
-            Delegate(name="X", voteDelegateAddress=addr_lower, startDate=date(2024, 1, 1)),
+            Delegate(name="X", vote_delegate_address=addr_lower, start_date=date(2024, 1, 1)),
         ]
     )
     api = [_api_entry("X", addr_mixed)]
@@ -635,7 +712,7 @@ def test_merge_names_differ_addresses_match_no_warn():
     addr = "0xfc48fbca739079aab08216c4d5e506b96593753d"
     yaml_config = DelegatesConfig(
         delegates=[
-            Delegate(name="BONAPUBLICA", voteDelegateAddress=addr, startDate=date(2024, 1, 1)),
+            Delegate(name="BONAPUBLICA", vote_delegate_address=addr, start_date=date(2024, 1, 1)),
         ]
     )
     api = [_api_entry("Bonapublica", addr)]  # different casing
@@ -650,7 +727,7 @@ def test_merge_returns_yaml_delegates():
     yaml_config = DelegatesConfig(
         delegates=[
             Delegate(
-                name="OnlyInYaml", voteDelegateAddress=addr_in_yaml, startDate=date(2024, 1, 1)
+                name="OnlyInYaml", vote_delegate_address=addr_in_yaml, start_date=date(2024, 1, 1)
             ),
         ]
     )
@@ -782,8 +859,8 @@ def test_to_dataframe_columns():
     delegates = [
         Delegate(
             name="Cloaky",
-            voteDelegateAddress="0x0f23de72e1581857eacd6308aebb69cf3a49cc86",
-            startDate=date(2023, 6, 6),
+            vote_delegate_address="0x0f23de72e1581857eacd6308aebb69cf3a49cc86",
+            start_date=date(2023, 6, 6),
         ),
     ]
     df = to_dataframe(delegates)
@@ -795,8 +872,8 @@ def test_to_dataframe_start_date_is_string():
     delegates = [
         Delegate(
             name="X",
-            voteDelegateAddress="0xfc48fbca739079aab08216c4d5e506b96593753d",
-            startDate=date(2024, 7, 4),
+            vote_delegate_address="0xfc48fbca739079aab08216c4d5e506b96593753d",
+            start_date=date(2024, 7, 4),
         ),
     ]
     df = to_dataframe(delegates)
@@ -807,8 +884,8 @@ def test_to_dataframe_preserves_address_format():
     delegates = [
         Delegate(
             name="X",
-            voteDelegateAddress="0xfc48fbca739079aab08216c4d5e506b96593753d",
-            startDate=date(2024, 1, 1),
+            vote_delegate_address="0xfc48fbca739079aab08216c4d5e506b96593753d",
+            start_date=date(2024, 1, 1),
         ),
     ]
     df = to_dataframe(delegates)

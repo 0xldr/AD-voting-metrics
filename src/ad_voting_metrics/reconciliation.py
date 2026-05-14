@@ -61,8 +61,8 @@ def build_entry(
     output_files is the list of CSV paths written by the run. Lets the
     log point at exactly which artifacts this entry corresponds to.
     """
-    yaml_active = sum(1 for d in yaml_config.delegates if d.endDate is None)
-    yaml_exited = sum(1 for d in yaml_config.delegates if d.endDate is not None)
+    yaml_active = sum(1 for d in yaml_config.delegates if d.end_date is None)
+    yaml_exited = sum(1 for d in yaml_config.delegates if d.end_date is not None)
 
     dune_execution_mode = "fresh" if dune_cache_max_age_hours is None else "cached"
 

@@ -31,7 +31,7 @@ from pathlib import Path
 
 import pandas as pd
 import yaml
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from .period import MonthPeriod
 
@@ -48,8 +48,10 @@ class LevelAssignment(BaseModel):
     """
 
     level: int
-    startDate: date
-    endDate: date | None = None
+    start_date: date = Field(validation_alias="startDate")
+    end_date: date | None = Field(default=None, validation_alias="endDate")
+
+    model_config = ConfigDict(populate_by_name=True)
 
     @field_validator("level")
     @classmethod
@@ -63,29 +65,34 @@ class LevelAssignment(BaseModel):
 
     @model_validator(mode="after")
     def _end_after_start(self) -> "LevelAssignment":
-        if self.endDate is not None and self.endDate <= self.startDate:
+        if self.end_date is not None and self.end_date <= self.start_date:
             raise ValueError(
-                f"LevelAssignment endDate {self.endDate} must be after startDate {self.startDate}"
+                f"LevelAssignment endDate {self.end_date} must be after startDate {self.start_date}"
             )
         return self
 
     def covers(self, d: date) -> bool:
         """True if date d falls within this assignment's period (inclusive)."""
-        if d < self.startDate:
+        if d < self.start_date:
             return False
-        return not (self.endDate is not None and d > self.endDate)
+        return not (self.end_date is not None and d > self.end_date)
 
 
 class Delegate(BaseModel):
     """A single AD entry, currently or previously active."""
 
     name: str
-    voteDelegateAddress: str = Field(pattern=r"^0x[0-9a-f]{40}$")
-    startDate: date
-    endDate: date | None = None
+    vote_delegate_address: str = Field(
+        pattern=r"^0x[0-9a-f]{40}$",
+        validation_alias="voteDelegateAddress",
+    )
+    start_date: date = Field(validation_alias="startDate")
+    end_date: date | None = Field(default=None, validation_alias="endDate")
     # Governance-assigned L1/L2 history. Empty list (or omitted) is the
     # common case.
     levels: list[LevelAssignment] = Field(default_factory=list)
+
+    model_config = ConfigDict(populate_by_name=True)
 
     @field_validator("name")
     @classmethod
@@ -96,9 +103,9 @@ class Delegate(BaseModel):
 
     @model_validator(mode="after")
     def _end_date_after_start_date(self) -> "Delegate":
-        if self.endDate is not None and self.endDate <= self.startDate:
+        if self.end_date is not None and self.end_date <= self.start_date:
             raise ValueError(
-                f"endDate {self.endDate} must be after startDate {self.startDate} "
+                f"endDate {self.end_date} must be after startDate {self.start_date} "
                 f"for delegate {self.name}"
             )
         return self
@@ -107,21 +114,25 @@ class Delegate(BaseModel):
     def _level_periods_fit_alignment(self) -> "Delegate":
         """Every LevelAssignment must fall within the delegate's alignment period."""
         for la in self.levels:
-            if la.startDate < self.startDate:
+            if la.start_date < self.start_date:
                 raise ValueError(
-                    f"LevelAssignment startDate {la.startDate} for delegate "
-                    f"{self.name} is before alignment startDate {self.startDate}"
+                    f"LevelAssignment startDate {la.start_date} for delegate "
+                    f"{self.name} is before alignment startDate {self.start_date}"
                 )
-            if la.endDate is not None and self.endDate is not None and la.endDate > self.endDate:
+            if (
+                la.end_date is not None
+                and self.end_date is not None
+                and la.end_date > self.end_date
+            ):
                 raise ValueError(
-                    f"LevelAssignment endDate {la.endDate} for delegate "
-                    f"{self.name} is after alignment endDate {self.endDate}"
+                    f"LevelAssignment endDate {la.end_date} for delegate "
+                    f"{self.name} is after alignment endDate {self.end_date}"
                 )
-            if la.endDate is None and self.endDate is not None:
+            if la.end_date is None and self.end_date is not None:
                 raise ValueError(
                     f"LevelAssignment for delegate {self.name} has no "
                     f"endDate but the delegate's alignment ends on "
-                    f"{self.endDate}; set the LevelAssignment endDate too."
+                    f"{self.end_date}; set the LevelAssignment endDate too."
                 )
         return self
 
@@ -133,20 +144,20 @@ class Delegate(BaseModel):
         """
         if len(self.levels) < 2:
             return self
-        sorted_levels = sorted(self.levels, key=lambda la: la.startDate)
+        sorted_levels = sorted(self.levels, key=lambda la: la.start_date)
         for prev, curr in pairwise(sorted_levels):
-            if prev.endDate is None:
+            if prev.end_date is None:
                 raise ValueError(
-                    f"LevelAssignment starting {prev.startDate} for delegate "
+                    f"LevelAssignment starting {prev.start_date} for delegate "
                     f"{self.name} has no endDate but is followed by another "
-                    f"LevelAssignment starting {curr.startDate}; set the "
+                    f"LevelAssignment starting {curr.start_date}; set the "
                     "earlier endDate"
                 )
-            if prev.endDate >= curr.startDate:
+            if prev.end_date >= curr.start_date:
                 raise ValueError(
                     f"LevelAssignments for delegate {self.name} overlap "
-                    f"period ending {prev.endDate} overlaps with period "
-                    f"starting {curr.startDate}."
+                    f"period ending {prev.end_date} overlaps with period "
+                    f"starting {curr.start_date}."
                 )
         return self
 
@@ -155,9 +166,9 @@ class Delegate(BaseModel):
 
         endDate is inclusive. Delegates with no endDate have no upper bound.
         """
-        if self.startDate > period_end:
+        if self.start_date > period_end:
             return False
-        return not (self.endDate is not None and self.endDate < period_start)
+        return not (self.end_date is not None and self.end_date < period_start)
 
     def level_at(self, d: date) -> int | None:
         """Return the governance level (1 or 2) on date d, or None.
@@ -182,12 +193,12 @@ class DelegatesConfig(BaseModel):
     def _no_duplicate_addresses(self) -> "DelegatesConfig":
         seen: dict[str, str] = {}
         for d in self.delegates:
-            if d.voteDelegateAddress in seen:
+            if d.vote_delegate_address in seen:
                 raise ValueError(
-                    f"Duplicate voteDelegateAddress {d.voteDelegateAddress} for "
-                    f"{d.name} and {seen[d.voteDelegateAddress]}"
+                    f"Duplicate voteDelegateAddress {d.vote_delegate_address} for "
+                    f"{d.name} and {seen[d.vote_delegate_address]}"
                 )
-            seen[d.voteDelegateAddress] = d.name
+            seen[d.vote_delegate_address] = d.name
         return self
 
 
@@ -229,7 +240,7 @@ def merge_with_api(
     warnings: list[str] = []
 
     yaml_by_address: dict[str, Delegate] = {
-        d.voteDelegateAddress.lower(): d for d in yaml_config.delegates
+        d.vote_delegate_address.lower(): d for d in yaml_config.delegates
     }
     api_by_address: dict[str, dict] = {
         entry["voteDelegateAddress"].lower(): entry for entry in api_response
@@ -237,16 +248,16 @@ def merge_with_api(
 
     for addr, delegate in yaml_by_address.items():
         in_api = addr in api_by_address
-        if delegate.endDate is None and not in_api:
+        if delegate.end_date is None and not in_api:
             warnings.append(
                 f"{delegate.name} ({addr}) is marked active in YAML "
                 f"(endDate=null) but does not appear in the API as currently "
                 f"aligned. Did they exit? Update endDate in delegates.yaml"
             )
-        elif delegate.endDate is not None and in_api:
+        elif delegate.end_date is not None and in_api:
             warnings.append(
                 f"{delegate.name} ({addr}) is marked exited in YAML "
-                f"(endDate={delegate.endDate}) but the API still shows them "
+                f"(endDate={delegate.end_date}) but the API still shows them "
                 f"as currently aligned. Date mismatch - verify which is correct."
             )
 
@@ -330,7 +341,7 @@ def to_dataframe(delegates: list["Delegate"]) -> pd.DataFrame:
     return pd.DataFrame(
         {
             "Delegate Name": [d.name for d in delegates],
-            "Delegate Contract": [d.voteDelegateAddress for d in delegates],
-            "Start Date": [d.startDate.strftime("%Y-%m-%d") for d in delegates],
+            "Delegate Contract": [d.vote_delegate_address for d in delegates],
+            "Start Date": [d.start_date.strftime("%Y-%m-%d") for d in delegates],
         }
     )
