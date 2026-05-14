@@ -259,9 +259,7 @@ def test_status_grace_period_close_day_only_no_vote_returns_no_delegated_sky():
 
 
 def test_status_grace_period_close_day_only_voted_returns_yes():
-    """Same as above, but they voted anyway. Delegate engaged despite
-    late delegation - count it as Yes
-    """
+    """Same as above, but they voted anyway. Delegate engaged despite late delegation - count it as Yes."""
     sky = _sky_dict(0, 0, 0, 1000)
     assert (
         sky_dao.determine_vote_status(
