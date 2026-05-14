@@ -174,6 +174,8 @@ def get_poll_ids(period: MonthPeriod):
             start_date_poll = parser.parse(poll["startDate"]).date()
 
             if period.start <= start_date_poll <= period.end:
+                poll["startDate"] = start_date_poll
+                poll["endDate"] = parser.parse(poll["endDate"]).date()
                 poll_info.append(poll)
 
         if pagination_info["numPages"] == 1:
@@ -264,8 +266,8 @@ def get_vote_poll_ids(poll_info, df, df_sky, current_datetime: datetime):
                 for voter in data.get("votesByAddress", [])
             )
 
-            start_date = parser.parse(poll["startDate"]).date()
-            end_date = parser.parse(poll["endDate"]).date()
+            start_date = poll["startDate"]
+            end_date = poll["endDate"]
 
             delegates_sky_available = df_sky[
                 (df_sky["contract"].str.lower() == address.lower())
@@ -404,18 +406,8 @@ def custom_sort(df, hardcoded_order, poll_info, spell_info):
         if object_found:
             title_list.append(object_found["title"])
 
-            if isinstance(object_found["startDate"], str):
-                start_date_list.append(parser.parse(object_found["startDate"]).date())
-            else:
-                start_date_list.append(object_found["startDate"])
-
-            try:
-                if isinstance(object_found["endDate"], str):
-                    end_date_list.append(parser.parse(object_found["endDate"]).date())
-                else:
-                    end_date_list.append(object_found["endDate"])
-            except Exception:
-                end_date_list.append("N/A")
+            start_date_list.append(object_found["startDate"])
+            end_date_list.append(object_found.get("endDate", "N/A"))
 
         else:
             title_list.append("Title")
