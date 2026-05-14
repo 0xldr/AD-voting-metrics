@@ -226,9 +226,9 @@ def _run_fetch(args: argparse.Namespace) -> None:
 
     # Get SPELL addresses information and vote from SPELL
     logger.info("Getting SPELL addresses...")
-    spell_info = sky.get_execute_ids(period)
+    spell_info = sky.get_executive_ids(period)
     logger.info("Getting VOTE FROM SPELL...")
-    df = sky.get_vote_execute_ids(spell_info, df, df_sky)
+    df = sky.get_vote_executive_ids(spell_info, df, df_sky)
 
     # Save data to CSV files
     output_csv = OUTPUT_DIR / "vote_participation.csv"

@@ -21,6 +21,10 @@ SKY_EXECUTIVE_SUPPORTERS_URL = "https://vote.sky.money/api/executive/supporters"
 SKY_POLL_ID_URL = "https://vote.sky.money/api/polling/tally"
 SKY_EXECUTIVE_URL = "https://vote.sky.money/api/executive"
 
+SKY_POLL_PAGE_SIZE = 30
+SKY_EXECUTIVES_PAGE_SIZE = 100
+SKY_EXECUTIVES_PAGINATION_HARD_CAP = 10_000_000
+
 
 # Define a function to retrieve the SKY for each delegate by date.
 def get_all_sky_delegated(cache_max_age_hours: int | None = None) -> pd.DataFrame:
@@ -156,7 +160,7 @@ def get_poll_ids(period: MonthPeriod):
     all_found = False
     while all_found is False:
         page = page + 1
-        base_url = f"{SKY_ALL_POLLS_URL}?network=mainnet&pageSize=30&page={page}&orderBy=FURTHEST_START&startDate={period.start.isoformat()}"
+        base_url = f"{SKY_ALL_POLLS_URL}?network=mainnet&pageSize={SKY_POLL_PAGE_SIZE}&page={page}&orderBy=FURTHEST_START&startDate={period.start.isoformat()}"
         response = get_session().get(base_url, headers=HEADERS, timeout=HTTP_TIMEOUT)
 
         response.raise_for_status()
@@ -292,12 +296,12 @@ def get_vote_poll_ids(poll_info, df, df_sky, current_datetime: datetime):
     return df
 
 
-# define a function to get the executes IDs for Data.
-def get_execute_ids(period: MonthPeriod):
+# define a function to get the executive IDs for Data.
+def get_executive_ids(period: MonthPeriod):
     spell_info = []
     start = 0
-    limit = 100
-    while start < 10_000_000:
+    limit = SKY_EXECUTIVES_PAGE_SIZE
+    while start < SKY_EXECUTIVES_PAGINATION_HARD_CAP:
         base_url = f"{SKY_EXECUTIVE_URL}?start={start}&limit={limit}"
         response = get_session().get(base_url, headers=HEADERS, timeout=HTTP_TIMEOUT)
 
@@ -328,7 +332,7 @@ def get_execute_ids(period: MonthPeriod):
 
 
 # Define a function to confirm the voting of each delegate in the spells.
-def get_vote_execute_ids(spell_info, df, df_sky):
+def get_vote_executive_ids(spell_info, df, df_sky):
     base_url = f"{SKY_EXECUTIVE_SUPPORTERS_URL}?network=mainnet"
     # Make the API request
     response = get_session().get(base_url, headers=HEADERS, timeout=HTTP_TIMEOUT)
