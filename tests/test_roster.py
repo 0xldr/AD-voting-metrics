@@ -2,6 +2,7 @@
 
 from datetime import date
 from pathlib import Path
+from typing import cast
 
 import pytest
 import yaml
@@ -127,7 +128,7 @@ def _delegate_with_levels(
         vote_delegate_address=vote_delegate_address,
         start_date=start_date,
         end_date=end_date,
-        levels=levels or [],
+        levels=cast(list, levels) if levels is not None else [],
     )
 
 

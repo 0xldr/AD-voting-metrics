@@ -16,9 +16,9 @@ def reset_session():
     on responses mocking should start with a new session so prior
     tests can't leak state through the adapter.
     """
-    http_module._session_instance = None
+    http_module.get_session.cache_clear()
     yield
-    http_module._session_instance = None
+    http_module.get_session.cache_clear()
 
 
 def _delegate_dict(name: str, address: str) -> dict:

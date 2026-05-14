@@ -23,6 +23,7 @@ lapses become a real problem; for now it's the standard choice.
 """
 
 import os
+from collections import Counter
 from datetime import date, datetime
 from pathlib import Path
 
@@ -241,14 +242,14 @@ def write_daily_data(
     subset["Date"] = subset["Date"].apply(_coerce_date)
 
     new_rows: dict[tuple[str, str], tuple[float, int]] = {}
-    new_counts_by_date: dict[str, int] = {}
+    new_counts_by_date: Counter[str] = Counter()
     for _, row in subset.iterrows():
         date_str = str(row["Date"])
         delegate = str(row["Delegate"])
         sky = float(row["Total Delegation"])
         rank = int(row["Rank"])
         new_rows[(date_str, delegate)] = (sky, rank)
-        new_counts_by_date[date_str] = new_counts_by_date.get(date_str, 0) + 1
+        new_counts_by_date[date_str] += 1
 
     # Get-or-create the workbook-wide tab. Size generously; clear-and-rewrite
     # at the end takes care of the actual cell count.
@@ -263,9 +264,7 @@ def write_daily_data(
 
     # Roster drift check: dates present in both existing and new data
     # should have the same delegate count.
-    existing_counts_by_date: dict[str, int] = {}
-    for date_str, _delegate in existing:
-        existing_counts_by_date[date_str] = existing_counts_by_date.get(date_str, 0) + 1
+    existing_counts_by_date: Counter[str] = Counter(date_str for (date_str, _delegate) in existing)
 
     for date_str, new_count in new_counts_by_date.items():
         if date_str in existing_counts_by_date:
