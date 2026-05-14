@@ -71,6 +71,7 @@ def parse_cache_hours(value: str) -> int:
 
 
 def build_arg_parser():
+    """Construct the top-level argparse parser with `fetch` and `finalize` subcommands."""
     parser = argparse.ArgumentParser(
         prog="ad-voting-metrics",
         description=(
@@ -333,6 +334,7 @@ def _run_finalize(args: argparse.Namespace) -> None:
 
 
 def main(argv: list[str] | None = None) -> None:
+    """Entry point: configure logging, parse argv, dispatch to the chosen subcommand."""
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s %(levelname)s %(message)s",
