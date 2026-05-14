@@ -1,3 +1,11 @@
+"""Command-line entry point with `fetch` and `finalize` subcommands.
+
+`fetch` pulls SKY delegations from Dune and poll/spell vote data from
+vote.sky.money, then writes the raw participation tabs to the workbook.
+`finalize` reads the operator-reviewed Communication Master tab and
+writes the Compensation tab.
+"""
+
 import argparse
 import logging
 from datetime import UTC, date, datetime, timedelta
