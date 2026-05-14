@@ -34,17 +34,14 @@ RECONCILIATION_LOG_PATH = OUTPUT_DIR / "reconciliation"
 def parse_month(value):
     """Argparse type callback: parse --month value into a MonthPeriod.
 
-    Wraps MonthPeriod.from_string() and adds CLI-specific concerns:
-      - Errors are surfaced as argparse.ArgumentTypeErrors so argparse handles
-      them with proper messages and exit code 2.
-      - Future months are rejected here.
+    Wraps MonthPeriod.from_string() and rejects future months.
 
     Returns:
         The parsed MonthPeriod
 
     Raises:
-        argparse.ArgumentTypeError: if the value is unparseable or resolves
-            entirely to a future month.
+        argparse.ArgumentTypeError: if the value is unparseable or
+            resolves entirely to a future month.
     """
     try:
         period = MonthPeriod.from_string(value)
@@ -62,9 +59,7 @@ def parse_month(value):
 
 
 def parse_cache_hours(value: str) -> int:
-    """Argparse callback for --cache-hours.
-
-    Accepts a non-negative integer. Negative values are rejected.
+    """Argparse callback for --cache-hours; requires a non-negative integer.
 
     Returns:
         The parsed integer.
@@ -84,7 +79,7 @@ def parse_cache_hours(value: str) -> int:
 
 
 def build_arg_parser():
-    """Construct the top-level argparse parser with `fetch` and `finalize` subcommands.
+    """Build the top-level argparse parser with `fetch` and `finalize` subcommands.
 
     Returns:
         The configured ArgumentParser.
@@ -95,7 +90,7 @@ def build_arg_parser():
             "Generate AD voting metrics for a single month. The workflow "
             "is two-step: `fetch` pulls SKY delegations and poll/spell vote "
             "data and writes the raw participation tabs to the workbook "
-            "(and CSVs to output_data/ for the current transition period). "
+            "(and CSVs to output_data/)."
             "An operator then reviews communication entries manually. "
             "`finalize` reads the operator-reviewed communication data and "
             "writes the Compensation tab."
@@ -169,12 +164,14 @@ def check_period_has_ended(period: MonthPeriod, today: date) -> None:
     """Raise SystemExit if the period hasn't ended on or before today.
 
     Metrics for an in-progress period are unreliable: poll close-day rules
-    can't be applied to polls still in their voting window, the SKY-ranking
-    snapshot is incomplete, and the operator workflow assumes a closed period
-    boundary.
+    can't be applied to polls still in their voting window, and the
+    SKY-ranking snapshot is incomplete.
 
-    `today` should be the current UTC date - periods are UTC-anchored
-    (polls close at 16:00 UTC).
+    `today` should be the current UTC date, not local - periods are
+    UTC-anchored (polls close at 16:00 UTC). Pass
+    `datetime.now(UTC).date()`, not `date.today()`.
+
+    Takes `today` as a parameter so tests can pin a deterministic clock.
 
     Raises:
         SystemExit: if the period's last day is on or after today.
@@ -190,16 +187,14 @@ def check_period_has_ended(period: MonthPeriod, today: date) -> None:
 
 
 def _run_fetch(args: argparse.Namespace) -> None:
-    """Execute the fetch stage: pull from Dune + APIs, write raw participation."""
+    """Pull data from Dune + APIs, write CSVs and workbook tabs."""
     period = args.month
 
     logger.info(
         "Querying %s (%s through %s)", period, period.start.isoformat(), period.end.isoformat()
     )
 
-    # Step 1: Build the delegate roster from delegates.yaml + vote.sky.money API.
-    # The YAML is the source of truth, the API call is for drift detection.
-    # Filtering to "active during this month" happens inside build_roster_for_period.
+    # YAML is the source of truth; the API call is for drift detection only.
     logger.info("Building delegate roster from delegates.yaml and vote.sky.money API...")
     roster_result = build_roster_for_period(
         yaml_path=YAML_PATH,
@@ -212,13 +207,11 @@ def _run_fetch(args: argparse.Namespace) -> None:
         logger.warning(warning)
     logger.info("Roster has %d delegates active during %s", len(delegates), period)
 
-    # Track CSVs we write so the reconciliation log can record them
     output_files: list[Path] = []
 
     df = to_dataframe(delegates)
     hardcoded_order = df["Delegate Contract"].str.lower().tolist()
 
-    # Get delegate list and SKY ranking
     logger.info("Getting RANKING...")
     delegate_list_sky, delegate_list_rank = sky.get_delegate_list_sky(
         df,
@@ -232,32 +225,28 @@ def _run_fetch(args: argparse.Namespace) -> None:
     df_sky = df_sky.sort_values(by=["date", "sky", "contract"], ascending=False)
     df_ranking = df_ranking.sort_values(by=["Date", "Total Delegation"], ascending=False)
 
+    # Rank within each Date by Total Delegation (already sorted descending).
     df_ranking["Rank"] = df_ranking.groupby("Date").cumcount() + 1
 
     df_ranking = df_ranking.sort_values(by=["Rank", "Date"], ascending=[True, True])
 
-    # Get poll IDs information and vote from polls
     logger.info("Getting POLL IDS...")
     poll_info = sky.get_poll_ids(period)
     logger.info("Getting VOTE FROM POLLS...")
     df = sky.get_vote_poll_ids(poll_info, df, df_sky, current_datetime=datetime.now(UTC))
 
-    # Get SPELL addresses information and vote from SPELL
     logger.info("Getting SPELL addresses...")
     spell_info = sky.get_executive_ids(period)
     logger.info("Getting VOTE FROM SPELL...")
     df = sky.get_vote_executive_ids(spell_info, df, df_sky)
 
-    # Save data to CSV files
     output_csv = OUTPUT_DIR / "vote_participation.csv"
     df.to_csv(output_csv, index=False)
     output_files.append(output_csv)
     logger.info("Participation vote data saved to %s", output_csv)
 
-    # Open the workbook once and reuse for all writers below. Failures are
-    # handled per-writer so one tab's problem doesn't drop the others. The
-    # CSV outputs above are always written before this block, so they
-    # remain available as a fallback during the transition phase.
+    # Open the workbook once and reuse for the writers below. Failures
+    # are handled per-writer so one tab's problem doesn't drop the others.
     workbook: gspread.Spreadsheet | None
     try:
         workbook = sheets.get_workbook()
@@ -267,7 +256,6 @@ def _run_fetch(args: argparse.Namespace) -> None:
         workbook = None
 
     # Write Participation Raw Data BEFORE custom_sort, which transposes df.
-    # The writer expects the per-delegate-rows shape.
     if workbook is not None:
         try:
             sheets.write_participation_raw_data(
@@ -281,11 +269,9 @@ def _run_fetch(args: argparse.Namespace) -> None:
         except (RuntimeError, gspread.exceptions.APIError) as e:
             logger.error("Could not write Participation Raw Data tab: %s", e)
 
-    # Communication Master — workbook-wide, merges new polls into the existing
-    # tab. Uses the same pre-transpose df shape as participation. ValueError
-    # raised here (missing-column fatal check) needs special handling: the
-    # operator must add the column, so propagate the message clearly rather
-    # than swallow it like a transient API error.
+    # Communication Master: workbook-wide, merges new polls into the
+    # existing tab. ValueError here means the operator must add a column
+    # before re-running; surface the message rather than treat as transient.
     if workbook is not None:
         try:
             sheets.write_communication_master(
@@ -313,7 +299,6 @@ def _run_fetch(args: argparse.Namespace) -> None:
     output_files.append(output_csv)
     logger.info("Ranking data saved to %s", output_csv)
 
-    # Daily Data — uses df_ranking (independent of df).
     if workbook is not None:
         try:
             sheets.write_daily_data(workbook, period, df_ranking)
@@ -345,9 +330,7 @@ def _run_finalize(args: argparse.Namespace) -> None:
     """Read the operator-reviewed Communication Master tab, compute metrics, write Compensation.
 
     Raises:
-        SystemExit: with a "not yet implemented" message while the
-            Sheets-side compensation writer and eligibility logic are
-            still being built.
+        SystemExit: with a "not yet implemented" message.
     """
     period = args.month
     logger.info("Finalize requested for %s", period)
@@ -366,7 +349,6 @@ def main(argv: list[str] | None = None) -> None:
         format="%(asctime)s %(levelname)s %(message)s",
         datefmt="%Y-%m%d %H-%M-%S",
     )
-    # Set Dune to WARNING to reduce terminal noise
     logging.getLogger("dune-client").setLevel(logging.WARNING)
     load_dotenv()
     parser = build_arg_parser()
