@@ -4,21 +4,21 @@ The YAML is the source of truth for who is or has been an Aligned Delegate.
 Each entry has:
 
 - name: the delegate's display name (matches what the spreadsheet uses)
-- voteDelegateAddress: the on-chain vote delegate contract (lowercase 0x...)
-- startDate: the date AD compensation begins. Note this is NOT necessarily
+- vote_delegate_address: the on-chain vote delegate contract (lowercase 0x...)
+- start_date: the date AD compensation begins. Note this is NOT necessarily
   the contract creation date returned by the vote.sky.money API as
   `creationDate` — a delegate may deploy their contract weeks before
   formally being aligned.
-- endDate: optional. If set, the inclusive last day they were an AD;
-  endDate of 2026-04-15 means they were active on April 15.
+- end_date: optional. If set, the inclusive last day they were an AD;
+  end_date of 2026-04-15 means they were active on April 15.
 - levels: optional list of LevelAssignment entries describing governance L1/L2
   assignments over time. A delegate may be unassigned (empty list, the common
   case) or have a sequence of non-overlapping periods. Level 3 is compted daily
   from rank plus eligibility - never set in the YAML.
 
-Drift detection: every YAML entry with endDate=None should appear in the API's
+Drift detection: every YAML entry with end_date=None should appear in the API's
 currently-aligned response; every API-returned AD should have a matching entry
-with endDate=None. Mismatches produce warnings - typically that the YAML needs
+with end_date=None. Mismatches produce warnings - typically that the YAML needs
 updating after a new alignment or an exit.
 """
 
@@ -31,7 +31,7 @@ from pathlib import Path
 
 import pandas as pd
 import yaml
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from .period import MonthPeriod
 
@@ -48,10 +48,8 @@ class LevelAssignment(BaseModel):
     """
 
     level: int
-    start_date: date = Field(validation_alias="startDate")
-    end_date: date | None = Field(default=None, validation_alias="endDate")
-
-    model_config = ConfigDict(populate_by_name=True)
+    start_date: date
+    end_date: date | None = None
 
     @field_validator("level")
     @classmethod
@@ -67,7 +65,8 @@ class LevelAssignment(BaseModel):
     def _end_after_start(self) -> "LevelAssignment":
         if self.end_date is not None and self.end_date <= self.start_date:
             raise ValueError(
-                f"LevelAssignment endDate {self.end_date} must be after startDate {self.start_date}"
+                f"LevelAssignment end_date {self.end_date} must be after "
+                f"start_date {self.start_date}"
             )
         return self
 
@@ -82,17 +81,12 @@ class Delegate(BaseModel):
     """A single AD entry, currently or previously active."""
 
     name: str
-    vote_delegate_address: str = Field(
-        pattern=r"^0x[0-9a-f]{40}$",
-        validation_alias="voteDelegateAddress",
-    )
-    start_date: date = Field(validation_alias="startDate")
-    end_date: date | None = Field(default=None, validation_alias="endDate")
+    vote_delegate_address: str = Field(pattern=r"^0x[0-9a-f]{40}$")
+    start_date: date
+    end_date: date | None = None
     # Governance-assigned L1/L2 history. Empty list (or omitted) is the
     # common case.
     levels: list[LevelAssignment] = Field(default_factory=list)
-
-    model_config = ConfigDict(populate_by_name=True)
 
     @field_validator("name")
     @classmethod
@@ -105,7 +99,7 @@ class Delegate(BaseModel):
     def _end_date_after_start_date(self) -> "Delegate":
         if self.end_date is not None and self.end_date <= self.start_date:
             raise ValueError(
-                f"endDate {self.end_date} must be after startDate {self.start_date} "
+                f"end_date {self.end_date} must be after start_date {self.start_date} "
                 f"for delegate {self.name}"
             )
         return self
@@ -116,8 +110,8 @@ class Delegate(BaseModel):
         for la in self.levels:
             if la.start_date < self.start_date:
                 raise ValueError(
-                    f"LevelAssignment startDate {la.start_date} for delegate "
-                    f"{self.name} is before alignment startDate {self.start_date}"
+                    f"LevelAssignment star_dDate {la.start_date} for delegate "
+                    f"{self.name} is before alignment start_date {self.start_date}"
                 )
             if (
                 la.end_date is not None
@@ -125,14 +119,14 @@ class Delegate(BaseModel):
                 and la.end_date > self.end_date
             ):
                 raise ValueError(
-                    f"LevelAssignment endDate {la.end_date} for delegate "
-                    f"{self.name} is after alignment endDate {self.end_date}"
+                    f"LevelAssignment end_date {la.end_date} for delegate "
+                    f"{self.name} is after alignment end_date {self.end_date}"
                 )
             if la.end_date is None and self.end_date is not None:
                 raise ValueError(
                     f"LevelAssignment for delegate {self.name} has no "
-                    f"endDate but the delegate's alignment ends on "
-                    f"{self.end_date}; set the LevelAssignment endDate too."
+                    f"end_date but the delegate's alignment ends on "
+                    f"{self.end_date}; set the LevelAssignment end_date too."
                 )
         return self
 
@@ -149,9 +143,9 @@ class Delegate(BaseModel):
             if prev.end_date is None:
                 raise ValueError(
                     f"LevelAssignment starting {prev.start_date} for delegate "
-                    f"{self.name} has no endDate but is followed by another "
+                    f"{self.name} has no end_date but is followed by another "
                     f"LevelAssignment starting {curr.start_date}; set the "
-                    "earlier endDate"
+                    "earlier end_date"
                 )
             if prev.end_date >= curr.start_date:
                 raise ValueError(
@@ -164,7 +158,7 @@ class Delegate(BaseModel):
     def is_active_during(self, period_start: date, period_end: date) -> bool:
         """True if this delegate was active at any point during the given period.
 
-        endDate is inclusive. Delegates with no endDate have no upper bound.
+        end_date is inclusive. Delegates with no end_date have no upper bound.
         """
         if self.start_date > period_end:
             return False
@@ -195,7 +189,7 @@ class DelegatesConfig(BaseModel):
         for d in self.delegates:
             if d.vote_delegate_address in seen:
                 raise ValueError(
-                    f"Duplicate voteDelegateAddress {d.vote_delegate_address} for "
+                    f"Duplicate vote_delegate_address {d.vote_delegate_address} for "
                     f"{d.name} and {seen[d.vote_delegate_address]}"
                 )
             seen[d.vote_delegate_address] = d.name
@@ -226,15 +220,15 @@ def merge_with_api(
     of human-readable warning strings for any drift detected.
 
     Drift rules:
-    - YAML active (endDate=None), API absent -> warn (operator likely
-    forgot to set endDate after an exit)
-    - YAML exited (endDate set), API absent -> expected, no warn
+    - YAML active (end_date=None), API absent -> warn (operator likely
+    forgot to set end_date after an exit)
+    - YAML exited (end_date set), API absent -> expected, no warn
     - YAML exited, API present -> warn (date mismatch; either YAML
     or API is wrong about the exit)
     - API present, not in YAML -> warn (new aligned delegate not yet
     added to YAML)
 
-    Comparisons are by voteDelegateAddress (lowercased). Names that differ
+    Comparisons are by vote_delegate_address (lowercased). Names that differ
     but addresses match are not flagged.
     """
     warnings: list[str] = []
@@ -251,8 +245,8 @@ def merge_with_api(
         if delegate.end_date is None and not in_api:
             warnings.append(
                 f"{delegate.name} ({addr}) is marked active in YAML "
-                f"(endDate=null) but does not appear in the API as currently "
-                f"aligned. Did they exit? Update endDate in delegates.yaml"
+                f"(end_date=null) but does not appear in the API as currently "
+                f"aligned. Did they exit? Update end_date in delegates.yaml"
             )
         elif delegate.end_date is not None and in_api:
             warnings.append(
