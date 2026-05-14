@@ -25,8 +25,10 @@ from ad_voting_metrics.period import MonthPeriod
 
 
 def test_scopes_are_sheets_and_drive():
-    """The Sheets scope is for cell I/O; the Drive scope is required for
-    gspread's open_by_key. Both are needed.
+    """Verify both Sheets and Drive scopes are configured.
+
+    Sheets scope is for cell I/O; Drive scope is required for gspread's
+    open_by_key.
     """
     assert sheets.SCOPES == (
         "https://www.googleapis.com/auth/spreadsheets",
@@ -48,7 +50,8 @@ def test_get_workbook_missing_service_account_env_raises(monkeypatch):
 
 
 def test_get_workbook_missing_workbook_id_env_raises(monkeypatch, tmp_path):
-    """Without the workbook id env var and without an explicit arg, fail clearly.
+    """Fail clearly when SHEETS_WORKBOOK_ID is missing and not passed explicitly.
+
     The service-account env var is set so we exercise the second branch.
     """
     fake_sa = tmp_path / "fake.json"
@@ -60,8 +63,9 @@ def test_get_workbook_missing_workbook_id_env_raises(monkeypatch, tmp_path):
 
 
 def test_get_workbook_both_env_vars_missing_raises_service_account_first(monkeypatch):
-    """When both are missing, the service-account error comes first.
-    Documents the check order; operator sees them in sequence.
+    """Surface the service-account error first when both env vars are missing.
+
+    Documents the check order; operator sees errors in sequence.
     """
     monkeypatch.delenv("GOOGLE_SERVICE_ACCOUNT_FILE", raising=False)
     monkeypatch.delenv("SHEETS_WORKBOOK_ID", raising=False)
@@ -92,8 +96,9 @@ def test_get_workbook_service_account_file_missing_raises(tmp_path):
 
 
 def test_get_workbook_service_account_path_is_directory_raises(tmp_path):
-    """Path exists but is a directory, not a file. Surfacing this
-    separately helps the operator see the problem clearly.
+    """Raise a distinct error when the service-account path is a directory.
+
+    Surfacing this separately helps the operator see the problem clearly.
     """
     with pytest.raises(RuntimeError, match="not a file"):
         sheets.get_workbook(
@@ -108,9 +113,7 @@ def test_get_workbook_service_account_path_is_directory_raises(tmp_path):
 
 
 def test_get_workbook_malformed_json_raises(tmp_path):
-    """File exists but isn't valid service-account JSON. google-auth
-    raises ValueError; we wrap it as RuntimeError with context.
-    """
+    """Wrap google-auth's ValueError on bad JSON as a RuntimeError with context."""
     bad_file = tmp_path / "bad.json"
     bad_file.write_text("{not valid json")
     with pytest.raises(RuntimeError, match="could not be parsed"):
@@ -121,9 +124,10 @@ def test_get_workbook_malformed_json_raises(tmp_path):
 
 
 def test_get_workbook_wrong_key_type_raises(tmp_path):
-    """Valid JSON but not a service-account key (e.g., user credentials
-    or a random object). google-auth's from_service_account_file rejects
-    these with ValueError too.
+    """Wrap google-auth's ValueError on non-service account JSON.
+
+    Valid JSON but not a service-account key (e.g., user credentials or
+    or a random object) gets the same error path as malformed JSON.
     """
     not_sa = tmp_path / "not-sa.json"
     not_sa.write_text(json.dumps({"type": "oauth", "client_id": "abc"}))
@@ -181,7 +185,8 @@ def test_get_workbook_happy_path_returns_spreadsheet(tmp_path):
 
 
 def test_get_workbook_passes_correct_scopes_to_credentials(tmp_path):
-    """Credentials.from_service_account_file gets scopes from sheets.SCOPES.
+    """Pass sheets.SCOPES to Credentials.from_service_account_file.
+
     Catches accidental scope edits at the wrong layer.
     """
     sa_file = _make_fake_sa_file(tmp_path)
@@ -201,9 +206,11 @@ def test_get_workbook_passes_correct_scopes_to_credentials(tmp_path):
 
 
 def test_get_workbook_api_error_on_open_wrapped_with_context(tmp_path):
-    """Gspread raises APIError when the workbook is not accessible (wrong
-    ID, not shared, etc.). We wrap with a helpful message naming the
-    service account email so the operator can share the workbook.
+    """Wrap gspread's APIError with a helpful message naming the service account.
+
+    APIError fires when the workbook is not accessible (wrong ID, not
+    shared, etc.). The wrapped message tells the operator which account
+    needs access.
     """
     sa_file = _make_fake_sa_file(tmp_path)
     fake_creds = MagicMock()
@@ -227,8 +234,10 @@ def test_get_workbook_api_error_on_open_wrapped_with_context(tmp_path):
 
 
 def test_get_workbook_api_error_message_includes_sa_email(tmp_path):
-    """The wrapped error message includes the service account email so the
-    operator knows exactly what to add to the workbook's sharing list.
+    """Include the service account email in the wrapped error message.
+
+    The operator needs to know exactly which account to add to the workbook's
+    sharing list.
     """
     sa_file = _make_fake_sa_file(tmp_path)
     fake_creds = MagicMock()
@@ -312,8 +321,10 @@ def test_list_tab_names_returns_titles_in_order():
 
 
 def test_list_tab_names_empty_workbook_returns_empty_list():
-    """An (impossible in practice — every Sheets workbook has at least one
-    tab) but the function should handle it without surprise.
+    """Return [] for a workbook with no tabs.
+
+    Impossible in practice - every Sheets workbook has at least one
+    tab - but the function should handle it without a surprise.
     """
     workbook = MagicMock()
     workbook.worksheets.return_value = []
@@ -348,7 +359,8 @@ def test_get_or_create_tab_creates_when_missing():
 
 
 def test_get_or_create_tab_does_not_resize_existing_tab():
-    """Existing tab is returned regardless of the rows/cols passed.
+    """Return existing tab as-is regardless of the rows/cols passed.
+
     Resizing on every call would shrink/grow tabs unpredictably.
     """
     existing_ws = MagicMock(spec=gspread.Worksheet)
@@ -364,7 +376,8 @@ def test_get_or_create_tab_does_not_resize_existing_tab():
 
 
 def test_get_or_create_tab_requires_keyword_only_rows_cols():
-    """Rows and cols are keyword-only — passing positionally is a TypeError.
+    """Raise TypeError when rows/cols are passed positionally.
+
     Forces callers to be explicit about size.
     """
     workbook = MagicMock()
@@ -380,8 +393,9 @@ def test_get_or_create_tab_requires_keyword_only_rows_cols():
 
 
 def test_clear_tab_calls_worksheet_clear():
-    """clear_tab delegates to gspread's worksheet.clear() which wipes
-    values while preserving formatting.
+    """Delegate to gspread's worksheet.clear().
+
+    Wipes values while preserving formatting.
     """
     worksheet = MagicMock(spec=gspread.Worksheet)
 
@@ -433,8 +447,9 @@ def test_list_tab_names_returns_real_tabs():
 
 @pytest.mark.integration
 def test_get_or_create_tab_creates_and_finds_real_tab(_temp_tab):
-    """Create a real tab, verify it shows up, fetch it again, get
-    the same one back. Teardown deletes it.
+    """Create a real tab, verify it appears, fetch it again, get the same one.
+
+    Teardown deletes the tab.
     """
     workbook = sheets.get_workbook()
 
@@ -570,8 +585,9 @@ def test_write_daily_data_clears_before_writing():
 
 
 def test_write_daily_data_preserves_existing_rows_for_other_dates():
-    """Existing rows for dates NOT in the current fetch stay in the merged
-    output. Workbook-wide tab accumulates across months.
+    """Preserve existing rows for dates not in the current fetch.
+
+    The workbook-wide tab accumulates data across months.
     """
     # Current fetch covers April 2026, rank-1 BLUE only
     df = pd.DataFrame(
@@ -603,8 +619,9 @@ def test_write_daily_data_preserves_existing_rows_for_other_dates():
 
 
 def test_write_daily_data_overwrites_existing_rows_for_current_dates():
-    """For dates IN the current fetch, existing values get overwritten —
-    re-runs are idempotent.
+    """Overwrite existing rows for dates that are in the current fetch.
+
+    Re-runs are idempotent.
     """
     df = pd.DataFrame(
         {
@@ -633,8 +650,9 @@ def test_write_daily_data_overwrites_existing_rows_for_current_dates():
 
 
 def test_write_daily_data_raises_on_roster_drift():
-    """For a date in both existing and new data, if the delegate count
-    differs (someone added/removed from roster mid-period), raise.
+    """Raise when a data apperars in both existing and new data with different delegate counts.
+
+    Indicates someone was added or removed from the roster mid-period.
     """
     # Current fetch has 2 delegates for April 1
     df = pd.DataFrame(
@@ -662,8 +680,9 @@ def test_write_daily_data_raises_on_roster_drift():
 
 
 def test_write_daily_data_no_drift_when_dates_dont_overlap():
-    """If existing and new data don't share any dates, no drift check
-    fires even if delegate counts per date differ.
+    """Skip the drift check when existing and new data share no dates.
+
+    Different delegate counts on different dates are fine.
     """
     df = pd.DataFrame(
         {
@@ -689,9 +708,10 @@ def test_write_daily_data_no_drift_when_dates_dont_overlap():
 
 
 def test_write_daily_data_handles_unparseable_existing_rows():
-    """Malformed rows in the existing tab are dropped — defensive against
-    operator edits or upstream corruption. We lose the bad row but keep
-    the tab functional.
+    """Drop malformed rows from the existing tab rather than crashing.
+
+    Defensive against operator edits or upstream corruption. The bad
+    row is lost but the tab stays functional.
     """
     df = pd.DataFrame(
         {
@@ -719,8 +739,9 @@ def test_write_daily_data_handles_unparseable_existing_rows():
 
 
 def test_write_daily_data_handles_unrecognised_existing_header():
-    """An existing tab with the wrong header shape is treated as empty
-    (the clear-and-rewrite step below replaces it cleanly).
+    """Treat an existing tab with the wrong header shape as empty.
+
+    The clear-and-rewrite step below replaces it cleanly.
     """
     df = pd.DataFrame(
         {
@@ -862,6 +883,7 @@ def test_write_daily_data_returns_worksheet():
 @pytest.mark.integration
 def test_write_daily_data_to_real_workbook(_temp_tab, monkeypatch):
     """End-to-end: write a small Daily Data set, read back, verify cells.
+
     Uses a temp tab via monkeypatching the workbook-wide tab name.
     """
     df = pd.DataFrame(
@@ -1001,8 +1023,10 @@ def test_coerce_date_handles_pandas_timestamp():
 
 
 def test_coerce_date_handles_none():
-    """None produces empty string. Reachable in production: spell dicts have
-    no endDate key, so metadata.get("endDate") returns None.
+    """Return empty string for now.
+
+    Reachable in production: spell dicts have no endDate key, so
+    metadata.get("endDate") returns None.
     """
     assert sheets._coerce_date(None) == ""
 
@@ -1048,8 +1072,9 @@ def test_write_participation_clears_existing_tab_before_writing():
 
 
 def test_write_participation_header_includes_metadata_and_delegate_names():
-    """Header: Poll Id, Start Date, End Date, Title, then delegate names
-    in df row order.
+    """Build header from metadata columns plus delegate names in df row order.
+
+    Header: Poll Id, Start Date, End Date, Title, then delegate names.
     """
     df = _make_participation_df()
     workbook = MagicMock()
@@ -1078,9 +1103,7 @@ def test_write_participation_header_includes_metadata_and_delegate_names():
 
 
 def test_write_participation_data_rows_one_per_poll_with_metadata():
-    """Each row after header is one poll/spell with metadata + statuses
-    in delegate-column order matching df row order.
-    """
+    """Write one row per poll/spell with metadata + statuses in df column order."""
     df = _make_participation_df()
     workbook = MagicMock()
     fake_ws = MagicMock(spec=gspread.Worksheet)
@@ -1131,9 +1154,10 @@ def test_write_participation_data_rows_one_per_poll_with_metadata():
 
 
 def test_write_participation_unknown_poll_id_has_blank_metadata():
-    """If a column in df has no matching poll or spell record, write
-    the row with blank metadata cells but keep the status data. This is
-    defensive — a transient API inconsistency shouldn't drop participation
+    """Write blank metadata cells for a column with no matching poll/spell record.
+
+    Status data is still written. Defensive against a transient API
+    inconsistency that shouldn't drop participation
     data.
     """
     df = pd.DataFrame(
@@ -1299,8 +1323,9 @@ def test_isblank_false_for_real_values():
 
 
 def test_write_communication_master_missing_df_column_raises():
-    """The df must have a 'Delegate Name' column for the writer to find
-    the active roster.
+    """Raise when the df has no 'Delegate Name' column.
+
+    The writer needs that column to find the active roster.
     """
     df_bad = pd.DataFrame({"NotTheRightColumn": ["foo"]})
     workbook = MagicMock()
@@ -1317,8 +1342,9 @@ def test_write_communication_master_missing_df_column_raises():
 
 
 def test_write_communication_master_first_fetch_creates_header():
-    """First fetch (empty tab): header is metadata columns + delegate names
-    from df, in df row order.
+    """Build header as metadata columns + delegate names from df, in df row order.
+
+    First fetch only - when the tab is empty.
     """
     df = _make_participation_df()
     workbook = MagicMock()
@@ -1346,9 +1372,9 @@ def test_write_communication_master_first_fetch_creates_header():
 
 
 def test_write_communication_master_first_fetch_pending_for_yes_participation():
-    """For first-fetch new poll rows where participation = 'Yes', the
-    communication cell defaults to 'Pending verification' for operator
-    review.
+    """Default communication to 'Pending verification' for Yes-participtation new poll rows.
+
+    First-fetch only: operator review fills in the real value later.
     """
     # Fixture: poll 12345 has all 3 delegates as "Yes" - except cloaky is "No"
     # Use a simplified df where everyone said Yes
@@ -1435,8 +1461,9 @@ def test_write_communication_master_first_fetch_mirrors_discounted():
 
 
 def test_write_communication_master_missing_column_raises():
-    """Subsequent fetch with a new delegate in YAML but no column in the
-    existing tab → fatal error with clear instructions.
+    """Raise with clear instructions when YAML adds a delegate not in the existing tab.
+
+    Subequent fetch only - the writer can't invent a column.
     """
     df = pd.DataFrame(
         {
@@ -1467,9 +1494,7 @@ def test_write_communication_master_missing_column_raises():
 
 
 def test_write_communication_master_preserves_operator_edits():
-    """Existing non-blank cells are preserved (operator edits).
-    Only blank cells get filled with the cross-reference default.
-    """
+    """Preserve existing non-blank cells; fill blanks with the cross-reference default."""
     df = pd.DataFrame(
         {
             "Delegate Name": ["BLUE", "Cloaky"],
@@ -1541,9 +1566,10 @@ def test_write_communication_master_preserves_historical_polls():
 
 
 def test_write_communication_master_historical_delegate_cells_blank_for_new_polls():
-    """A column for a delegate no longer in df (removed from YAML) is
-    preserved, but new poll rows leave that column blank (we don't know
-    their alignment dates).
+    """Preserve historical delegate columns but leave new poll rows blank for them.
+
+    A delegate removed from YAML keeps their column (historical data)
+    but we don't know their alignment dates for new polls.
     """
     df = pd.DataFrame(
         {
