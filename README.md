@@ -53,11 +53,11 @@ The list of Aligned Delegates lives in `delegates.yaml` at the repo root. This i
 Each entry has:
 
 - `name`: display name of the delegate
-- `voteDelegateAddress`: the on-chain voteDelegate contract (lowercase 0x...)
-- `startDate`: the date that the delegate was recognized as aligned. This is not necessarily the same date the contract was deployed.
-- `endDate`: optional. The inclusive last day that they were an AD. `null` for currently active delegates.
+- `vote_delegate_address`: the on-chain voteDelegate contract (lowercase 0x...)
+- `start_date`: the date that the delegate was recognized as aligned. This is not necessarily the same date the contract was deployed.
+- `end_date`: optional. The inclusive last day that they were an AD. `null` for currently active delegates.
 
-When a new delegate is recognized, add an entry with their `startDate` and `endDate: null`. When a delegate exits, set their `endDate` to the inclusive last day they were active. The script will warn if the YAML drifts from the API state (e.g., a delegate marked active in YAML who no longer appears in the API as currently-aligned).
+When a new delegate is recognized, add an entry with their `start_date` and `end_date: null`. When a delegate exits, set their `end_date` to the inclusive last day they were active. The script will warn if the YAML drifts from the API state (e.g., a delegate marked active in YAML who no longer appears in the API as currently-aligned).
 
 ## Usage
 

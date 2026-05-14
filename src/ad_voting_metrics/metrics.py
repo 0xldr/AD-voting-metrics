@@ -13,10 +13,10 @@ their alignment timing and SKY balance during the voting window:
    and cast a vote
   - "No": delegate had SKY delegated at some point during the voting window
    but did not vote
-  - "Not Started": the delegate's alignment startDate is after the poll's end
+  - "Not Started": the delegate's alignment start_date is after the poll's end
   -i.e., they weren't aligned yet when the poll closed, so non-participation
   isn't held against them
-  - "Exited": the delegate's alignment endDate is before this poll's startDate -i.e.,
+  - "Exited": the delegate's alignment endDate is before this poll's start_date -i.e.,
   they had already exited when the poll opened, so non-participation isn't held against
   them. Symmetric to "Not Started" on the other temporal boundary.
   - "Voting Open": the poll's voting window had not yet closed at the time metrics were

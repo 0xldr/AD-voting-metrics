@@ -82,7 +82,7 @@ def test_name_must_be_non_empty():
 
 
 def test_end_date_must_be_after_start():
-    with pytest.raises(ValidationError, match=r"endDate.*must be after"):
+    with pytest.raises(ValidationError, match=r"end_date.*must be after"):
         Delegate(
             name="Frank",
             vote_delegate_address="0x1234567890abcdef1234567890abcdef12345678",
@@ -92,8 +92,8 @@ def test_end_date_must_be_after_start():
 
 
 def test_end_date_equal_to_start_date_rejected():
-    # endDate must be *strictly* after startDate, so equal dates should also be rejected.
-    with pytest.raises(ValidationError, match=r"endDate.*must be after"):
+    # end_date must be *strictly* after start_date, so equal dates should also be rejected.
+    with pytest.raises(ValidationError, match=r"end_date.*must be after"):
         Delegate(
             name="Grace",
             vote_delegate_address="0x1234567890abcdef1234567890abcdef12345678",
@@ -149,92 +149,20 @@ def test_delegate_with_levels_omitted_constructs():
     assert d.levels == []
 
 
-# Aliases: the model accepts both camelCase (matching the YAML schema operators
-# author) and snake_case (the Python attribute names used internally). The
-# attribute access is always snake_case.
-
-
-def test_delegate_accepts_camel_case_aliases_for_yaml_compatibility():
-    """The model accepts camelCase keys that mirror the YAML schema. This
-    is the path exercised by DelegatesConfig.model_validate when loading
-    YAML files, where keys arrive as camelCase strings.
-
-    Uses model_validate({...}) rather than kwargs so the test exercises
-    exactly the same code path that load_delegates() does, and doesn't
-    depend on pyright understanding populate_by_name for keyword
-    arguments (which varies by pyright version).
-    """
-    d = Delegate.model_validate(
-        {
-            "name": "A",
-            "voteDelegateAddress": "0x0000000000000000000000000000000000000003",
-            "startDate": date(2024, 1, 1),
-            "endDate": None,
-        }
-    )
-    # Internal attributes are always snake_case regardless of input form.
-    assert d.name == "A"
-    assert d.vote_delegate_address == "0x0000000000000000000000000000000000000003"
-    assert d.start_date == date(2024, 1, 1)
-    assert d.end_date is None
-
-
-def test_delegate_accepts_snake_case_for_python_construction():
-    """The model also accepts snake_case keys — the canonical Python
-    attribute names. Useful when internal callers construct Delegate
-    objects programmatically (rather than from YAML)."""
-    d = Delegate.model_validate(
-        {
-            "name": "B",
-            "vote_delegate_address": "0x0000000000000000000000000000000000000004",
-            "start_date": date(2024, 1, 1),
-            "end_date": date(2025, 1, 1),
-        }
-    )
-    assert d.vote_delegate_address == "0x0000000000000000000000000000000000000004"
-    assert d.start_date == date(2024, 1, 1)
-    assert d.end_date == date(2025, 1, 1)
-
-
-def test_level_assignment_accepts_both_aliases_and_snake_case():
-    """LevelAssignment has the same alias behaviour on its date fields."""
-    # camelCase (YAML form)
-    la_yaml = LevelAssignment.model_validate(
-        {
-            "level": 1,
-            "startDate": date(2024, 1, 1),
-            "endDate": None,
-        }
-    )
-    assert la_yaml.start_date == date(2024, 1, 1)
-    assert la_yaml.end_date is None
-
-    # snake_case (Python form)
-    la_py = LevelAssignment.model_validate(
-        {
-            "level": 2,
-            "start_date": date(2024, 1, 1),
-            "end_date": None,
-        }
-    )
-    assert la_py.start_date == date(2024, 1, 1)
-    assert la_py.end_date is None
-
-
 def test_level_must_be_1_or_2():
     """Level 3 in YAML is rejected — it's daily-computed, never YAML-set."""
     with pytest.raises(ValidationError, match="level must be 1 or 2"):
-        _delegate_with_levels(levels=[{"level": 3, "startDate": date(2025, 12, 1)}])
+        _delegate_with_levels(levels=[{"level": 3, "start_date": date(2025, 12, 1)}])
 
 
 def test_level_zero_rejected():
     with pytest.raises(ValidationError, match="level must be 1 or 2"):
-        _delegate_with_levels(levels=[{"level": 0, "startDate": date(2025, 12, 1)}])
+        _delegate_with_levels(levels=[{"level": 0, "start_date": date(2025, 12, 1)}])
 
 
 def test_level_negative_rejected():
     with pytest.raises(ValidationError, match="level must be 1 or 2"):
-        _delegate_with_levels(levels=[{"level": -1, "startDate": date(2025, 12, 1)}])
+        _delegate_with_levels(levels=[{"level": -1, "start_date": date(2025, 12, 1)}])
 
 
 def test_level_assignment_end_must_be_after_start():
@@ -243,33 +171,33 @@ def test_level_assignment_end_must_be_after_start():
             levels=[
                 {
                     "level": 1,
-                    "startDate": date(2025, 12, 1),
-                    "endDate": date(2025, 11, 1),
+                    "start_date": date(2025, 12, 1),
+                    "end_date": date(2025, 11, 1),
                 }
             ]
         )
 
 
 def test_level_period_must_fit_within_alignment_start():
-    """LevelAssignment can't predate the delegate's alignment startDate."""
-    with pytest.raises(ValidationError, match="before alignment startDate"):
+    """LevelAssignment can't predate the delegate's alignment start_date."""
+    with pytest.raises(ValidationError, match="before alignment start_date"):
         _delegate_with_levels(
             start_date=date(2024, 1, 1),
-            levels=[{"level": 1, "startDate": date(2023, 6, 1)}],
+            levels=[{"level": 1, "start_date": date(2023, 6, 1)}],
         )
 
 
 def test_level_period_must_fit_within_alignment_end():
-    """LevelAssignment can't extend past the delegate's alignment endDate."""
-    with pytest.raises(ValidationError, match="after alignment endDate"):
+    """LevelAssignment can't extend past the delegate's alignment end_date."""
+    with pytest.raises(ValidationError, match="after alignment end_date"):
         _delegate_with_levels(
             start_date=date(2024, 1, 1),
             end_date=date(2025, 6, 30),
             levels=[
                 {
                     "level": 1,
-                    "startDate": date(2025, 1, 1),
-                    "endDate": date(2025, 12, 31),
+                    "start_date": date(2025, 1, 1),
+                    "end_date": date(2025, 12, 31),
                 }
             ],
         )
@@ -277,11 +205,11 @@ def test_level_period_must_fit_within_alignment_end():
 
 def test_open_level_with_exited_delegate_rejected():
     """A delegate who exited can't have an open-ended level — set both."""
-    with pytest.raises(ValidationError, match="endDate"):
+    with pytest.raises(ValidationError, match="end_date"):
         _delegate_with_levels(
             start_date=date(2024, 1, 1),
             end_date=date(2025, 6, 30),
-            levels=[{"level": 1, "startDate": date(2025, 1, 1), "endDate": None}],
+            levels=[{"level": 1, "start_date": date(2025, 1, 1), "end_date": None}],
         )
 
 
@@ -292,25 +220,25 @@ def test_overlapping_levels_rejected():
             levels=[
                 {
                     "level": 2,
-                    "startDate": date(2024, 6, 1),
-                    "endDate": date(2025, 6, 30),
+                    "start_date": date(2024, 6, 1),
+                    "end_date": date(2025, 6, 30),
                 },
                 {
                     "level": 1,
-                    "startDate": date(2025, 1, 1),  # overlaps with above
-                    "endDate": date(2025, 12, 31),
+                    "start_date": date(2025, 1, 1),  # overlaps with above
+                    "end_date": date(2025, 12, 31),
                 },
             ]
         )
 
 
 def test_levels_with_open_ended_earlier_period_rejected():
-    """An earlier LevelAssignment with no endDate can't be followed by another."""
-    with pytest.raises(ValidationError, match="no endDate"):
+    """An earlier LevelAssignment with no end_date can't be followed by another."""
+    with pytest.raises(ValidationError, match="no end_date"):
         _delegate_with_levels(
             levels=[
-                {"level": 2, "startDate": date(2024, 6, 1), "endDate": None},
-                {"level": 1, "startDate": date(2025, 6, 1), "endDate": None},
+                {"level": 2, "start_date": date(2024, 6, 1), "end_date": None},
+                {"level": 1, "start_date": date(2025, 6, 1), "end_date": None},
             ]
         )
 
@@ -322,13 +250,13 @@ def test_sequential_levels_accepted():
         levels=[
             {
                 "level": 2,
-                "startDate": date(2024, 6, 1),
-                "endDate": date(2025, 5, 31),
+                "start_date": date(2024, 6, 1),
+                "end_date": date(2025, 5, 31),
             },
             {
                 "level": 1,
-                "startDate": date(2025, 6, 1),
-                "endDate": None,
+                "start_date": date(2025, 6, 1),
+                "end_date": None,
             },
         ],
     )
@@ -341,13 +269,13 @@ def test_adjacent_levels_with_one_day_gap_accepted():
         levels=[
             {
                 "level": 2,
-                "startDate": date(2024, 6, 1),
-                "endDate": date(2025, 5, 31),
+                "start_date": date(2024, 6, 1),
+                "end_date": date(2025, 5, 31),
             },
             {
                 "level": 1,
-                "startDate": date(2025, 6, 1),
-                "endDate": None,
+                "start_date": date(2025, 6, 1),
+                "end_date": None,
             },
         ]
     )
@@ -367,33 +295,33 @@ def test_level_at_returns_none_for_unassigned_delegate():
 
 def test_level_at_returns_level_within_period():
     d = _delegate_with_levels(
-        levels=[{"level": 1, "startDate": date(2025, 12, 1), "endDate": None}]
+        levels=[{"level": 1, "start_date": date(2025, 12, 1), "end_date": None}]
     )
     assert d.level_at(date(2026, 1, 15)) == 1
 
 
 def test_level_at_returns_none_before_period_starts():
     d = _delegate_with_levels(
-        levels=[{"level": 1, "startDate": date(2025, 12, 1), "endDate": None}]
+        levels=[{"level": 1, "start_date": date(2025, 12, 1), "end_date": None}]
     )
     assert d.level_at(date(2025, 11, 30)) is None
 
 
 def test_level_at_returns_level_on_start_date_inclusive():
     d = _delegate_with_levels(
-        levels=[{"level": 1, "startDate": date(2025, 12, 1), "endDate": None}]
+        levels=[{"level": 1, "start_date": date(2025, 12, 1), "end_date": None}]
     )
     assert d.level_at(date(2025, 12, 1)) == 1
 
 
 def test_level_at_returns_level_on_end_date_inclusive():
-    """endDate is inclusive: the delegate has the level on that day."""
+    """end_date is inclusive: the delegate has the level on that day."""
     d = _delegate_with_levels(
         levels=[
             {
                 "level": 1,
-                "startDate": date(2025, 12, 1),
-                "endDate": date(2026, 3, 31),
+                "start_date": date(2025, 12, 1),
+                "end_date": date(2026, 3, 31),
             }
         ]
     )
@@ -407,13 +335,13 @@ def test_level_at_with_sequential_levels():
         levels=[
             {
                 "level": 2,
-                "startDate": date(2024, 6, 1),
-                "endDate": date(2025, 5, 31),
+                "start_date": date(2024, 6, 1),
+                "end_date": date(2025, 5, 31),
             },
             {
                 "level": 1,
-                "startDate": date(2025, 6, 1),
-                "endDate": None,
+                "start_date": date(2025, 6, 1),
+                "end_date": None,
             },
         ]
     )
@@ -482,7 +410,7 @@ def test_boundary_aligned_on_last_day_of_period():
 
 
 def test_boundary_exited_on_first_day_of_period():
-    # endDate is inclusive, so should be active
+    # end_date is inclusive, so should be active
     d = _delegate(start=date(2025, 1, 1), end=date(2026, 4, 1))
     assert d.is_active_during(date(2026, 4, 1), date(2026, 4, 30))
 
@@ -513,7 +441,7 @@ def test_empty_list_accepted():
 
 def test_duplicate_addresses_rejected():
     addr = "0x1234567890abcdef1234567890abcdef12345678"
-    with pytest.raises(ValidationError, match="Duplicate voteDelegateAddress"):
+    with pytest.raises(ValidationError, match="Duplicate vote_delegate_address"):
         DelegatesConfig(
             delegates=[
                 Delegate(name="A", vote_delegate_address=addr, start_date=date(2025, 1, 1)),
@@ -531,9 +459,9 @@ def test_load_delegates_happy_path(tmp_path):
     yaml_text = """
     delegates:
       - name: Alice
-        voteDelegateAddress: "0x1234567890abcdef1234567890abcdef12348899"
-        startDate: 2025-01-01
-        endDate: null
+        vote_delegate_address: "0x1234567890abcdef1234567890abcdef12348899"
+        start_date: 2025-01-01
+        end_date: null
         """
     p = tmp_path / "delegates.yaml"
     p.write_text(yaml_text)
@@ -546,13 +474,13 @@ def test_load_delegates_with_exited_delegate(tmp_path):
     yaml_text = """
     delegates:
       - name: Alice
-        voteDelegateAddress: "0x1234567890abcdef1234567890abcdef12348899"
-        startDate: 2025-01-01
-        endDate: null
+        vote_delegate_address: "0x1234567890abcdef1234567890abcdef12348899"
+        start_date: 2025-01-01
+        end_date: null
       - name: Bob
-        voteDelegateAddress: "0xabcdef1234567890abcdef1234567890abcdef12"
-        startDate: 2024-01-01
-        endDate: 2024-06-30
+        vote_delegate_address: "0xabcdef1234567890abcdef1234567890abcdef12"
+        start_date: 2024-01-01
+        end_date: 2024-06-30
         """
     p = tmp_path / "delegates.yaml"
     p.write_text(yaml_text)
@@ -584,8 +512,8 @@ def test_load_delegates_schema_violation(tmp_path):
     yaml_text = """
     delegates:
     - name: X
-      voteDelegateAddress: "not-an-address"
-      startDate: 2024-01-01
+      vote_delegate_address: "not-an-address"
+      start_date: 2024-01-01
 """
     p = tmp_path / "delegates.yaml"
     p.write_text(yaml_text)
@@ -752,17 +680,17 @@ def test_build_roster_for_period_filters_to_active(tmp_path):
     yaml_text = """
     delegates:
       - name: Active
-        voteDelegateAddress: "0xfc48fbca739079aab08216c4d5e506b96593753d"
-        startDate: 2024-01-01
-        endDate: null
+        vote_delegate_address: "0xfc48fbca739079aab08216c4d5e506b96593753d"
+        start_date: 2024-01-01
+        end_date: null
       - name: ExitedBefore
-        voteDelegateAddress: "0x0f23de72e1581857eacd6308aebb69cf3a49cc86"
-        startDate: 2023-01-01
-        endDate: 2025-12-31
+        vote_delegate_address: "0x0f23de72e1581857eacd6308aebb69cf3a49cc86"
+        start_date: 2023-01-01
+        end_date: 2025-12-31
       - name: AlignedAfter
-        voteDelegateAddress: "0x173a1c04b79ed9266721c1154daa29addc0b9558"
-        startDate: 2027-01-01
-        endDate: null
+        vote_delegate_address: "0x173a1c04b79ed9266721c1154daa29addc0b9558"
+        start_date: 2027-01-01
+        end_date: null
     """
     p = tmp_path / "delegates.yaml"
     p.write_text(yaml_text)
@@ -784,9 +712,9 @@ def test_build_roster_for_period_propagates_warnings(tmp_path):
     yaml_text = """
     delegates:
       - name: Active
-        voteDelegateAddress: "0xfc48fbca739079aab08216c4d5e506b96593753d"
-        startDate: 2024-01-01
-        endDate: null
+        vote_delegate_address: "0xfc48fbca739079aab08216c4d5e506b96593753d"
+        start_date: 2024-01-01
+        end_date: null
     """
     p = tmp_path / "delegates.yaml"
     p.write_text(yaml_text)
@@ -804,9 +732,9 @@ def test_build_roster_for_period_soft_fails_on_api_error(tmp_path):
     yaml_text = """
     delegates:
       - name: Active
-        voteDelegateAddress: "0xfc48fbca739079aab08216c4d5e506b96593753d"
-        startDate: 2024-01-01
-        endDate: null
+        vote_delegate_address: "0xfc48fbca739079aab08216c4d5e506b96593753d"
+        start_date: 2024-01-01
+        end_date: null
     """
     p = tmp_path / "delegates.yaml"
     p.write_text(yaml_text)
@@ -833,9 +761,9 @@ def test_build_roster_for_period_records_api_metadata(tmp_path):
     yaml_text = """
     delegates:
       - name: Active
-        voteDelegateAddress: "0xfc48fbca739079aab08216c4d5e506b96593753d"
-        startDate: 2024-01-01
-        endDate: null
+        vote_delegate_address: "0xfc48fbca739079aab08216c4d5e506b96593753d"
+        start_date: 2024-01-01
+        end_date: null
     """
     p = tmp_path / "delegates.yaml"
     p.write_text(yaml_text)
