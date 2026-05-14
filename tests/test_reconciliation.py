@@ -21,28 +21,25 @@ from ad_voting_metrics.roster import Delegate, DelegatesConfig
 
 def _make_yaml_config(active: int = 1, exited: int = 0) -> DelegatesConfig:
     """Construct a DelegatesConfig with the given counts of active/exited delegates."""
-    delegates = []
-    for i in range(active):
-        addr = f"0x{i:040x}"
-        delegates.append(
-            Delegate(
-                name=f"Active{i}",
-                vote_delegate_address=addr,
-                start_date=date(2024, 1, 1),
-                end_date=None,
-            )
+    active_delegates = [
+        Delegate(
+            name=f"Active{i}",
+            vote_delegate_address=f"0x{i:040x}",
+            start_date=date(2024, 1, 1),
+            end_date=None,
         )
-    for i in range(exited):
-        addr = f"0xff{i:038x}"
-        delegates.append(
-            Delegate(
-                name=f"Exited{i}",
-                vote_delegate_address=addr,
-                start_date=date(2023, 1, 1),
-                end_date=date(2025, 6, 30),
-            )
+        for i in range(active)
+    ]
+    exited_delegates = [
+        Delegate(
+            name=f"Exited{i}",
+            vote_delegate_address=f"0xff{i:038x}",
+            start_date=date(2023, 1, 1),
+            end_date=date(2025, 6, 30),
         )
-    return DelegatesConfig(delegates=delegates)
+        for i in range(exited)
+    ]
+    return DelegatesConfig(delegates=[*active_delegates, *exited_delegates])
 
 
 def _sample_period() -> MonthPeriod:
