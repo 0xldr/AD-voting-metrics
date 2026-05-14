@@ -200,8 +200,7 @@ def communication_pct(
     participation_statuses: Sequence[str],
     communication_statuses: Sequence[str],
 ) -> float | None:
-    """Communication percentage: Yes / (Yes + No) on the cross-referenced
-    communication status list.
+    """Compute communication percentage: Yes / (Yes + No) on the cross-referenced statuses.
 
     Applies apply_participation_cross_reference first (overriding "No"
     participation to "Did not vote" communication), then runs the same
@@ -211,10 +210,10 @@ def communication_pct(
     The two sequences must be parallel and equal-length. Length mismatch
     raises ValueError via apply_participation_cross_reference.
 
-    Note: this function does not enforce the "communication must be within
-    7 days of poll end date" rule. That rule is followed by the operator at
-    data entry time — operators only record "Yes" for communications that
-    happened in the window. The script trusts what's in the workbook.
+    The "communication must be within 7 days of poll end date" rule is
+    followed by the operator at data entry time — they only record "Yes"
+    for communications that happened in the window. The script trusts
+    what's in the workbook.
     """
     effective = apply_participation_cross_reference(participation_statuses, communication_statuses)
     return participation_pct(effective)
