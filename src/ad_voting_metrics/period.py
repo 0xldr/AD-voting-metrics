@@ -29,6 +29,7 @@ class MonthPeriod:
     month: int
 
     def __post_init__(self):
+        """Validate month is 1..12 and year is reasonable (>=1900)."""
         if not 1 <= self.month <= 12:
             raise ValueError(f"month must be 1..12, got {self.month}")
         # No upper bound on year — the type is happy with December 2099 even
@@ -48,7 +49,7 @@ class MonthPeriod:
         return date(self.year, self.month, last_day)
 
     def __str__(self) -> str:
-        # "April 2026" rather than "MonthPeriod(year=2026, month=4)".
+        """Render as April 2026 rather than "MonthPeriod(year=2026, month=4)"."""
         return f"{calendar.month_name[self.month]} {self.year}"
 
     @classmethod

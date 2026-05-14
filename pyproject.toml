@@ -103,11 +103,6 @@ select = [
 ignore = [
     "E501",  # line too long — too noisy for legacy code, will tighten later
     "E402",  # module level import not at top — main.py has acceptable patterns
-    # D-rule deferrals — these will be addressed in subsequent commits when
-    # docstrings get a focused content/verbosity pass. Each removal here
-    # corresponds to a planned docstring-quality commit.
-    "D103",  # undocumented-public-function
-    "D105",  # undocumented-magic-method
 ]
 
 [tool.ruff.lint.per-file-ignores]
