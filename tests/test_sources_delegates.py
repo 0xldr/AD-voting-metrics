@@ -5,7 +5,7 @@ import responses
 from pytest import LogCaptureFixture
 
 from ad_voting_metrics.sources import http as http_module
-from ad_voting_metrics.sources.delegates import DELEGATES_URL, fetch_aligned_delegates
+from ad_voting_metrics.sources.delegates import _MAX_PAGES, DELEGATES_URL, fetch_aligned_delegates
 
 
 @pytest.fixture(autouse=True)
@@ -221,8 +221,6 @@ def test_stops_on_empty_page_even_when_hasnextpage_true():
 @responses.activate
 def test_page_cap_stops_infinite_loop(caplog: LogCaptureFixture):
     """If the API always returns hasNextPage=true, we should stop after 10 pages."""
-    from ad_voting_metrics.sources.delegates import _MAX_PAGES
-
     # Register enough responses to satisfy _MAX_PAGES, all with hasNextPage=true
     for _ in range(_MAX_PAGES):
         responses.add(
