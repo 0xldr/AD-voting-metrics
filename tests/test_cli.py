@@ -42,14 +42,14 @@ def test_check_period_has_ended_accepts_period_in_past():
     """Period ended months ago: no error, returns None."""
     period = MonthPeriod(year=2026, month=1)  # ends 2026-01-31
     # No exception expected
-    assert check_period_has_ended(period, today=date(2026, 5, 15)) is None
+    check_period_has_ended(period, today=date(2026, 5, 15))
 
 
 def test_check_period_has_ended_accepts_period_ending_yesterday():
     """The minimal valid case: period ended yesterday, today is the next
     day. April ends Apr 30; running on May 1 should be fine."""
     period = MonthPeriod(year=2026, month=4)
-    assert check_period_has_ended(period, today=date(2026, 5, 1)) is None
+    check_period_has_ended(period, today=date(2026, 5, 1))
 
 
 def test_check_period_has_ended_rejects_period_ending_today():
@@ -94,7 +94,7 @@ def test_check_period_has_ended_handles_short_month():
     we depend on doesn't accidentally use 30/31."""
     period = MonthPeriod(year=2026, month=2)  # ends 2026-02-28
     # Should accept March 1
-    assert check_period_has_ended(period, today=date(2026, 3, 1)) is None
+    check_period_has_ended(period, today=date(2026, 3, 1))
     # Should reject Feb 28 (last day of period, not yet ended)
     with pytest.raises(SystemExit, match="2026-03-01"):
         check_period_has_ended(period, today=date(2026, 2, 28))
@@ -103,7 +103,7 @@ def test_check_period_has_ended_handles_short_month():
 def test_check_period_has_ended_handles_leap_year():
     """February 2024 had 29 days."""
     period = MonthPeriod(year=2024, month=2)  # ends 2024-02-29
-    assert check_period_has_ended(period, today=date(2024, 3, 1)) is None
+    check_period_has_ended(period, today=date(2024, 3, 1))
     with pytest.raises(SystemExit, match="2024-03-01"):
         check_period_has_ended(period, today=date(2024, 2, 29))
 

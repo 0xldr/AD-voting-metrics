@@ -203,19 +203,8 @@ def _run_fetch(args: argparse.Namespace) -> None:
     df_sky = df_sky.sort_values(by=["date", "sky", "contract"], ascending=False)
     df_ranking = df_ranking.sort_values(by=["Date", "Total Delegation"], ascending=False)
 
-    # Calculate and assign ranks to delegates
-    current_rank = 1
-    prev_date = None
-    ranks = []
+    df_ranking["Rank"] = df_ranking.groupby("Date").cumcount() + 1
 
-    for _index, row in df_ranking.iterrows():
-        if row["Date"] != prev_date:
-            current_rank = 1
-        ranks.append(current_rank)
-        current_rank += 1
-        prev_date = row["Date"]
-
-    df_ranking["Rank"] = ranks
     df_ranking = df_ranking.sort_values(by=["Rank", "Date"], ascending=[True, True])
 
     # Get poll IDs information and vote from polls

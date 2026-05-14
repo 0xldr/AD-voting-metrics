@@ -344,6 +344,7 @@ def get_vote_executive_ids(spell_info, df, df_sky):
             address = row["Delegate Contract"]
             first_delegate_date = datetime.strptime(row["Start Date"], "%Y-%m-%d").date()
 
+            voted: bool | str
             if spell_address in data:
                 # Check if the address voted in this spell
                 voted = any(
