@@ -51,7 +51,8 @@ def test_get_all_sky_delegated_calls_run_query_dataframe(monkeypatch):
 
 def test_get_all_sky_delegated_uses_cache_when_cache_hours_set(monkeypatch):
     """When cache_max_age_hours is provided, get_latest_result is called
-    instead of run_query_dataframe, with the threshold passed through."""
+    instead of run_query_dataframe, with the threshold passed through.
+    """
     monkeypatch.setenv("DUNE_API_KEY", "fake-key")
 
     fake_results = MagicMock()
@@ -97,7 +98,8 @@ def test_dune_query_id_is_6604139():
 def _make_indexed_df(rows: list[dict]) -> pd.DataFrame:
     """Build a DataFrame in the shape get_all_sky_delegated produces:
     columns delegation_contract (lowercased), dt (string YYYY-MM-DD),
-    running_total_balance, indexed on (delegation_contract, dt)."""
+    running_total_balance, indexed on (delegation_contract, dt).
+    """
     df = pd.DataFrame(rows)
     df["delegation_contract"] = df["delegation_contract"].str.lower()
     df["dt"] = df["dt"].astype(str)
@@ -210,7 +212,8 @@ def test_status_no_sky_anywhere_returns_no_delegated_sky():
 
 def test_empty_sky_dict_returns_no_delegated_sky():
     """No Dune rows for this delegate in the window (delegate never had any)
-    is treated the same as all-zero. Defensive."""
+    is treated the same as all-zero. Defensive.
+    """
     assert (
         sky_dao.determine_vote_status(
             {}, _POLL_CLOSE, delegate_voted=False, current_datetime=_AFTER_CLOSE
@@ -257,7 +260,8 @@ def test_status_grace_period_close_day_only_no_vote_returns_no_delegated_sky():
 
 def test_status_grace_period_close_day_only_voted_returns_yes():
     """Same as above, but they voted anyway. Delegate engaged despite
-    late delegation - count it as Yes"""
+    late delegation - count it as Yes
+    """
     sky = _sky_dict(0, 0, 0, 1000)
     assert (
         sky_dao.determine_vote_status(
@@ -333,7 +337,8 @@ def test_status_partial_window_pre_close_only_returns_no_delegated_sky():
 
 def test_status_voted_but_withdrew_before_close_returns_yes():
     """Edge case. Delegate had SKY and voted. Delegation pulled before
-    poll closes. Delegate still participated - vote stands."""
+    poll closes. Delegate still participated - vote stands.
+    """
     sky = _sky_dict(1000, 1000, 0, 0)
     assert (
         sky_dao.determine_vote_status(
@@ -401,7 +406,8 @@ def test_status_close_day_before_1600_utc_treated_as_open():
 def test_status_close_day_at_exactly_1600_utc_treated_as_closed():
     """Boundary 2: current_datetime is exactly 16:00 UTC on close day.
     Voting just closed. We treat >= 16:00 UTC as closed, so the close-day
-    rule applies. With SKY before and at close and no vote, this is "No"."""
+    rule applies. With SKY before and at close and no vote, this is "No".
+    """
     sky = _sky_dict(1000, 1000, 1000, 1000)
     current = datetime(2026, 4, 4, 16, 0, tzinfo=UTC)
     assert (
@@ -415,7 +421,8 @@ def test_status_close_day_at_exactly_1600_utc_treated_as_closed():
 def test_status_close_day_after_1600_utc_treated_as_closed():
     """Boundary 3: current_datetime is 17:00 UTC on close day. Poll
     closed an hour ago. Same outcome as exactly-at-close — close-day
-    rule applies."""
+    rule applies.
+    """
     sky = _sky_dict(1000, 1000, 1000, 1000)
     current = datetime(2026, 4, 4, 17, 0, tzinfo=UTC)
     assert (

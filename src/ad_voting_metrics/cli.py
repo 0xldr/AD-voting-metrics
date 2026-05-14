@@ -24,7 +24,7 @@ RECONCILIATION_LOG_PATH = OUTPUT_DIR / "reconciliation"
 
 
 def parse_month(value):
-    """argparse type callback: parse --month value into a MonthPeriod.
+    """Argparse type callback: parse --month value into a MonthPeriod.
 
     Wraps MonthPeriod.from_string() and adds CLI-specific concerns:
       - Errors are surfaced as argparse.ArgumentTypeErrors so argparse handles
@@ -47,7 +47,7 @@ def parse_month(value):
 
 
 def parse_cache_hours(value: str) -> int:
-    """argparse callback for --cache-hours.
+    """Argparse callback for --cache-hours.
 
     Accepts a non-negative integer. Negative values are rejected.
     """
@@ -314,7 +314,6 @@ def _run_fetch(args: argparse.Namespace) -> None:
 
 def _run_finalize(args: argparse.Namespace) -> None:
     """Execute the finalize stage: read communication, compute metrics, write Compensation tab."""
-
     period = args.month
     logger.info("Finalize requested for %s", period)
     raise SystemExit("`finalize` is not yet implemented.")

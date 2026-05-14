@@ -383,7 +383,7 @@ def custom_sort(df, hardcoded_order, poll_info, spell_info):
 
     # Build the human-readable Delegate column
     df.insert(df.columns.get_loc("Delegate Contract") + 1, "Delegate", df["Delegate Name"])
-    df.drop(["Delegate Name"], axis=1, inplace=True)
+    df.drop(["Delegate Name"], axis=1)
 
     # Get the names of all columns in the DataFrame
     column_names = df.columns
@@ -441,9 +441,9 @@ def custom_sort(df, hardcoded_order, poll_info, spell_info):
     sorted_df = df.sort_values(by="SortKey")
 
     # Remove the SortKey column if no longer needed
-    sorted_df.drop(columns=["SortKey"], inplace=True)
+    sorted_df.drop(columns=["SortKey"])
 
-    sorted_df.rename(columns={"Delegate Contract": "", "Delegate": "Poll Id"}, inplace=True)
+    sorted_df.rename(columns={"Delegate Contract": "", "Delegate": "Poll Id"})
 
     transposed_df = sorted_df.transpose()
 

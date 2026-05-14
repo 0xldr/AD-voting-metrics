@@ -71,7 +71,7 @@ class LevelAssignment(BaseModel):
         return self
 
     def covers(self, d: date) -> bool:
-        """True if date d falls within this assignment's period (inclusive)."""
+        """Return True if date d falls within this assignment's period (inclusive)."""
         if d < self.start_date:
             return False
         return not (self.end_date is not None and d > self.end_date)
@@ -156,7 +156,7 @@ class Delegate(BaseModel):
         return self
 
     def is_active_during(self, period_start: date, period_end: date) -> bool:
-        """True if this delegate was active at any point during the given period.
+        """Return True if this delegate was active at any point during the given period.
 
         end_date is inclusive. Delegates with no end_date have no upper bound.
         """
