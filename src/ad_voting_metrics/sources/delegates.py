@@ -20,12 +20,13 @@ _MAX_PAGES = 50
 
 
 def fetch_aligned_delegates() -> list[dict]:
-    """Fetch every current aligned delegate from the API, handling pagination.
-
-    Returns the raw dicts as they appear in the API response.
+    """Fetch every current aligned delegate from vote.sky.money.
 
     Pagination: requests pages of size PAGE_SIZE until paginationInfo.hasNextPage is false
     or we hit _MAX_PAGES.
+
+    Returns:
+        A list of raw delegate dicts as they appear in the API response.
     """
     session = get_session()
     delegates: list[dict] = []

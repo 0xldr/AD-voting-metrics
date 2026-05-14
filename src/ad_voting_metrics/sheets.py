@@ -54,14 +54,18 @@ def get_workbook(
     explicit values for testing or one-off scripts that want to open a
     different workbook.
 
-    Raises RuntimeError with a clear message for any of:
-      - Missing env var (when the corresponding arg is var)
-      - Service account file path doesn't exist or isn't readable
-      - JSON key file is malformed or wrong format
-      - Workbook ID is wrong, or the workbook isn't shared with the
-      service account's email
-
     The error messages name the specific failure mode and point at the fix.
+
+    Returns:
+        The opened gspread.Spreadsheet.
+
+    Raises:
+        RuntimeError: for any of the following:
+          - Missing env var (when the corresponding arg is None)
+          - Service account file path doesn't exist or isn't readable
+          - JSON key file is malformed or wrong format
+          - Workbook ID is wrong, or the workbook isn't shared with the
+          service account's email.
     """
     if service_account_file is None:
         service_account_file = os.environ.get("GOOGLE_SERVICE_ACCOUNT_FILE")
@@ -196,9 +200,11 @@ def _read_daily_data_existing(
 ) -> dict[tuple[str, str], tuple[float, int]]:
     """Read the existing Daily Data tab into a dict keyed at (date, delegate).
 
-    Returns a mapping from (date_iso_str, delegate_name) to (sky, rank).
     Empty worksheets (no header or no data) return an empty dict - the caller
     treats a missing/empty tab the same as a fresh start.
+
+    Returns:
+        A mapping from (date_iso_str, delegate_name) to (sky, rank).
     """
     all_rows = worksheet.get_all_values()
     if not all_rows or len(all_rows) < 2:
@@ -220,7 +226,7 @@ def _read_daily_data_existing(
             rank = int(rank_str)
         except (ValueError, TypeError):
             continue
-        existing[(date_str, delegate)] = (sky, rank)
+        existing[date_str, delegate] = (sky, rank)
 
     return existing
 
@@ -230,7 +236,15 @@ def write_daily_data(
     period: MonthPeriod,
     df_ranking: pd.DataFrame,
 ) -> gspread.Worksheet:
-    """Write the workbook-wide Daily Data tab, merging in the current fetch."""
+    """Write the workbook-wide Daily Data tab, merging in the current fetch.
+
+    Returns:
+        The worksheet that was written.
+
+    Raises:
+        ValueError: if df_ranking is missing required columns, or if a
+            roster-drift mismatch is detected on overlapping dates.
+    """
     missing = [c for c in DAILY_DATA_COLUMNS if c not in df_ranking.columns]
     if missing:
         raise ValueError(
@@ -247,7 +261,7 @@ def write_daily_data(
         delegate = str(row["Delegate"])
         sky = float(row["Total Delegation"])
         rank = int(row["Rank"])
-        new_rows[(date_str, delegate)] = (sky, rank)
+        new_rows[date_str, delegate] = (sky, rank)
         new_counts_by_date[date_str] += 1
 
     # Get-or-create the workbook-wide tab. Size generously; clear-and-rewrite
@@ -324,7 +338,11 @@ PARTICIPATION_METADATA_COLUMNS: tuple[str, ...] = (
 
 
 def _participation_raw_data_tab_title(period: MonthPeriod) -> str:
-    """Tab title for a month's Participation Raw Data."""
+    """Tab title for a month's Participation Raw Data.
+
+    Returns:
+        The composed tab title, e.g. "Participation Raw Data April 2026".
+    """
     return f"Participation Raw Data {period}"
 
 
@@ -333,11 +351,14 @@ def _lookup_poll_or_spell(
     poll_info: list[dict],
     spell_info: list[dict],
 ) -> dict | None:
-    """Find a poll or spell record by ID/address. Returns None if not found.
+    """Find a poll or spell record by ID/address.
 
     poll_info entries are keyed by `pollId`: spell_info by `address`.
     Identifiers are compared as strings to avoid type-mismatch surprises
     (poll IDs to come back as ints from some APIs, strs from others).
+
+    Returns:
+        The matching record, or None if no match is found.
     """
     for poll in poll_info:
         if str(poll["pollId"]) == identifier:
@@ -355,6 +376,9 @@ def _coerce_date(value: date | datetime | None) -> str:
     for date objects; for datetimes and pandas
     Timestamps (which subclass datetime), take just the date portion.
     None becomes empty string.
+
+    Returns:
+        The ISO date string, or empty string for None.
     """
     if value is None:
         return ""
@@ -396,6 +420,9 @@ def write_participation_raw_data(
     spell_info gets blank metadata cells but the status column is still
     written — defensive, so a transient API inconsistency doesn't drop
     the participation data.
+
+    Returns:
+        The worksheet that was written.
     """
     # Pull out delegate metadata. After this, the remaining columns are
     # all poll/spell IDs (whatever the upstream functions added).
@@ -481,15 +508,16 @@ def _read_communication_master_existing(
 ) -> tuple[list[str], dict[str, list[str]]]:
     """Read the existing Communication Master tab.
 
-    Returns (header, rows_by_poll_id) where:
-        - header is the list of column names exactly as found in row 1
-        - rows_by_poll_id maps poll_id (from column A) to the row's cell
-        values, padded/truncated to header length.
-
     Empty worksheets return an empty header and empty dict - the caller
     treats this as a fresh start.
 
     Skips rows where the Poll Id (column A) is blank.
+
+    Returns:
+        A (header, rows_by_poll_id) tuple where:
+          - header is the list of column names exactly as found in row 1
+          - rows_by_poll_id (from column A) to the row's
+            cell values, padded/truncated to header length.
     """
     all_rows = worksheet.get_all_values()
     if not all_rows or len(all_rows) < 1:
@@ -526,7 +554,14 @@ def write_communication_master(
 ) -> gspread.Worksheet:
     """Write the workbook-wide Communication Master tab.
 
-    Layout matches Participation Raw Data:
+    Layout matches Participation Raw Data.
+
+    Returns:
+        The worksheet that was written.
+
+    Raises:
+        ValueError: if df is missing the 'Delegate Name' column, or if
+            a delegate in df has no column in a non-empty existing tab.
     """
     if "Delegate Name" not in df.columns:
         raise ValueError("df must have a 'Delegate Name' columns")

@@ -70,6 +70,7 @@ exclude = [
 line-length = 100
 indent-width = 4
 target-version = "py311"
+preview = true
 
 [tool.ruff.lint]
 # Allow unused variables when underscore-prefixed.
@@ -85,6 +86,7 @@ select = [
     "SIM",  # simplifications
     "PD",   # pandas-vet
     "D",    # pydocstyle
+    "DOC",  # pydoclint
     "RET",
     "PTH",
     "PIE",
@@ -103,13 +105,19 @@ select = [
 ignore = [
     "E501",  # line too long — too noisy for legacy code, will tighten later
     "E402",  # module level import not at top — main.py has acceptable patterns
+    # DOC502 fires when a documented exception isn't directly raised in
+    # the function body (i.e. it propagates from a callee). Documenting
+    # propagated exceptions is informative for callers.
+    "DOC502",
 ]
 
 [tool.ruff.lint.per-file-ignores]
 "tests/*" = [
-    "F401", # unused imports often appear in test fixtures
-    "N806", # camelCase locals (mostly mirroring API field names in fixtures)
-    "D103", # don't need docstring for all tests
+    "F401",   # unused imports often appear in test fixtures
+    "N806",   # camelCase locals (mostly mirroring API field names in fixtures)
+    "D103",   # don't need docstring for all tests
+    "DOC",    # don't enforce returns/raises documentation in tests
+    "RUF069", # float equality is fine in tests with exact-representable values
     ]
 
 [tool.ruff.lint.pydocstyle]

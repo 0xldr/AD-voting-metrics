@@ -61,17 +61,15 @@ PARTICIPATED = frozenset({"Yes"})
 
 NOT_PARTICIPATED = frozenset({"No"})
 
-DISCOUNTED = frozenset(
-    {
-        "Not Started",
-        "Exited",
-        "Voting Open",
-        "No Delegated SKY",
-        "Not included",
-        "Pending verification",
-        "Did not vote",
-    }
-)
+DISCOUNTED = frozenset({
+    "Not Started",
+    "Exited",
+    "Voting Open",
+    "No Delegated SKY",
+    "Not included",
+    "Pending verification",
+    "Did not vote",
+})
 
 
 @dataclass(frozen=True)
@@ -85,7 +83,11 @@ class ParticipationCounts:
 
 
 def count_statuses(statuses: Iterable[str]) -> ParticipationCounts:
-    """Bucket a list of statuses into participated / not / discounted / unknown."""
+    """Bucket a list of statuses into participated / not / discounted / unknown.
+
+    Returns:
+        A ParticipationCounts with one count per bucket.
+    """
     p = np = d = u = 0
     for s in statuses:
         if s in PARTICIPATED:
@@ -100,7 +102,15 @@ def count_statuses(statuses: Iterable[str]) -> ParticipationCounts:
 
 
 def participation_pct(statuses: Iterable[str]) -> float | None:
-    """Yes / (Yes + No), or None if the denominator is zero."""
+    """Yes / (Yes + No), or None if the denominator is zero.
+
+    Unknown statuses are silently ignored here. To detect them, call
+    count_statuses directly and inspect the .unknown attribute.
+
+    Returns:
+        The participation percentage as a float in [0.0, 1.0], or None
+        if there are no votable polls.
+    """
     counts = count_statuses(statuses)
     denominator = counts.participated + counts.not_participated
     if denominator == 0:
@@ -119,6 +129,12 @@ def is_in_window(
     callers always pass a concrete date (six months before window_end), but
     the API leaves the lower bound optional so future metric variants don't
     require API reshaping.
+
+    The window is keyed on the poll's start date, matching the workbook's
+    existing column-A and column-B membership formulas.
+
+    Returns:
+        True if the poll start date is in the window, False otherwise.
     """
     if poll_start > window_end:
         return False
@@ -131,7 +147,15 @@ def participation_pct_for_window(
     window_start: date | None,
     window_end: date,
 ) -> float | None:
-    """Participation percentage filtered to polls within the given window."""
+    """Participation percentage filtered to polls within the given window.
+
+    Returns:
+        The participation percentage for in-window polls, or None if
+        no in-window polls are votable.
+
+    Raises:
+        ValueError: if poll_starts and statuses have different lengths.
+    """
     if len(poll_starts) != len(statuses):
         raise ValueError(
             f"poll_starts and statuses must be the same length "
@@ -171,10 +195,15 @@ def apply_participation_cross_reference(
         passes through. Don't silently lose data on unrecognized
         statuses; let count_statuses flag them later.
 
-    The two sequences must be parallel and equal-length. Mismatched
-    lengths raise ValueError.
+    The two sequences must be parallel and equal-length.
 
-    Returns a new list (does not mutate inputs).
+    Returns:
+        A new list of cross-referenced communication statuses; the
+        input sequences are not mutated.
+
+    Raises:
+        ValueError: if participation_statuses and communication_statuses
+            have different lengths.
     """
     if len(participation_statuses) != len(communication_statuses):
         raise ValueError(
@@ -204,16 +233,20 @@ def communication_pct(
 
     Applies apply_participation_cross_reference first (overriding "No"
     participation to "Did not vote" communication), then runs the same
-    Yes/(Yes+No) calculation as participation_pct. Returns None for an
-    empty denominator, matching the "No Data" sentinel pattern.
-
-    The two sequences must be parallel and equal-length. Length mismatch
-    raises ValueError via apply_participation_cross_reference.
+    Yes/(Yes+No) calculation as participation_pct.
 
     The "communication must be within 7 days of poll end date" rule is
     followed by the operator at data entry time — they only record "Yes"
     for communications that happened in the window. The script trusts
     what's in the workbook.
+
+    Returns:
+        The communication percentage as a float in [0.0, 1.0], or None
+        for an empty denominator (matching the "No Data" sentinel).
+
+    Raises:
+        ValueError: if the two sequences have different lengths
+            (propagated from apply_participation_cross_reference).
     """
     effective = apply_participation_cross_reference(participation_statuses, communication_statuses)
     return participation_pct(effective)
@@ -233,7 +266,12 @@ def communication_pct_for_window(
     Window membership uses the same is_in_window check as participation
     (keyed on poll start date).
 
-    Mismatched lengths raise ValueError.
+    Returns:
+        The communication percentage for in-window polls, or None if
+        no in-window polls are votable.
+
+    Raises:
+        ValueError: if the three sequences have different lengths.
     """
     n = len(poll_starts)
     if len(participation_statuses) != n or len(communication_statuses) != n:

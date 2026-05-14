@@ -92,9 +92,11 @@ def build_entry(
     output_files is the list of CSV paths written by the run. Lets the
     log point at exactly which artifacts this entry corresponds to.
 
-    Returns a ReconciliationEntry (a TypedDict alias for a dict). The
-    keyword-only parameter list reflects the call pattern in cli.py
-    and prevents accidental positional-call regressions.
+    Returns:
+        A ReconciliationEntry (a TypedDict alias for a dict) populated
+        from the supplied arguments. The keyword-only parameter list
+        reflects the call pattern in cli.py and prevents accidental
+        positional-call regressions.
     """
     yaml_active = sum(1 for d in yaml_config.delegates if d.end_date is None)
     yaml_exited = sum(1 for d in yaml_config.delegates if d.end_date is not None)
@@ -136,6 +138,9 @@ def _filename(period: MonthPeriod, run_timestamp_iso: str) -> str:
     The run_timestamp_iso is the ISO 8601 string already produced by
     build_entry, so the filename and the file's run_timestamp field
     refer to exactly the same moment.
+
+    Returns:
+        The composed filename, e.g. "2026-04_2026-05-06T15-32-08Z.json".
     """
     period_iso = period.start.strftime("%Y-%m")
     # Strip microseconds and timezone offset notation, replace colons.
@@ -149,14 +154,16 @@ def _filename(period: MonthPeriod, run_timestamp_iso: str) -> str:
 def write_entry(directory: Path, period: MonthPeriod, entry: ReconciliationEntry) -> Path | None:
     """Write a reconciliation entry as a single JSON file in `directory`.
 
-    Returns the written path on success, None on failure. Soft-fails: if
-    creating the directory or writing the file raises, logs a WARNING
-    and returns None. CSV outputs are primary; this log is supplementary
-    and must not block a successful run.
+    Soft-fails: if creating the directory or writing the file raises,
+    logs a WARNING and returns None. CSV outputs are primary; this log
+    is supplementary and must not block a successful run.
 
     The filename combines the period and the run timestamp from the
     entry's run_timestamp field, so re-runs of the same period produce
     distinct files rather than overwriting.
+
+    Returns:
+        The written path on success, or None on failure.
     """
     try:
         directory.mkdir(parents=True, exist_ok=True)

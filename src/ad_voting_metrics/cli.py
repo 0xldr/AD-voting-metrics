@@ -38,6 +38,13 @@ def parse_month(value):
       - Errors are surfaced as argparse.ArgumentTypeErrors so argparse handles
       them with proper messages and exit code 2.
       - Future months are rejected here.
+
+    Returns:
+        The parsed MonthPeriod
+
+    Raises:
+        argparse.ArgumentTypeError: if the value is unparseable or resolves
+            entirely to a future month.
     """
     try:
         period = MonthPeriod.from_string(value)
@@ -58,6 +65,12 @@ def parse_cache_hours(value: str) -> int:
     """Argparse callback for --cache-hours.
 
     Accepts a non-negative integer. Negative values are rejected.
+
+    Returns:
+        The parsed integer.
+
+    Raises:
+        argparse.ArgumentTypeError: if the value isn't an integer or is negative.
     """
     try:
         hours = int(value)
@@ -71,7 +84,11 @@ def parse_cache_hours(value: str) -> int:
 
 
 def build_arg_parser():
-    """Construct the top-level argparse parser with `fetch` and `finalize` subcommands."""
+    """Construct the top-level argparse parser with `fetch` and `finalize` subcommands.
+
+    Returns:
+        The configured ArgumentParser.
+    """
     parser = argparse.ArgumentParser(
         prog="ad-voting-metrics",
         description=(
@@ -158,6 +175,9 @@ def check_period_has_ended(period: MonthPeriod, today: date) -> None:
 
     `today` should be the current UTC date - periods are UTC-anchored
     (polls close at 16:00 UTC).
+
+    Raises:
+        SystemExit: if the period's last day is on or after today.
     """
     if today <= period.end:
         next_day = period.end + timedelta(days=1)
@@ -324,9 +344,10 @@ def _run_fetch(args: argparse.Namespace) -> None:
 def _run_finalize(args: argparse.Namespace) -> None:
     """Read the operator-reviewed Communication Master tab, compute metrics, write Compensation.
 
-    Raises SystemExit with a "not yet implemented" message while the
-    Sheets-side compensation writer and eligibility logic are still
-    being built.
+    Raises:
+        SystemExit: with a "not yet implemented" message while the
+            Sheets-side compensation writer and eligibility logic are
+            still being built.
     """
     period = args.month
     logger.info("Finalize requested for %s", period)
@@ -334,7 +355,12 @@ def _run_finalize(args: argparse.Namespace) -> None:
 
 
 def main(argv: list[str] | None = None) -> None:
-    """Entry point: configure logging, parse argv, dispatch to the chosen subcommand."""
+    """Entry point: configure logging, parse argv, dispatch to the chosen subcommand.
+
+    Raises:
+        SystemExit: if the period hasn't ended, if `finalize` is invoked
+            (currently a stub), or if argparse rejects the command line.
+    """
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s %(levelname)s %(message)s",
