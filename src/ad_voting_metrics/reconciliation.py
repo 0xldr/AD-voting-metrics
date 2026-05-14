@@ -24,6 +24,7 @@ import json
 import logging
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import TypedDict
 
 from .period import MonthPeriod
 from .roster import Delegate, DelegatesConfig
@@ -31,7 +32,37 @@ from .roster import Delegate, DelegatesConfig
 logger = logging.getLogger(__name__)
 
 
+class ReconciliationEntry(TypedDict):
+    """The schema of a reconciliation entry.
+
+    Fields are JSON-serializable. Timestamps are ISO 8601 in UTC strings;
+    paths are absolute or relative path strings, never Path objects.
+    Counts are non-negative ints. The list fields contain only primitives.
+
+    This TypedDict gives the dict shape a name so mypy can check field
+    presence and types at construction sites.
+    """
+
+    run_timestamp: str
+    period: str
+    period_start: str
+    period_end: str
+    yaml_path: str
+    yaml_total_delegates: int
+    yaml_active_delegates: int
+    yaml_exited_delegates: int
+    api_delegate_count: int
+    api_fetch_succeeded: bool
+    active_during_period: int
+    drift_warnings: list[str]
+    dune_query_id: int
+    dune_execution_mode: str
+    dune_cache_max_age_hours: int | None
+    output_files: list[str]
+
+
 def build_entry(
+    *,
     period: MonthPeriod,
     yaml_path: Path,
     yaml_config: DelegatesConfig,
@@ -42,7 +73,7 @@ def build_entry(
     api_delegate_count: int,
     api_fetch_succeeded: bool,
     output_files: list[Path],
-) -> dict:
+) -> ReconciliationEntry:
     """Construct a reconciliation log entry from this run's facts.
 
     All fields are JSON-serializable. Timestamps are ISO 8601 in UTC.
@@ -60,6 +91,10 @@ def build_entry(
 
     output_files is the list of CSV paths written by the run. Lets the
     log point at exactly which artifacts this entry corresponds to.
+
+    Returns a ReconciliationEntry (a TypedDict alias for a dict). The
+    keyword-only parameter list reflects the call pattern in cli.py
+    and prevents accidental positional-call regressions.
     """
     yaml_active = sum(1 for d in yaml_config.delegates if d.end_date is None)
     yaml_exited = sum(1 for d in yaml_config.delegates if d.end_date is not None)
@@ -111,7 +146,7 @@ def _filename(period: MonthPeriod, run_timestamp_iso: str) -> str:
     return f"{period_iso}_{timestamp}.json"
 
 
-def write_entry(directory: Path, period: MonthPeriod, entry: dict) -> Path | None:
+def write_entry(directory: Path, period: MonthPeriod, entry: ReconciliationEntry) -> Path | None:
     """Write a reconciliation entry as a single JSON file in `directory`.
 
     Returns the written path on success, None on failure. Soft-fails: if

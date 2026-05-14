@@ -8,9 +8,10 @@ run timestamp, with soft-fail on errors.
 import json
 from datetime import date, datetime
 from pathlib import Path
+from typing import Any, cast
 
 from ad_voting_metrics.period import MonthPeriod
-from ad_voting_metrics.reconciliation import build_entry, write_entry
+from ad_voting_metrics.reconciliation import ReconciliationEntry, build_entry, write_entry
 from ad_voting_metrics.roster import Delegate, DelegatesConfig
 
 # ---------------------------------------------------------------------------
@@ -46,6 +47,43 @@ def _make_yaml_config(active: int = 1, exited: int = 0) -> DelegatesConfig:
 
 def _sample_period() -> MonthPeriod:
     return MonthPeriod(2026, 4)
+
+
+def _make_entry(**overrides: object) -> ReconciliationEntry:
+    """Build a complete ReconciliationEntry with sensible defaults.
+
+    Tests of write_entry don't care about most fields — they're
+    exercising filename construction, JSON encoding, or soft-fail
+    behavior. Use this helper to get a typed full entry, overriding
+    only the fields the test actually asserts on.
+
+    Overrides are typed `object` because each ReconciliationEntry
+    field has a different type (mix of str / int / bool / list);
+    no single TypedDict variadic kwargs annotation works. The
+    cast(Any, ...) at the .update site quiets static checkers that
+    can't see the TypedDict update is field-by-field correct in
+    every test call.
+    """
+    base: ReconciliationEntry = {
+        "run_timestamp": "2026-05-06T15:32:08+00:00",
+        "period": "April 2026",
+        "period_start": "2026-04-01",
+        "period_end": "2026-04-30",
+        "yaml_path": "/tmp/delegates.yaml",
+        "yaml_total_delegates": 0,
+        "yaml_active_delegates": 0,
+        "yaml_exited_delegates": 0,
+        "api_delegate_count": 0,
+        "api_fetch_succeeded": True,
+        "active_during_period": 0,
+        "drift_warnings": [],
+        "dune_query_id": 6604139,
+        "dune_execution_mode": "fresh",
+        "dune_cache_max_age_hours": None,
+        "output_files": [],
+    }
+    cast(Any, base).update(overrides)
+    return base
 
 
 # ---------------------------------------------------------------------------
@@ -228,11 +266,7 @@ def test_build_entry_is_json_serializable():
 
 def test_write_entry_creates_file_with_period_and_timestamp_in_name(tmp_path):
     period = _sample_period()
-    entry = {
-        "run_timestamp": "2026-05-06T15:32:08+00:00",
-        "period": "April 2026",
-        "active_during_period": 13,
-    }
+    entry = _make_entry(run_timestamp="2026-05-06T15:32:08+00:00")
 
     path = write_entry(tmp_path, period, entry)
 
@@ -245,11 +279,7 @@ def test_write_entry_creates_file_with_period_and_timestamp_in_name(tmp_path):
 
 def test_write_entry_serializes_entry_as_json(tmp_path):
     period = _sample_period()
-    entry = {
-        "run_timestamp": "2026-05-06T15:32:08+00:00",
-        "period": "April 2026",
-        "active_during_period": 13,
-    }
+    entry = _make_entry(run_timestamp="2026-05-06T15:32:08+00:00")
 
     path = write_entry(tmp_path, period, entry)
     assert path is not None
@@ -260,10 +290,7 @@ def test_write_entry_serializes_entry_as_json(tmp_path):
 
 def test_write_entry_creates_directory_if_missing(tmp_path):
     period = _sample_period()
-    entry = {
-        "run_timestamp": "2026-05-06T15:32:08+00:00",
-        "period": "April 2026",
-    }
+    entry = _make_entry()
 
     target_dir = tmp_path / "deep" / "nested" / "reconciliation"
     assert not target_dir.exists()
@@ -278,8 +305,8 @@ def test_write_entry_creates_directory_if_missing(tmp_path):
 def test_write_entry_distinct_filenames_for_same_period_different_timestamps(tmp_path):
     """Re-runs of the same period produce distinct files, not overwrites."""
     period = _sample_period()
-    entry1 = {"run_timestamp": "2026-05-06T15:32:08+00:00", "period": "April 2026"}
-    entry2 = {"run_timestamp": "2026-05-06T16:00:00+00:00", "period": "April 2026"}
+    entry1 = _make_entry(run_timestamp="2026-05-06T15:32:08+00:00")
+    entry2 = _make_entry(run_timestamp="2026-05-06T16:00:00+00:00")
 
     path1 = write_entry(tmp_path, period, entry1)
     path2 = write_entry(tmp_path, period, entry2)
@@ -302,7 +329,7 @@ def test_write_entry_soft_fails_on_io_error(caplog, monkeypatch):
         result = write_entry(
             Path("/anywhere/reconciliation"),
             _sample_period(),
-            {"run_timestamp": "2026-05-06T15:32:08+00:00", "period": "April 2026"},
+            _make_entry(),
         )
 
     assert result is None
@@ -312,28 +339,25 @@ def test_write_entry_soft_fails_on_io_error(caplog, monkeypatch):
 def test_write_entry_handles_unicode(tmp_path):
     """Non-ASCII content survives the round-trip (ensure_ascii=False is set)."""
     period = _sample_period()
-    entry = {
-        "run_timestamp": "2026-05-06T15:32:08+00:00",
-        "period": "April 2026",
-        "name": "Cüstom Délégate",
-        "note": "✓ verified",
-    }
+    # Put unicode in schema-valid fields: yaml_path (paths can be unicode)
+    # and drift_warnings (warning messages can name unicode-named delegates).
+    entry = _make_entry(
+        yaml_path="/tmp/Cüstom_Délégates.yaml",
+        drift_warnings=["✓ verified: Cüstom Délégate"],
+    )
 
     path = write_entry(tmp_path, period, entry)
     assert path is not None
 
     parsed = json.loads(path.read_text(encoding="utf-8"))
-    assert parsed["name"] == "Cüstom Délégate"
-    assert parsed["note"] == "✓ verified"
+    assert parsed["yaml_path"] == "/tmp/Cüstom_Délégates.yaml"
+    assert parsed["drift_warnings"] == ["✓ verified: Cüstom Délégate"]
 
 
 def test_write_entry_filename_strips_microseconds(tmp_path):
     """Even if the run_timestamp has microseconds, the filename uses second precision."""
     period = _sample_period()
-    entry = {
-        "run_timestamp": "2026-05-06T15:32:08.123456+00:00",
-        "period": "April 2026",
-    }
+    entry = _make_entry(run_timestamp="2026-05-06T15:32:08.123456+00:00")
 
     path = write_entry(tmp_path, period, entry)
     assert path is not None
