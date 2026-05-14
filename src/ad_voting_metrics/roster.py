@@ -71,7 +71,11 @@ class LevelAssignment(BaseModel):
         return self
 
     def covers(self, d: date) -> bool:
-        """Return True if date d falls within this assignment's period (inclusive)."""
+        """True if date d falls within this assignment's period (inclusive).
+
+        Returns:
+            True if d is within the assignment period, False otherwise.
+        """
         if d < self.start_date:
             return False
         return not (self.end_date is not None and d > self.end_date)
@@ -106,7 +110,15 @@ class Delegate(BaseModel):
 
     @model_validator(mode="after")
     def _level_periods_fit_alignment(self) -> "Delegate":
-        """Every LevelAssignment must fall within the delegate's alignment period."""
+        """Every LevelAssignment must fall within the delegate's alignment period.
+
+        Returns:
+            self, per pydantic validator convention.
+
+        Raises:
+            ValueError: if any LevelAssignment's start or end date falls
+                outside the delegate's alignment period.
+        """
         for la in self.levels:
             if la.start_date < self.start_date:
                 raise ValueError(
@@ -135,6 +147,13 @@ class Delegate(BaseModel):
         """Two LevelAssignments for the same delegate may not overlap in time.
 
         Sequence is allowed (L2 then L1) but not concurrency.
+
+        Returns:
+            self, per pydantic validator convention.
+
+        Raises:
+            ValueError: if two LevelAssignments overlap, or if a
+                non-final LevelAssignment lacks an end_date.
         """
         if len(self.levels) < 2:
             return self
@@ -156,9 +175,13 @@ class Delegate(BaseModel):
         return self
 
     def is_active_during(self, period_start: date, period_end: date) -> bool:
-        """Return True if this delegate was active at any point during the given period.
+        """True if this delegate was active at any point during the given period.
 
         end_date is inclusive. Delegates with no end_date have no upper bound.
+
+        Returns:
+            True if the delegate's alignment period overlaps with the
+            given period, False otherwise.
         """
         if self.start_date > period_end:
             return False
@@ -199,8 +222,14 @@ class DelegatesConfig(BaseModel):
 def load_delegates(path: Path) -> DelegatesConfig:
     """Load and validate the delegates YAML from the given path.
 
-    Raises FileNotFoundError if the file doesn't exist, yaml.YAMLError if is't malformed,
-    and pydantic.ValidationError on schema violations.
+    Returns:
+        The parsed and validated DelegatesConfig.
+
+    Raises:
+        FileNotFoundError: if the file doesn't exist.
+        ValueError: if the file is empty or contains only YAML null.
+        yaml.YAMLError if the file is malformed.
+        pydantic.ValidationError: on schema violations.
     """
     with Path(path).open() as f:
         raw = yaml.safe_load(f)
@@ -215,10 +244,6 @@ def merge_with_api(
 ) -> tuple[list["Delegate"], list[str]]:
     """Verify the YAML roster against the API response.
 
-    Returns the YAML's delegates as the canonical roster (the API
-    does not add anyone - the YAML is source of truth) plus a list
-    of human-readable warning strings for any drift detected.
-
     Drift rules:
     - YAML active (end_date=None), API absent -> warn (operator likely
     forgot to set end_date after an exit)
@@ -230,6 +255,12 @@ def merge_with_api(
 
     Comparisons are by vote_delegate_address (lowercased). Names that differ
     but addresses match are not flagged.
+
+    Returns:
+        A (canonical_roster, warnings) tuple. canonical_roster is the
+        YAML's delegate list unchanged (the API does not add anyone -
+        the YAML is the source of truth). warnings is a list of
+        human-readable strings for any drift detected.
     """
     warnings: list[str] = []
 
@@ -291,12 +322,14 @@ def build_roster_for_period(
 
     The api_fetcher is a callable that returns the raw API delegate list.
 
-    If the API fetch raises, drift detection is skipped and the script proceeds
-    with YAML alone. This is a deliberate soft-fail, YAML is the source of truth.
+    If the API fetch raises, drift detection is skipped and the script
+    proceeds with YAML alone. This is a deliberate soft-fail, YAML is
+    the source of truth.
 
-    Returns a RosterResult with the active delegates, drift warnings, the full
-    YAML config, and metadata about API counts and fetch success — for the
-    reconciliation log.
+    Returns:
+        A RosterResult with the active delegates, drift warnings, the
+        full YAML config, and metadata about API counts and fetch
+        success — for the reconciliation log.
     """
     yaml_config = load_delegates(yaml_path)
 
@@ -331,11 +364,12 @@ def to_dataframe(delegates: list["Delegate"]) -> pd.DataFrame:
     - 'Delegate Contract': (str, lowercase 0x...address)
     - 'Start Date': (str, formatted '%Y-%m-%d - sky_dao parses it back
     with strptime, so format matters)
+
+    Returns:
+        A three-column DataFrame, one row per delegate.
     """
-    return pd.DataFrame(
-        {
-            "Delegate Name": [d.name for d in delegates],
-            "Delegate Contract": [d.vote_delegate_address for d in delegates],
-            "Start Date": [d.start_date.strftime("%Y-%m-%d") for d in delegates],
-        }
-    )
+    return pd.DataFrame({
+        "Delegate Name": [d.name for d in delegates],
+        "Delegate Contract": [d.vote_delegate_address for d in delegates],
+        "Start Date": [d.start_date.strftime("%Y-%m-%d") for d in delegates],
+    })

@@ -22,12 +22,10 @@ def test_get_all_sky_delegated_calls_run_query_dataframe(monkeypatch):
     monkeypatch.setenv("DUNE_API_KEY", "fake-key")
 
     # Dune returns mixed-case addresses sometimes; verify normalization
-    fake_df = pd.DataFrame(
-        [
-            {"delegation_contract": "0xABC", "dt": "2026-03-01", "running_total_balance": 1000.0},
-            {"delegation_contract": "0xdef", "dt": "2026-03-01", "running_total_balance": 2000.0},
-        ]
-    )
+    fake_df = pd.DataFrame([
+        {"delegation_contract": "0xABC", "dt": "2026-03-01", "running_total_balance": 1000.0},
+        {"delegation_contract": "0xdef", "dt": "2026-03-01", "running_total_balance": 2000.0},
+    ])
     fake_client = MagicMock()
     fake_client.run_query_dataframe.return_value = fake_df
 
@@ -110,20 +108,18 @@ def _make_indexed_df(rows: list[dict]) -> pd.DataFrame:
 
 
 def test_get_sky_delegated_returns_balance_for_known_pair():
-    df = _make_indexed_df(
-        [{"delegation_contract": "0xabc", "dt": "2026-03-01", "running_total_balance": 1234.5}]
-    )
+    df = _make_indexed_df([
+        {"delegation_contract": "0xabc", "dt": "2026-03-01", "running_total_balance": 1234.5}
+    ])
     result = sky_dao.get_sky_delegated(df, "0xabc", date(2026, 3, 1))
 
     assert result == 1234.5
 
 
 def test_get_sky_delegated_returns_zero_for_missing_contract():
-    df = _make_indexed_df(
-        [
-            {"delegation_contract": "0xabc", "dt": "2026-03-01", "running_total_balance": 1234.5},
-        ]
-    )
+    df = _make_indexed_df([
+        {"delegation_contract": "0xabc", "dt": "2026-03-01", "running_total_balance": 1234.5},
+    ])
 
     result = sky_dao.get_sky_delegated(df, "0xnope", date(2026, 3, 1))
 
@@ -131,36 +127,36 @@ def test_get_sky_delegated_returns_zero_for_missing_contract():
 
 
 def test_get_sky_delegated_returns_zero_for_missing_date():
-    df = _make_indexed_df(
-        [{"delegation_contract": "0xabc", "dt": "2026-03-01", "running_total_balance": 1234.5}]
-    )
+    df = _make_indexed_df([
+        {"delegation_contract": "0xabc", "dt": "2026-03-01", "running_total_balance": 1234.5}
+    ])
     result = sky_dao.get_sky_delegated(df, "0xabc", date(2026, 4, 1))
 
     assert result == 0
 
 
 def test_get_sky_delegated_normalizes_address_case():
-    df = _make_indexed_df(
-        [{"delegation_contract": "0xfc48fbca", "dt": "2026-03-01", "running_total_balance": 999.0}]
-    )
+    df = _make_indexed_df([
+        {"delegation_contract": "0xfc48fbca", "dt": "2026-03-01", "running_total_balance": 999.0}
+    ])
     result = sky_dao.get_sky_delegated(df, "0xFc48fBcA", date(2026, 3, 1))
 
     assert result == 999.0
 
 
 def test_get_sky_delegated_normalizes_address_whitespace():
-    df = _make_indexed_df(
-        [{"delegation_contract": "0xabc", "dt": "2026-03-01", "running_total_balance": 1000.0}]
-    )
+    df = _make_indexed_df([
+        {"delegation_contract": "0xabc", "dt": "2026-03-01", "running_total_balance": 1000.0}
+    ])
     result = sky_dao.get_sky_delegated(df, "  0xabc  ", date(2026, 3, 1))
 
     assert result == 1000.0
 
 
 def test_get_sky_delegated_returns_float():
-    df = _make_indexed_df(
-        [{"delegation_contract": "0xabc", "dt": "2026-03-01", "running_total_balance": 1000.0}]
-    )
+    df = _make_indexed_df([
+        {"delegation_contract": "0xabc", "dt": "2026-03-01", "running_total_balance": 1000.0}
+    ])
     result = sky_dao.get_sky_delegated(df, "0xabc", date(2026, 3, 1))
 
     assert isinstance(result, float)

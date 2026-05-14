@@ -29,7 +29,11 @@ class MonthPeriod:
     month: int
 
     def __post_init__(self):
-        """Validate month is 1..12 and year is reasonable (>=1900)."""
+        """Validate month is 1..12 and year is reasonable (>=1900).
+
+        Raises:
+            ValueError: if month is out of range or year is before 1900.
+        """
         if not 1 <= self.month <= 12:
             raise ValueError(f"month must be 1..12, got {self.month}")
         # No upper bound on year — the type is happy with December 2099 even
@@ -49,7 +53,11 @@ class MonthPeriod:
         return date(self.year, self.month, last_day)
 
     def __str__(self) -> str:
-        """Render as April 2026 rather than "MonthPeriod(year=2026, month=4)"."""
+        """Render as April 2026 rather than "MonthPeriod(year=2026, month=4)".
+
+        Returns:
+            Human-readable "<MonthName> <Year>" form.
+        """
         return f"{calendar.month_name[self.month]} {self.year}"
 
     @classmethod
@@ -60,8 +68,14 @@ class MonthPeriod:
         dateutil.parser can interpret. The day component (if any) is ignored;
         only year and month are read.
 
-        Raises ValueError on unparseable input. Does NOT reject future months —
-        that's a CLI-input concern, handled by the argparse type callback.
+        Does NOT reject future months - that's a CLI-input concern,
+        handled by the argparse type callback.
+
+        Returns:
+            A MonthPeriod for the parsed (year, month)
+
+        Raises:
+            ValueError: if the input cannot be parsed as a month.
         """
         # Imported here rather than at module top to keep the dependency
         # local to the parsing path. Other paths (constructing MonthPeriod

@@ -46,9 +46,16 @@ def get_all_sky_delegated(cache_max_age_hours: int | None = None) -> pd.DataFram
     triggers a fresh execution. Useful for fast development iteration
     where re-execution every run is wasteful credits and time.
 
-    Reads DUNE_API_KEY from the environment. Raises RuntimeError with a
-    clear message if unset, rather than letting dune-client fail with an
-    opaque auth error from inside the SDK.
+    Reads DUNE_API_KEY from the environment.
+
+    Returns:
+        A DataFrame indexed on (delegation_contract, dt) with a
+        running_total_balance column. delegation_contract is lowercased;
+        dt is a string in YYYY-MM-DD form.
+
+    Raises:
+        RuntimeError: if DUNE_API_KEY is unset (clearer than the
+            dune-client SDK's opaque auth error).
     """
     api_key = os.environ.get("DUNE_API_KEY")
     if not api_key:
@@ -107,11 +114,12 @@ def get_sky_delegated(data: pd.DataFrame, contract_address: str, dt: date) -> fl
 def get_delegate_list_sky(df, period: MonthPeriod, cache_max_age_hours: int | None = None):
     """Build per-day SKY-delegation rows for each delegate across the period.
 
-    Returns(delegate_list_sky, delegate_list_rank) where:
-      - delegate_list_sky is keyed by (contract, date) with daily SKY balance
-      - delegate_list_rank is keyed by (name, date) with totals for ranking
-
     Missing daily rows from Dune are filled with zero.
+
+    Returns:
+        A (delegate_list_sky, delegate_list_rank) tuple where:
+          - delegate_list_sky is keyed by (contract, date) with daily SKY balance
+          - delegate_list_rank is keyed by (name, date) with totals for ranking
     """
     all_sky_delegated = get_all_sky_delegated(cache_max_age_hours=cache_max_age_hours)
 
@@ -145,20 +153,20 @@ def get_delegate_list_sky(df, period: MonthPeriod, cache_max_age_hours: int | No
     delegate_list_rank = []
     for delegate_name, data in delegate_data_sky["name"].items():
         for entry_date, data_sky in data.items():
-            delegate_list_rank.append(
-                {
-                    "Delegate": delegate_name,
-                    "Total Delegation": round(data_sky["sky"], 2),
-                    "Rank": 1,
-                    "Date": entry_date,
-                }
-            )
+            delegate_list_rank.append({
+                "Delegate": delegate_name,
+                "Total Delegation": round(data_sky["sky"], 2),
+                "Rank": 1,
+                "Date": entry_date,
+            })
     delegate_list_sky = []
     for delegate_contract, data in delegate_data_sky["contract"].items():
         for entry_date, data_sky in data.items():
-            delegate_list_sky.append(
-                {"contract": delegate_contract.lower(), "sky": data_sky["sky"], "date": entry_date}
-            )
+            delegate_list_sky.append({
+                "contract": delegate_contract.lower(),
+                "sky": data_sky["sky"],
+                "date": entry_date,
+            })
 
     return delegate_list_sky, delegate_list_rank
 
@@ -170,6 +178,10 @@ def get_poll_ids(period: MonthPeriod):
     Paginates through the polls endpoint. Each poll dict has its
     startDate and endDate fields normalized to `date` objects in place
     so downstream consumers don't need to hanlde the API's string form.
+
+    Returns:
+        A list of poll dicts as returned by the API, filtered to those
+        starting within the period and with date fields normalized.
     """
     poll_info = []
     page = 0
@@ -228,8 +240,6 @@ def determine_vote_status(
     at - used to detect polls still in their voting window at the time of the
     run.
 
-    Returns one of: "Yes", "No", "No Delegated SKY", or "Voting Open".
-
     If the poll is still open (current_datetime < 16:00 UTC on
     poll_end_date), the result is still in flux. We treat in-progress
     polls positively:
@@ -240,6 +250,9 @@ def determine_vote_status(
       window.
 
     If either fails, status is "No Delegated SKY".
+
+    Returns:
+        One of "Yes", "No", "No Delegated SKY", or "Voting Open".
     """
     poll_close_at = datetime(
         poll_end_date.year,
@@ -274,6 +287,9 @@ def get_vote_poll_ids(poll_info, df, df_sky, current_datetime: datetime):
     list and runs determine_vote_status against each delegate using
     their SKY balance in df_sky. Polls that started before a delegate's
     alignment date are marked "Not Started".
+
+    Returns:
+        The same df, mutated in place with one new column per poll.
     """
     for poll in poll_info:
         # Initialize an empty list to store vote status (Yes, Pending verification,No Delegated SKY or Not Started)
@@ -323,8 +339,10 @@ def get_vote_poll_ids(poll_info, df, df_sky, current_datetime: datetime):
 def get_executive_ids(period: MonthPeriod):
     """Fetch all executive spells from vote.sky.money that occurred within the period.
 
-    Paginates through the executives endpoint. Returns a list of dicts
-    with addres, startDate (as `date`), and title.
+    Paginates through the executives endpoint.
+
+    Returns:
+        A list of dicts with address, startDate (as `date`), and title.
     """
     spell_info = []
     start = 0
@@ -346,13 +364,11 @@ def get_executive_ids(period: MonthPeriod):
             ).date()
 
             if period.start <= date_execute <= period.end:
-                spell_info.append(
-                    {
-                        "address": execute["address"].lower(),
-                        "startDate": date_execute,
-                        "title": execute["title"],
-                    }
-                )
+                spell_info.append({
+                    "address": execute["address"].lower(),
+                    "startDate": date_execute,
+                    "title": execute["title"],
+                })
 
         start = start + limit
 
@@ -367,6 +383,9 @@ def get_vote_executive_ids(spell_info, df, df_sky):
     spell checks each delegate's address against the supporters and
     cross-references with df_sky to assign Yes / Pending verification /
     No Delegated SKY / Not Started.
+
+    Returns:
+        The same df, mutated in place with one new column per spell.
     """
     base_url = f"{SKY_EXECUTIVE_SUPPORTERS_URL}?network=mainnet"
     # Make the API request
@@ -421,8 +440,10 @@ def custom_sort(df, hardcoded_order, poll_info, spell_info):
 
     Drops working columns, adds blank rows for delegates in
     hardcoded_order that don't appear in df, transposes so each row is
-    a poll or a spell, and chronologically sorts those rows. Returns a
-    DataFrame whose first column is "Poll Id"and whose remaining
+    a poll or a spell, and chronologically sorts those rows.
+
+    Returns:
+        A DataFrame whose first column is "Poll Id"and whose remaining
     columns are delegate-keyed status values.
     """
     # Define your hardcoded order array
