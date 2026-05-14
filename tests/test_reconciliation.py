@@ -26,9 +26,9 @@ def _make_yaml_config(active: int = 1, exited: int = 0) -> DelegatesConfig:
         delegates.append(
             Delegate(
                 name=f"Active{i}",
-                voteDelegateAddress=addr,
-                startDate=date(2024, 1, 1),
-                endDate=None,
+                vote_delegate_address=addr,
+                start_date=date(2024, 1, 1),
+                end_date=None,
             )
         )
     for i in range(exited):
@@ -36,9 +36,9 @@ def _make_yaml_config(active: int = 1, exited: int = 0) -> DelegatesConfig:
         delegates.append(
             Delegate(
                 name=f"Exited{i}",
-                voteDelegateAddress=addr,
-                startDate=date(2023, 1, 1),
-                endDate=date(2025, 6, 30),
+                vote_delegate_address=addr,
+                start_date=date(2023, 1, 1),
+                end_date=date(2025, 6, 30),
             )
         )
     return DelegatesConfig(delegates=delegates)
