@@ -108,7 +108,6 @@ ignore = [
     # corresponds to a planned docstring-quality commit.
     "D103",  # undocumented-public-function
     "D105",  # undocumented-magic-method
-    "D205",  # blank line required between summary line and description
 ]
 
 [tool.ruff.lint.per-file-ignores]
