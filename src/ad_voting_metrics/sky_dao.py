@@ -1,7 +1,6 @@
 import logging
 import os
 from datetime import UTC, date, datetime, timedelta
-from typing import Any
 
 import pandas as pd
 from dateutil import parser
@@ -101,7 +100,10 @@ def get_delegate_list_sky(df, period: MonthPeriod, cache_max_age_hours: int | No
 
     all_sky_delegated = get_all_sky_delegated(cache_max_age_hours=cache_max_age_hours)
 
-    delegate_data_sky: dict[str, dict[str, dict[Any, Any]]] = {"contract": {}, "name": {}}
+    delegate_data_sky: dict[str, dict[str, dict[date, dict[str, float]]]] = {
+        "contract": {},
+        "name": {},
+    }
     for _index, row in df.iterrows():
         delegate_name = row["Delegate Name"].strip().lower()
         delegate_contract = row["Delegate Contract"]
@@ -113,21 +115,14 @@ def get_delegate_list_sky(df, period: MonthPeriod, cache_max_age_hours: int | No
 
         current_date = period.start
         while current_date <= period.end:
-            if current_date.strftime("%Y-%m-%d") not in delegate_data_sky["name"][delegate_name]:
-                delegate_data_sky["name"][delegate_name][current_date.strftime("%Y-%m-%d")] = {
-                    "sky": 0
-                }
-            if (
-                current_date.strftime("%Y-%m-%d")
-                not in delegate_data_sky["contract"][delegate_contract]
-            ):
+            if current_date not in delegate_data_sky["name"][delegate_name]:
+                delegate_data_sky["name"][delegate_name][current_date] = {"sky": 0}
+            if current_date not in delegate_data_sky["contract"][delegate_contract]:
                 delegate_data_sky["contract"][delegate_contract][current_date] = {"sky": 0}
 
             sky_delegated = get_sky_delegated(all_sky_delegated, delegate_contract, current_date)
 
-            delegate_data_sky["name"][delegate_name][current_date.strftime("%Y-%m-%d")]["sky"] += (
-                sky_delegated
-            )
+            delegate_data_sky["name"][delegate_name][current_date]["sky"] += sky_delegated
             delegate_data_sky["contract"][delegate_contract][current_date]["sky"] = sky_delegated
 
             current_date += timedelta(days=1)

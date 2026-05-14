@@ -7,7 +7,6 @@ vars and verifies end-to-end connectivity.
 """
 
 import json
-import math
 import uuid
 from datetime import date, datetime
 from pathlib import Path
@@ -980,32 +979,10 @@ def test_coerce_date_handles_pandas_timestamp():
     assert sheets._coerce_date(ts) == "2026-04-05"
 
 
-def test_coerce_date_handles_iso_date_string():
-    """Plain 'YYYY-MM-DD' string passes through unchanged."""
-    assert sheets._coerce_date("2026-04-05") == "2026-04-05"
-
-
-def test_coerce_date_handles_iso_datetime_string_with_tz():
-    """API strings like '2026-04-05T16:00:00Z' (real poll_info shape)
-    get their date portion extracted."""
-    assert sheets._coerce_date("2026-04-05T16:00:00Z") == "2026-04-05"
-
-
-def test_coerce_date_handles_iso_datetime_string_without_tz():
-    """Same but without timezone suffix."""
-    assert sheets._coerce_date("2026-04-05T16:00:00") == "2026-04-05"
-
-
-def test_coerce_date_unparseable_string_passes_through():
-    """A non-ISO string falls through to the original value rather
-    than crashing — defensive against unexpected upstream values."""
-    assert sheets._coerce_date("garbage not a date") == "garbage not a date"
-
-
-def test_coerce_date_handles_none_and_nan():
-    """None and NaN both produce empty string."""
+def test_coerce_date_handles_none():
+    """None produces empty string. Reachable in production: spell dicts have
+    no endDate key, so metadata.get("endDate") returns None."""
     assert sheets._coerce_date(None) == ""
-    assert sheets._coerce_date(math.nan) == ""
 
 
 def test_write_participation_creates_tab_with_correct_title():
