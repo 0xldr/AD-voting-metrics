@@ -1,4 +1,4 @@
-"""Tests for cli argparse callbacks (other than parse_month) which lives in test_period.py."""
+"""Tests for cli argparse callbacks other than parse_month, which lives in test_period.py."""
 
 import argparse
 from datetime import date
@@ -50,16 +50,18 @@ def test_check_period_has_ended_accepts_period_in_past():
 
 
 def test_check_period_has_ended_accepts_period_ending_yesterday():
-    """The minimal valid case: period ended yesterday, today is the next
-    day. April ends Apr 30; running on May 1 should be fine.
+    """Accept a period that ended exactly one day before today.
+
+    April ends Apr 30; running on May 1 should be fine.
     """
     period = MonthPeriod(year=2026, month=4)
     check_period_has_ended(period, today=date(2026, 5, 1))
 
 
 def test_check_period_has_ended_rejects_period_ending_today():
-    """Period boundary: today is the last day of the period. The period
-    has not yet "ended" — still in progress. Refuse.
+    """Reject when today is the period's last day.
+
+    The period has not yet "ended" — still in progress.
     """
     period = MonthPeriod(year=2026, month=4)  # ends 2026-04-30
     with pytest.raises(SystemExit, match="has not yet ended"):
@@ -88,18 +90,14 @@ def test_check_period_has_ended_message_includes_next_valid_date():
 
 
 def test_check_period_has_ended_handles_year_boundary():
-    """December → January next year. Make sure the next_day arithmetic
-    doesn't trip on month/year overflow.
-    """
+    """Verify December → January arithmetic doesn't trip on month/year overflow."""
     period = MonthPeriod(year=2026, month=12)  # ends 2026-12-31
     with pytest.raises(SystemExit, match="2027-01-01"):
         check_period_has_ended(period, today=date(2026, 12, 31))
 
 
 def test_check_period_has_ended_handles_short_month():
-    """February (28 days in 2026) - make sure the period.end calculation
-    we depend on doesn't accidentally use 30/31.
-    """
+    """Verify period.end calculation uses 28 for a 28-day February, not 30/31."""
     period = MonthPeriod(year=2026, month=2)  # ends 2026-02-28
     # Should accept March 1
     check_period_has_ended(period, today=date(2026, 3, 1))
@@ -189,8 +187,9 @@ def test_parser_both_subcommands_require_month():
 
 
 def test_run_finalize_stub_raises_not_implemented(monkeypatch):
-    """The finalize stub raises SystemExit with a clear "not yet implemented"
-    message so operators running it early get unambiguous feedback rather
+    """Raise SystemExit with a clear "not yet implemented" message.
+
+    Operators running finalize early get unambiguous feedback rather
     than silent success.
     """
     fake_args = argparse.Namespace(
