@@ -321,7 +321,12 @@ def _run_fetch(args: argparse.Namespace) -> None:
 
 
 def _run_finalize(args: argparse.Namespace) -> None:
-    """Execute the finalize stage: read communication, compute metrics, write Compensation tab."""
+    """Read the operator-reviewed Communication Master tab, compute metrics, write Compensation.
+
+    Raises SystemExit with a "not yet implemented" message while the
+    Sheets-side compensation writer and eligibility logic are still
+    being built.
+    """
     period = args.month
     logger.info("Finalize requested for %s", period)
     raise SystemExit("`finalize` is not yet implemented.")

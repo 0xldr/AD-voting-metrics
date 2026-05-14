@@ -466,9 +466,10 @@ COMMUNICATION_PENDING_DEFAULT = "Pending verification"
 
 
 def _isblank(value: str | None) -> bool:
-    """Treat empty/None/whitespace-only as blank - operator-set cells have
-    real content. Matches the spreadsheet notion of 'blank' for the
-    fill-on-write logic.
+    """Return True for None, empty, or whitespace-only values.
+
+    Matches the spreadsheet notion of "blank" so the fill-on-write
+    logic preserves operator-set cells with real content.
     """
     if value is None:
         return True
