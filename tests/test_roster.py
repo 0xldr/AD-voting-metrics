@@ -2,7 +2,6 @@
 
 from datetime import date
 from pathlib import Path
-from typing import Any, cast
 
 import pytest
 import yaml
@@ -107,25 +106,29 @@ def test_end_date_equal_to_start_date_rejected():
 # ---------------------------------------------------------------------------
 
 
-def _delegate_with_levels(levels: list[dict] | None = None, **overrides) -> Delegate:
+def _delegate_with_levels(
+    *,
+    levels: list[dict] | None = None,
+    name: str = "TestDelegate",
+    vote_delegate_address: str = "0x0000000000000000000000000000000000000001",
+    start_date: date = date(2024, 1, 1),
+    end_date: date | None = None,
+) -> Delegate:
     """Construct a Delegate with optional level assignments and field overrides.
 
     Defaults to an active delegate aligned 2024-01-01 onwards. Used to keep
     test bodies focused on the level-related behaviour they exercise.
+
+    Each Delegate field becomes an explicit keyword-only parameter with a
+    typed default. No splat / cast(Any, ...) needed.
     """
-    base: dict[str, Any] = {
-        "name": "TestDelegate",
-        "vote_delegate_address": "0x0000000000000000000000000000000000000001",
-        "start_date": date(2024, 1, 1),
-        "end_date": None,
-        "levels": levels or [],
-    }
-    base.update(overrides)
-    # cast(Any, ...) makes the splat opaque to mypy — the dict has mixed
-    # types by design and we can't usefully annotate it more strictly. The
-    # tests exercise Pydantic's runtime validation, which is the real
-    # contract.
-    return Delegate(**cast(Any, base))
+    return Delegate(
+        name=name,
+        vote_delegate_address=vote_delegate_address,
+        start_date=start_date,
+        end_date=end_date,
+        levels=levels or [],
+    )
 
 
 def test_delegate_with_no_levels_constructs():
