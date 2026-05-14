@@ -183,9 +183,10 @@ def test_query_params_include_aligned_filter():
 
 @responses.activate
 def test_stops_on_empty_page_even_when_hasnextpage_true():
-    """The vote.sky.money API has a bug: after the last delegate is returned,
-    subsequent pages have delegates=[] but hasNextPage=true (forever). We must
-    treat empty page as end-of-data regardless of hasNextPage signal.
+    """Treat an empty page as end-of-data even if hasNextPage is still true.
+
+    The vote.sky.money API has a bug: after the last delegate is returned,
+    subsequent pages have delegates=[] but hasNextPage=true forever.
     """
     # Page 1: 2 delegates, hasNextPage = true
     responses.add(
