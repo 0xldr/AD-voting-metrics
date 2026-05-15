@@ -73,13 +73,13 @@ def test_end_february_non_leap_year():
 
 
 def test_end_century_year_not_leap():
-    # 1900 was not a leap year (divisible by 100 but not 400).
-    assert MonthPeriod(1900, 2).end == date(1900, 2, 28)
+    # 2100 will be a leap year (divisible by 100 but not 400).
+    assert MonthPeriod(2100, 2).end == date(2100, 2, 28)
 
 
 def test_end_year_2000_was_leap():
-    # 2000 was a leap year (divisible by 400).
-    assert MonthPeriod(2000, 2).end == date(2000, 2, 29)
+    # 2400 will be a leap year (divisible by 400).
+    assert MonthPeriod(2400, 2).end == date(2400, 2, 29)
 
 
 def test_end_december_does_not_roll_to_january():

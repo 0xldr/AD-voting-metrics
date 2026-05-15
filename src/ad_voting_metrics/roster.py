@@ -1,25 +1,18 @@
 """Roster of aligned delegates, loaded from delegates.yaml.
 
-The YAML is the source of truth for who is or has been an Aligned Delegate.
-Each entry has:
+The YAML is the source of truth. Each entry:
 
-- name: the delegate's display name (matches what the spreadsheet uses)
-- vote_delegate_address: the on-chain vote delegate contract (lowercase 0x...)
-- start_date: the date AD compensation begins. Note this is NOT necessarily
-  the contract creation date returned by the vote.sky.money API as
-  `creationDate` — a delegate may deploy their contract weeks before
-  formally being aligned.
-- end_date: optional. If set, the inclusive last day they were an AD;
-  end_date of 2026-04-15 means they were active on April 15.
-- levels: optional list of LevelAssignment entries describing governance L1/L2
-  assignments over time. A delegate may be unassigned (empty list, the common
-  case) or have a sequence of non-overlapping periods. Level 3 is compted daily
-  from rank plus eligibility - never set in the YAML.
+- name: display name
+- vote_delegate_address: on-chain vote delegate contract (lowercase 0x...)
+- start_date: when AD compensation begins (not the contract creation date)
+- end_date: optional, inclusive last day of alignment
+- levels: optional L1/L2 governance assignments (sequences allowed, no
+  overlaps). Level 3 is computed daily from rank plus eligibility, never
+  set in the YAML.
 
-Drift detection: every YAML entry with end_date=None should appear in the API's
-currently-aligned response; every API-returned AD should have a matching entry
-with end_date=None. Mismatches produce warnings - typically that the YAML needs
-updating after a new alignment or an exit.
+Drift detection: every YAML entry with end_date=None should be in the API's
+currently-aligned response, and vice-versa. Mismatches produce warnings -
+typically the YAML needs updating after a new alignment or an exit.
 """
 
 import logging
@@ -39,12 +32,12 @@ logger = logging.getLogger(__name__)
 
 
 class LevelAssignment(BaseModel):
-    """A single L1 or L2 governance assignment with start and optional end dates.
+    """A single L1 or L2 governance assignment.
 
-    Level 3 is computed daily from rank plus eligibility and is never represented
-    in the YAML. A delegate may have a sequence of level assignments over their
-    lifetime (e.g. promoted from L2 to L1) but never two concurrent levels - see
-    DelegatesConfig validation.
+    A delegate may have a sequence of level assignments over their lifetime
+    (e.g. promoted from L2 to L1) but never two concurrent levels -
+    see Delegate validation for the no-overlap enforcement. Level 3 is
+    never represented here; it's computed daily.
     """
 
     level: int
@@ -71,10 +64,10 @@ class LevelAssignment(BaseModel):
         return self
 
     def covers(self, d: date) -> bool:
-        """True if date d falls within this assignment's period (inclusive).
+        """True if d falls within this assignment's period (inclusive).
 
         Returns:
-            True if d is within the assignment period, False otherwise.
+            Whether d is in the period.
         """
         if d < self.start_date:
             return False
@@ -88,8 +81,8 @@ class Delegate(BaseModel):
     vote_delegate_address: str = Field(pattern=r"^0x[0-9a-f]{40}$")
     start_date: date
     end_date: date | None = None
-    # Governance-assigned L1/L2 history. Empty list (or omitted) is the
-    # common case.
+    # Governance-assigned L1/L2 history. Most delegates have an empty list
+    # (L3 candidates only, with daily eligibility computed at runtime).
     levels: list[LevelAssignment] = Field(default_factory=list)
 
     @field_validator("name")
@@ -113,11 +106,11 @@ class Delegate(BaseModel):
         """Every LevelAssignment must fall within the delegate's alignment period.
 
         Returns:
-            self, per pydantic validator convention.
+            self
 
         Raises:
-            ValueError: if any LevelAssignment's start or end date falls
-                outside the delegate's alignment period.
+            ValueError: if any LevelAssignment falls outside the
+            delegate's alignment period.
         """
         for la in self.levels:
             if la.start_date < self.start_date:
@@ -134,6 +127,7 @@ class Delegate(BaseModel):
                     f"LevelAssignment end_date {la.end_date} for delegate "
                     f"{self.name} is after alignment end_date {self.end_date}"
                 )
+            # An open-ended LevelAssignment on an exited delegate is invalid.
             if la.end_date is None and self.end_date is not None:
                 raise ValueError(
                     f"LevelAssignment for delegate {self.name} has no "
@@ -144,16 +138,14 @@ class Delegate(BaseModel):
 
     @model_validator(mode="after")
     def _level_periods_no_overlap(self) -> "Delegate":
-        """Two LevelAssignments for the same delegate may not overlap in time.
-
-        Sequence is allowed (L2 then L1) but not concurrency.
+        """Sequential LevelAssignments are allowed; overlapping ones aren't.
 
         Returns:
-            self, per pydantic validator convention.
+            self
 
         Raises:
-            ValueError: if two LevelAssignments overlap, or if a
-                non-final LevelAssignment lacks an end_date.
+            ValueError: if two LevelAssignments overlap, or a non-final
+                one lacks an end_date.
         """
         if len(self.levels) < 2:
             return self
@@ -177,23 +169,20 @@ class Delegate(BaseModel):
     def is_active_during(self, period_start: date, period_end: date) -> bool:
         """True if this delegate was active at any point during the given period.
 
-        end_date is inclusive. Delegates with no end_date have no upper bound.
+        end_date is inclusive; None means no upper bound.
 
         Returns:
-            True if the delegate's alignment period overlaps with the
-            given period, False otherwise.
+            Whether the delegate's alignment overlaps the period.
         """
         if self.start_date > period_end:
             return False
         return not (self.end_date is not None and self.end_date < period_start)
 
     def level_at(self, d: date) -> int | None:
-        """Return the governance level (1 or 2) on date d, or None.
+        """Return the governance level (1 or 2) on date d, or None if unassigned.
 
-        Used by the level 3 daily computation to determine whether a
-        delegate is governance-assigned (and therefore not eligible).
-        Returns None if d falls outside any LevelAssignment period -
-        including the common case of a delegate with no level assignments.
+        Used by the L3 daily computation to determine whether a delegate
+        is governance-assigned (and therefore not eligible for an L3 slot).
         """
         for la in self.levels:
             if la.covers(d):
@@ -220,15 +209,15 @@ class DelegatesConfig(BaseModel):
 
 
 def load_delegates(path: Path) -> DelegatesConfig:
-    """Load and validate the delegates YAML from the given path.
+    """Load and validate the delegates YAML.
 
     Returns:
-        The parsed and validated DelegatesConfig.
+        Parsed and validated DelegatesConfig.
 
     Raises:
         FileNotFoundError: if the file doesn't exist.
-        ValueError: if the file is empty or contains only YAML null.
-        yaml.YAMLError if the file is malformed.
+        ValueError: if the file is empty or YAML null.
+        yaml.YAMLError: if malformed.
         pydantic.ValidationError: on schema violations.
     """
     with Path(path).open() as f:
@@ -245,22 +234,17 @@ def merge_with_api(
     """Verify the YAML roster against the API response.
 
     Drift rules:
-    - YAML active (end_date=None), API absent -> warn (operator likely
-    forgot to set end_date after an exit)
-    - YAML exited (end_date set), API absent -> expected, no warn
-    - YAML exited, API present -> warn (date mismatch; either YAML
-    or API is wrong about the exit)
-    - API present, not in YAML -> warn (new aligned delegate not yet
-    added to YAML)
+    - YAML active, API absent -> warn (likely missed an exit update)
+    - YAML exited, API absent -> expected, no warn
+    - YAML exited, API present -> warn (date mismatch)
+    - API present, not in YAML -> warn (new delegate missing from YAML)
 
-    Comparisons are by vote_delegate_address (lowercased). Names that differ
-    but addresses match are not flagged.
+    Comparisons are by vote delegate address (lowercased); names that
+    differ but addresses match are not flagged.
 
     Returns:
-        A (canonical_roster, warnings) tuple. canonical_roster is the
-        YAML's delegate list unchanged (the API does not add anyone -
-        the YAML is the source of truth). warnings is a list of
-        human-readable strings for any drift detected.
+        (canonical_roster, warnings). canonical_roster is the YAML's
+        delegate list unchanged - the API never adds anyone.
     """
     warnings: list[str] = []
 
@@ -301,14 +285,12 @@ def merge_with_api(
 class RosterResult:
     """Outcome of build_roster_for_period.
 
-    Carries the active-delegates list (the runtime-relevant output) plus
-    counts and metadata that downstream callers (the reconciliation log,
-    in particular) need to record what happened during roster building.
+    Carries the active-delegate list plus metadata for the reconciliation log.
     """
 
     active_delegates: list[Delegate]
     drift_warnings: list[str]
-    yaml_config: "DelegatesConfig"  # full config so reconciliation can split active/exited
+    yaml_config: "DelegatesConfig"  # full config so callers can split active/exited
     api_delegate_count: int  # 0 if api_fetch_succeeded is False
     api_fetch_succeeded: bool
 
@@ -320,16 +302,12 @@ def build_roster_for_period(
 ) -> RosterResult:
     """Load YAML, fetch API, run drift detection, filter to active-during-period.
 
-    The api_fetcher is a callable that returns the raw API delegate list.
-
-    If the API fetch raises, drift detection is skipped and the script
-    proceeds with YAML alone. This is a deliberate soft-fail, YAML is
-    the source of truth.
+    If the API fetch raises, drift detection is skipped (soft-fail; YAML
+    is source of truth) and a warning is emitted.
 
     Returns:
-        A RosterResult with the active delegates, drift warnings, the
-        full YAML config, and metadata about API counts and fetch
-        success — for the reconciliation log.
+        RosterResult with active delegates, drift warnings, the full
+        YAML config, and API-fetch metadata.
     """
     yaml_config = load_delegates(yaml_path)
 
@@ -357,16 +335,14 @@ def build_roster_for_period(
 
 
 def to_dataframe(delegates: list["Delegate"]) -> pd.DataFrame:
-    """Build a pandas DataFrame in the shape of the sky_dao functions expect.
+    """Build the per-delegate Dataframe consumed by sky_dao.
 
-    sky_dao reads three colums:
-    - 'Delegate Name': (str)
-    - 'Delegate Contract': (str, lowercase 0x...address)
-    - 'Start Date': (str, formatted '%Y-%m-%d - sky_dao parses it back
-    with strptime, so format matters)
+    Columns:'Delegate Name', 'Delegate Contract', 'Start Date'.
+    Start Date is formatted '%Y-%m-%d - sky_dao parses it back with
+    strptime, so the format matters.
 
     Returns:
-        A three-column DataFrame, one row per delegate.
+        Three-column DataFrame, one row per delegate.
     """
     return pd.DataFrame({
         "Delegate Name": [d.name for d in delegates],

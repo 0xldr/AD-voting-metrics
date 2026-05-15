@@ -117,11 +117,12 @@ def _delegate_with_levels(
 ) -> Delegate:
     """Construct a Delegate with optional level assignments and field overrides.
 
-    Defaults to an active delegate aligned 2024-01-01 onwards. Used to keep
-    test bodies focused on the level-related behavior they exercise.
-
-    Each Delegate field becomes an explicit keyword-only parameter with a
-    typed default. No splat / cast(Any, ...) needed.
+    `levels` is typed `list[dict]` rather than `list[LevelAssignment]`
+    because test callers feed in raw YAML-shaped dicts to exercise
+    pydantic's coercion. Pydantic accepts that, but pyright treats
+    `list` as invariant and won't accept `list[dict]` where
+    `list[LevelAssignment]` is declared - hence the cast at the
+    boundary.
     """
     return Delegate(
         name=name,

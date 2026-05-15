@@ -14,11 +14,7 @@ import ad_voting_metrics.sky_dao as sky_dao
 
 
 def test_get_all_sky_delegated_calls_run_query_dataframe(monkeypatch):
-    """Call run_query_dataframe with the SKY query and return a normalized, indexed DataFrame.
-
-    Verifies query_id is DUNE_SKY_QUERY_ID, the result is lowercased
-    and indexed on (delegation_contract, dt)
-    """
+    """Call run_query_dataframe with DUNE_SKY_QUERY_ID; lowercase contract and index on (contract, dt)."""
     monkeypatch.setenv("DUNE_API_KEY", "fake-key")
 
     # Dune returns mixed-case addresses sometimes; verify normalization
@@ -49,10 +45,7 @@ def test_get_all_sky_delegated_calls_run_query_dataframe(monkeypatch):
 
 
 def test_get_all_sky_delegated_uses_cache_when_cache_hours_set(monkeypatch):
-    """Call get_latest_result instead of run_query_dataframe when cache_max_age_hours is set.
-
-    Pass the threshold through the cache call.
-    """
+    """Call get_latest_result when cache_max_age_hours is set; pass the threshold through."""
     monkeypatch.setenv("DUNE_API_KEY", "fake-key")
 
     fake_results = MagicMock()
@@ -210,11 +203,7 @@ def test_status_no_sky_anywhere_returns_no_delegated_sky():
 
 
 def test_empty_sky_dict_returns_no_delegated_sky():
-    """Treat a delegate with no Dune rows in the window as all-zero.
-
-    Defensive: an earlier code path could silently fall through to a
-    stale bool value.
-    """
+    """Empty sky dict treated as all-zero rather than falling through to a stale value."""
     assert (
         sky_dao.determine_vote_status(
             {}, _POLL_CLOSE, delegate_voted=False, current_datetime=_AFTER_CLOSE
@@ -246,11 +235,7 @@ def test_status_did_not_vote_full_window_returns_no():
 
 
 def test_status_grace_period_close_day_only_no_vote_returns_no_delegated_sky():
-    """Scenario C: zero on days 0-2, non-zero only on close day, didn't vote.
-
-    Grace period covers this — a delegation arriving same-day as close
-    can't reasonably be acted on.
-    """
+    """Scenario C: zero days 0-2, non-zero only on close day, didn't vote → grace applies."""
     sky = _sky_dict(0, 0, 0, 1000)
     assert (
         sky_dao.determine_vote_status(
@@ -261,10 +246,7 @@ def test_status_grace_period_close_day_only_no_vote_returns_no_delegated_sky():
 
 
 def test_status_grace_period_close_day_only_voted_returns_yes():
-    """Scenario D: same as C but they voted anyway.
-
-    They engaged despite the late delegation - count it as Yes.
-    """
+    """Scenario D: same as C but they voted anyway — counts as Yes."""
     sky = _sky_dict(0, 0, 0, 1000)
     assert (
         sky_dao.determine_vote_status(
@@ -275,11 +257,7 @@ def test_status_grace_period_close_day_only_voted_returns_yes():
 
 
 def test_status_pre_close_day_delegation_still_returns_no():
-    """Non-zero on day 2 and day 3, didn't vote, return No.
-
-    Both conditions for No are met: SKY at close and SKY beforehand.
-    The delegate had time and stake - standard non-participation.
-    """
+    """Non-zero on days 2-3, didn't vote → No (both rule conditions met)."""
     sky = _sky_dict(0, 0, 1000, 1000)
     assert (
         sky_dao.determine_vote_status(
@@ -290,11 +268,7 @@ def test_status_pre_close_day_delegation_still_returns_no():
 
 
 def test_status_mid_window_only_returns_no_delegated_sky():
-    """Non-zero only mid-window, zero on close day, didn't vote -> No Delegated SKY.
-
-    The delegate had no SKY at close, so even if they'd wanted to vote
-    on day 1 (and didn't), they couldn't have completed it at close.
-    """
+    """Non-zero on days 2-3, didn't vote → No (both rule conditions met)."""
     sky = _sky_dict(0, 1000, 0, 0)
     assert (
         sky_dao.determine_vote_status(
@@ -305,10 +279,7 @@ def test_status_mid_window_only_returns_no_delegated_sky():
 
 
 def test_status_voted_but_withdrew_before_close_returns_yes():
-    """A recorded vote stands even if the delegations were pulled before close.
-
-    Close-day-zero doesn't override a recorded vote.
-    """
+    """A recorded vote stands even if delegations were pulled before close."""
     sky = _sky_dict(1000, 1000, 0, 0)
     assert (
         sky_dao.determine_vote_status(
@@ -321,9 +292,9 @@ def test_status_voted_but_withdrew_before_close_returns_yes():
 def test_status_grief_vector_blocked():
     """A hostile delegator dropping 1 SKY on close day cannot harm the target.
 
-    Without grace: marked No, participation % drops, eligibility may
-    flip. With grace: marked No Delegated SKY, discounted, target
-    unaffected.
+    Without grace rule: target marked No, participation % drops,
+    eligibility may flip. With it: marked No Delegated SKY, discounted,
+    target unaffected.
     """
     sky = _sky_dict(0, 0, 0, 1)
     assert (
@@ -337,9 +308,7 @@ def test_status_grief_vector_blocked():
 def test_status_mid_window_withdrawal_returns_no_delegated_sky():
     """Withdrawn-before-close + no vote → No Delegated SKY, not No.
 
-    Under the close-day rule the delegat had zero stake at the
-    decisive moment, so they're discounted rather than penalized.
-    Voting requires SKY at close to even be possible.
+    Zero stake at the decisive moment → discounted, not penalised.
     """
     sky = _sky_dict(1000, 1000, 0, 0)
     assert (
@@ -351,10 +320,7 @@ def test_status_mid_window_withdrawal_returns_no_delegated_sky():
 
 
 def test_status_partial_window_date_uses_what_is_present():
-    """Treat missing days as zero when the sky dict is sparse.
-
-    Only day 3 has a row, and it's non-zero. Grace applies.
-    """
+    """Missing days are treated as zero; only day 3 has a row → grace applies."""
     sky = {date(2026, 4, 4): 1000.0}
     assert (
         sky_dao.determine_vote_status(
@@ -365,11 +331,7 @@ def test_status_partial_window_date_uses_what_is_present():
 
 
 def test_status_partial_window_pre_close_only_returns_no_delegated_sky():
-    """Sky on day 1 only (no close-day row -> close-day treated as zero) -> No Delegated SKY.
-
-    Under the close-day rule the delegate had no stake at the decisive
-    moment, even though they had some earlier.
-    """
+    """Day-1 only (close day missing → treated as zero) → No Delegated SKY."""
     sky = {date(2026, 4, 2): 1000.0}
     assert (
         sky_dao.determine_vote_status(
@@ -396,11 +358,7 @@ def test_status_in_progress_poll_voted_returns_yes():
 
 
 def test_status_in_progress_poll_not_voted_returns_voting_open():
-    """Return 'Voting Open' for a still-open poll the delegate hasn't voted on.
-
-    NOT penalized - they might still vote. 'Voting Open' goes in
-    DISCOUNTED so it doesn't affect participation %.
-    """
+    """Open poll, no vote → 'Voting Open' (discounted, not penalised)."""
     sky = _sky_dict(1000, 1000, 0, 0)
     assert (
         sky_dao.determine_vote_status(
@@ -411,11 +369,7 @@ def test_status_in_progress_poll_not_voted_returns_voting_open():
 
 
 def test_status_in_progress_with_no_sky_still_returns_voting_open():
-    """Return 'Voting Open' for an open poll even when the delegate has no SKY now.
-
-    They could still receive a delegation and vote. 'Voting Open' trumps
-    'No Delegated Sky' while the poll is still open.
-    """
+    """Open poll with no SKY now → still 'Voting Open' (they could still receive a delegation)."""
     sky = _sky_dict(0, 0, 0, 0)
     assert (
         sky_dao.determine_vote_status(
@@ -426,11 +380,7 @@ def test_status_in_progress_with_no_sky_still_returns_voting_open():
 
 
 def test_status_in_progress_voted_with_no_sky_returns_yes():
-    """A recorded vote gets credit even with zero SKY at run time.
-
-    The voted flag from the API is authoritative - stake context only
-    resolves the non-vote case, never overrules a recorded vote.
-    """
+    """Recorded vote stands even with zero SKY at run time — the API's voted flag is authoritative."""
     sky = _sky_dict(0, 0, 0, 0)
     assert (
         sky_dao.determine_vote_status(
@@ -441,10 +391,7 @@ def test_status_in_progress_voted_with_no_sky_returns_yes():
 
 
 def test_status_close_day_before_1600_utc_treated_as_open():
-    """Boundary 1: 15:00 UTC on close day -> still open.
-
-    Poll closes at 16:00 UTC. Full SKY but no vote -> 'Voting Open'.
-    """
+    """15:00 UTC on close day → still open (close is 16:00 UTC)."""
     sky = _sky_dict(1000, 1000, 1000, 1000)
     current = datetime(2026, 4, 4, 15, 0, tzinfo=UTC)
     assert (
@@ -456,11 +403,7 @@ def test_status_close_day_before_1600_utc_treated_as_open():
 
 
 def test_status_close_day_at_exactly_1600_utc_treated_as_closed():
-    """Boundary 2: exactly 16:00 UTC on close day -> closed.
-
-    We treat >= 16:00 UTC as closed, so the close-day rule applies.
-    SKY before and at close + no vote -> 'No'.
-    """
+    """Exactly 16:00 UTC counts as closed; close-day rule applies."""
     sky = _sky_dict(1000, 1000, 1000, 1000)
     current = datetime(2026, 4, 4, 16, 0, tzinfo=UTC)
     assert (
@@ -472,10 +415,7 @@ def test_status_close_day_at_exactly_1600_utc_treated_as_closed():
 
 
 def test_status_close_day_after_1600_utc_treated_as_closed():
-    """Boundary 3: 17:00 UTC on close day -> closed.
-
-    Same outcome as exactly-at-close — close-day rule applies.
-    """
+    """17:00 UTC on close day → closed."""
     sky = _sky_dict(1000, 1000, 1000, 1000)
     current = datetime(2026, 4, 4, 17, 0, tzinfo=UTC)
     assert (

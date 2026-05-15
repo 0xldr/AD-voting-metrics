@@ -1,15 +1,9 @@
 """Domain type for a single calendar month.
 
-The script processes one month at a time. Carrying the month identity
-(year + month) explicitly is more useful than carrying a (start_date, end_date)
-tuple because:
-
-- Future code (Sheets writer, reconciliation log) keys data by month name,
-  not by date range. A MonthPeriod naturally provides that key.
-- The (start, end) view is derivable from (year, month) but not vice versa
-  without reasoning about the dates — a tuple of (April 1, April 30) doesn't
-  intrinsically say "April 2026."
-- It catches a class of bugs where two date arguments get swapped.
+Carrying the month identity (year + month) explicitly rather than a
+(start_date, end_date) tuple keeps the month name available without
+having to derive it back from dates and catches a class of bugs where
+two date arguments get swapped.
 """
 
 import calendar
@@ -29,17 +23,16 @@ class MonthPeriod:
     month: int
 
     def __post_init__(self):
-        """Validate month is 1..12 and year is reasonable (>=1900).
+        """Validate month is 1..12 and year is >=2022.
 
         Raises:
-            ValueError: if month is out of range or year is before 1900.
+            ValueError: if month is out of range or year is before 2022.
         """
         if not 1 <= self.month <= 12:
             raise ValueError(f"month must be 1..12, got {self.month}")
-        # No upper bound on year — the type is happy with December 2099 even
-        # if the CLI rejects future months. Lower bound is just sanity.
-        if self.year < 1900:
-            raise ValueError(f"year must be >= 1900, got {self.year}")
+        # No upper bound on year — the CLI rejects future months elsewhere.
+        if self.year < 2022:
+            raise ValueError(f"year must be >= 2022, got {self.year}")
 
     @property
     def start(self) -> date:
@@ -56,20 +49,18 @@ class MonthPeriod:
         """Render as April 2026 rather than "MonthPeriod(year=2026, month=4)".
 
         Returns:
-            Human-readable "<MonthName> <Year>" form.
+            The human-readable form.
         """
         return f"{calendar.month_name[self.month]} {self.year}"
 
     @classmethod
     def from_string(cls, value: str) -> "MonthPeriod":
-        """Parse a human or ISO-style month string into a MonthPeriod.
+        """Parse a human or ISO month string into a MonthPeriod.
 
         Accepts "April 2026", "Apr 2026", "2026-04", and other formats
-        dateutil.parser can interpret. The day component (if any) is ignored;
-        only year and month are read.
-
-        Does NOT reject future months - that's a CLI-input concern,
-        handled by the argparse type callback.
+        dateutil.parser handles. Day component is ignored; only year
+        and month are read. Future months are NOT rejected - that's a
+        CLI-input concern.
 
         Returns:
             A MonthPeriod for the parsed (year, month)
@@ -77,17 +68,14 @@ class MonthPeriod:
         Raises:
             ValueError: if the input cannot be parsed as a month.
         """
-        # Imported here rather than at module top to keep the dependency
-        # local to the parsing path. Other paths (constructing MonthPeriod
-        # directly from year/month) don't need dateutil.
+        # Lazy-imported to keep dateutil off the import path for callers
+        # that construct MonthPeriod directly from year/month.
         from datetime import datetime
 
         from dateutil import parser as dateparser
 
-        # dateutil fills unspecified components from the default. Without an
-        # explicit default it uses today's date, so on May 5 the string
-        # "April 2026" parses as April 5, 2026 (with today's day=5). Use a
-        # fixed sentinel so only year and month are trusted.
+        # Fixed sentinel default so dateutil doesn't fill the day from
+        # today's date - "April 2026" on May 5 would otherwise be April 5.
         sentinel = datetime(2000, 1, 1)
         try:
             parsed = dateparser.parse(value, default=sentinel)

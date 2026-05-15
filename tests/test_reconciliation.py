@@ -54,12 +54,10 @@ def _make_entry(**overrides: object) -> ReconciliationEntry:
     behavior. Use this helper to get a typed full entry, overriding
     only the fields the test actually asserts on.
 
-    Overrides are typed `object` because each ReconciliationEntry
-    field has a different type (mix of str / int / bool / list);
-    no single TypedDict variadic kwargs annotation works. The
-    cast(Any, ...) at the .update site quiets static checkers that
-    can't see the TypedDict update is field-by-field correct in
-    every test call.
+    Overrides are typed `object` because each ReconciliationEntry field
+    has a different type; no single TypedDict variadic kwargs annotation
+    works. The cast(Any, ...) at the .update site quiets static checkers
+    that can't see the update is field-by-field correct.
     """
     base: ReconciliationEntry = {
         "run_timestamp": "2026-05-06T15:32:08+00:00",
