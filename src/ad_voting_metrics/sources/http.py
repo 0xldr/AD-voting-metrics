@@ -1,14 +1,8 @@
 """Shared HTTP session for all outbound requests.
 
-A single module-cached `requests.Session` is reused across all external API
-calls (sky_dao's vote.sky.money endpoints, sources.delegates, future
-clients). Reusing one session gives us:
-
-- Connection pooling (TCP/TLS handshakes amortized across calls)
-- Uniform retry behavior on transient failures
-- One place to adjust timeouts, retry counts, and backoff
-
-Use `get_session()` to retrieve the cached session. Do not instantiate
+A single module-cached `requests.Session` is reused across all external
+API calls, giving us connection pooling, uniform retry behavior, and
+one placeto adjust timeouts. Use `get_session()`; don't instantiate
 `requests.Session()` directly.
 """
 
@@ -18,13 +12,11 @@ import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
-# Timeout for all HTTP requests, as (connect_timeout, read_timeout) seconds.
-# Without an explicit timeout, requests will wait forever on a hung connection.
+# (connect_timeout, read_timeout) in seconds. Without this, requests
+# will wait forever on a hung connection.
 HTTP_TIMEOUT = (5, 30)
 
-# HTTP statuses worth retrying. 429 (rate limit) and 5xx (server error) are
-# transient by definition; 4xx other than 429 are caller errors and should
-# not be retried.
+# Transiet HTTP statuses worth retrying. 429 (rate limit) and 5xx.
 _RETRY_STATUSES = (429, 500, 502, 503, 504)
 
 
@@ -32,20 +24,16 @@ _RETRY_STATUSES = (429, 500, 502, 503, 504)
 def get_session() -> requests.Session:
     """Return the shared requests.Session, creating it on first call.
 
-    Retries transient failures (timeouts, connection errors, 5xx, 429) up
-    to 3 times with exponential backoff: sleeps of 0s, 2s, 4s between
-    retries. Persistent failures raise requests.exceptions.RetryError
-    after exhausting retries.
+    Retries transient failures (timeouts, connection errors, 5xx, 429)
+    up to 3 times with exponential backoff. Persistent failures raise
+    requests.exceptions.RetryError. Only idempotent methods are retried
+    (urllib3's default).
 
-    Only idempotent methods (GET, HEAD, etc.) are retried, which is the
-    urllib3 default. POST/PUT/DELETE retries would require an allowlist
-    we don't currently set.
+    Tests that mock HTTP traffic should call `get_session.cache_clear()`
+    in a fixture so a fresh session picks up their mocks.
 
-    Backed by functools.cache rather than a module-level global — the
-    first call constructs the session, subsequent calls return the same
-    object. Tests that mock HTTP traffic should call get_session.cache_clear()
-    in a fixture so a fresh session picks up their mocks rather than a
-    leftover from another test.
+    Returns:
+        The cached Session.
     """
     retry = Retry(
         total=3,

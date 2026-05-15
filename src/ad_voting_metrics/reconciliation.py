@@ -4,20 +4,14 @@ Each successful run writes one JSON file to output_data/reconciliation/,
 named <YYYY-MM>_<UTC-timestamp>.json — the period queried first, the run
 timestamp second, both sortable.
 
-The log captures structured metadata about a run: how many delegates
-were in the YAML and the API, whether the API call succeeded, what
-drift was detected, which Dune query was executed, what files were
-produced. Operators (or future tooling) can answer "what happened
-during this run" without re-running.
+The log captures structured metadata about a run: YAML and API delegate
+counts, whether the API call succeeded, drift warnings, which Dune query
+was executed, amd which files were produced. Lets operators answer
+"what happened during this run" without re-running.
 
-Phase 4b will likely teach the Sheets writer to read these files and
-append entries to a workbook tab; for now they're operator-facing
-artifacts.
-
-Soft-fail: if writing the log throws (permission denied, disk full,
-serialization error), a stderr warning is logged but the script
-continues. The CSV outputs are the primary artifacts of a run; the
-reconciliation file is supplementary.
+Writing is soft-fail: if the log can't be written (permission denied,
+disk full, etc.), a warning is logged and the script continues. CSV
+outputs are the primary artifacts; the log is supplementary.
 """
 
 import json
@@ -35,12 +29,9 @@ logger = logging.getLogger(__name__)
 class ReconciliationEntry(TypedDict):
     """The schema of a reconciliation entry.
 
-    Fields are JSON-serializable. Timestamps are ISO 8601 in UTC strings;
-    paths are absolute or relative path strings, never Path objects.
-    Counts are non-negative ints. The list fields contain only primitives.
-
-    This TypedDict gives the dict shape a name so mypy can check field
-    presence and types at construction sites.
+    All fields are JSON-serializable: timestamps are ISO 8601 in UTC
+    strings; paths are strings, counts are non-negative ints. The
+    TypedDict gives mypy a name to check the shape at construction sites.
     """
 
     run_timestamp: str
@@ -76,27 +67,17 @@ def build_entry(
 ) -> ReconciliationEntry:
     """Construct a reconciliation log entry from this run's facts.
 
-    All fields are JSON-serializable. Timestamps are ISO 8601 in UTC.
-    Counts are integers. Drift warnings are the same list cli.py logs
-    to stderr — including them here gives a structured record of every
-    warning fired during the run.
+    dune_cache_max_age_hours is None when Dune was run fresh, or an
+    integer N when --cache-hours N was used.
 
-    dune_cache_max_age_hours is None when the run executes Dune fresh
-    (the safe default), or an integer N when --cache-hours N was used.
+    api_delegate_count is 0 when api_fetch_succeeded is False (the
+    API call raised and was soft-failed).
 
-    api_delegate_count is the count from vote.sky.money's response, or
-    0 if api_fetch_succeeded is False (i.e. the API call raised and we
-    soft-failed). api_fetch_succeeded is the boolean we'd otherwise
-    have to infer from the drift_warnings string contents.
-
-    output_files is the list of CSV paths written by the run. Lets the
-    log point at exactly which artifacts this entry corresponds to.
+    All fields are JSON-serializable. The keyword-only signature reflects
+    the call pattern in cli.py and prevents accidental positional calls.
 
     Returns:
-        A ReconciliationEntry (a TypedDict alias for a dict) populated
-        from the supplied arguments. The keyword-only parameter list
-        reflects the call pattern in cli.py and prevents accidental
-        positional-call regressions.
+        A populated ReconciliationEntry.
     """
     yaml_active = sum(1 for d in yaml_config.delegates if d.end_date is None)
     yaml_exited = sum(1 for d in yaml_config.delegates if d.end_date is not None)
@@ -126,41 +107,28 @@ def build_entry(
 def _filename(period: MonthPeriod, run_timestamp_iso: str) -> str:
     """Build a filesystem-safe, sortable filename for a single run.
 
-    Format: <YYYY-MM>_<YYYY-MM-DDTHH-MM-SSZ>.json
-
-    Example: 2026-04_2026-05-06T15-32-08Z.json
-
-    Colons in the time component are replaced with hyphens because they
-    are illegal on Windows filesystems and confuse some shells. The
-    leading period component (YYYY-MM) makes ls-sort group by period;
-    the timestamp suffix disambiguates re-runs of the same period.
-
-    The run_timestamp_iso is the ISO 8601 string already produced by
-    build_entry, so the filename and the file's run_timestamp field
-    refer to exactly the same moment.
+    Format: <YYYY-MM>_<YYYY-MM-DDTHH-MM-SSZ>.json (e.g.
+    "2026-04_2026-05-06T15-32-08Z.json). Colons are replaced with
+    hyphens because they're illegal on Windows filesystems
 
     Returns:
-        The composed filename, e.g. "2026-04_2026-05-06T15-32-08Z.json".
+        The composed filename.
     """
     period_iso = period.start.strftime("%Y-%m")
-    # Strip microseconds and timezone offset notation, replace colons.
-    # Input shape: "2026-05-06T15:32:08.123456+00:00" or "...+00:00"
-    # Output shape: "2026-05-06T15-32-08Z"
     dt = datetime.fromisoformat(run_timestamp_iso)
     timestamp = dt.strftime("%Y-%m-%dT%H-%M-%SZ")
     return f"{period_iso}_{timestamp}.json"
 
 
 def write_entry(directory: Path, period: MonthPeriod, entry: ReconciliationEntry) -> Path | None:
-    """Write a reconciliation entry as a single JSON file in `directory`.
+    """Write a reconciliation entry as a JSON file under `directory`.
 
-    Soft-fails: if creating the directory or writing the file raises,
-    logs a WARNING and returns None. CSV outputs are primary; this log
-    is supplementary and must not block a successful run.
+    Soft-fails on any IO error: logs a warning and returns None rather
+    than blocking the run.
 
-    The filename combines the period and the run timestamp from the
-    entry's run_timestamp field, so re-runs of the same period produce
-    distinct files rather than overwriting.
+    The filename combines the period and the entry's run timestamp, so
+    re-runs of the same period produce distinct files rather than
+    overwriting.
 
     Returns:
         The written path on success, or None on failure.

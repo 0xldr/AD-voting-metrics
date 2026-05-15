@@ -50,19 +50,13 @@ def test_check_period_has_ended_accepts_period_in_past():
 
 
 def test_check_period_has_ended_accepts_period_ending_yesterday():
-    """Accept a period that ended exactly one day before today.
-
-    April ends Apr 30; running on May 1 should be fine.
-    """
+    """April ends Apr 30; running on May 1 should be fine."""
     period = MonthPeriod(year=2026, month=4)
     check_period_has_ended(period, today=date(2026, 5, 1))
 
 
 def test_check_period_has_ended_rejects_period_ending_today():
-    """Reject when today is the period's last day.
-
-    The period has not yet "ended" — still in progress.
-    """
+    """Last day of the period: still in progress, reject."""
     period = MonthPeriod(year=2026, month=4)  # ends 2026-04-30
     with pytest.raises(SystemExit, match="has not yet ended"):
         check_period_has_ended(period, today=date(2026, 4, 30))
@@ -187,11 +181,7 @@ def test_parser_both_subcommands_require_month():
 
 
 def test_run_finalize_stub_raises_not_implemented(monkeypatch):
-    """Raise SystemExit with a clear "not yet implemented" message.
-
-    Operators running finalize early get unambiguous feedback rather
-    than silent success.
-    """
+    """Raise SystemExit with a clear "not yet implemented" message."""
     fake_args = argparse.Namespace(
         command="finalize",
         month=MonthPeriod(year=2026, month=1),

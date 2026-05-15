@@ -12,21 +12,18 @@ logger = logging.getLogger(__name__)
 DELEGATES_URL = "https://vote.sky.money/api/delegates"
 PAGE_SIZE = 20
 
-# Defensive cap: if the API returns hasNextPage=true forever (bug or misconfig),
-# stop after this many pages rather than looping forever. With ~13 aligned
-# delegates today and pageSize=20, one page suffices; we'd need 100x growth
-# before this matters, and at that point the script needs other rethinking too.
+# Defensive cap: bail out if the API returns hasNextPage=true forever
+# With ~13 aligned delegates today and pageSize=20, one page suffices.
 _MAX_PAGES = 50
 
 
 def fetch_aligned_delegates() -> list[dict]:
-    """Fetch every current aligned delegate from vote.sky.money.
+    """Fetch every current aligned delegate from the API.
 
-    Pagination: requests pages of size PAGE_SIZE until paginationInfo.hasNextPage is false
-    or we hit _MAX_PAGES.
+    Paginates until hasNextPage is false or _MAX_PAGES is hit.
 
     Returns:
-        A list of raw delegate dicts as they appear in the API response.
+        List of raw delegate dicts from the API response.
     """
     session = get_session()
     delegates: list[dict] = []
@@ -47,7 +44,6 @@ def fetch_aligned_delegates() -> list[dict]:
 
         page_delegates = data.get("delegates", [])
 
-        # Exit on empty page.
         if not page_delegates:
             break
 
@@ -59,8 +55,8 @@ def fetch_aligned_delegates() -> list[dict]:
 
         page += 1
     else:
-        # while-else: only runs if the loop exhausts without breaking, i.e. we
-        # hit the page cap with hasNextPage still true. Worth a loud warning.
+        # while-else: fires only if the loop exhausts without breaking, -
+        # i.e. we hit the page cap with hasNextPage still true.
         logger.warning(
             "fetch_aligned_delegates hit page cap of %d with hasNextPage still true; "
             "results may be incomplete",

@@ -1,25 +1,9 @@
 """Google Sheets connection for reading/writing the AD compensation workbook.
 
-This module provides the auth scaffolding only — opening a Spreadsheet object
-the rest of the codebase can use. Tab creation, reading, and writing live in
-their own modules layered on top.
-
-Auth is via a Google Cloud service account, with credentials in a JSON key
-file referenced by the GOOGLE_SERVICE_ACCOUNT_FILE env var. The workbook to
-open is identified by SHEETS_WORKBOOK_ID. Both env vars are required; the
-operator gets a clear error message naming the missing variable and pointing
-at .env.example if either is unset, matching the existing DUNE_API_KEY
-pattern.
-
-The service account email (visible in the JSON key file as `client_email`)
-must be added as an Editor on the target workbook. This is a one-time setup
-step done in the Google Sheets sharing dialog; the script can't share itself
-into a workbook.
-
-Note on gspread: the library's maintainer announced in 2024 that they're
-stepping back and looking for new maintainers. The library still works
-against the current Google Sheets API v4. We'll revisit if maintenance
-lapses become a real problem; for now it's the standard choice.
+Auth is via a Google Cloud service account; the JSON key file is referenced
+by GOOGLE_SERVICE_ACCOUNT_FILE and the workbook by SHEETS_WORKBOOK_ID. The
+service account's client_email must be added as Editor on the workbook -
+a one-time setup step in the Google Sheets sharing dialog.
 """
 
 import os
@@ -49,23 +33,19 @@ def get_workbook(
 ) -> gspread.Spreadsheet:
     """Open the configured workbook using the service account credentials.
 
-    If service_account_file is None, reads GOOGLE_SERVICE_ACCOUNT_FILE from
-    the environment. Similarly for workbook_id and SHEETS_WORKBOOK_ID. Pass
-    explicit values for testing or one-off scripts that want to open a
-    different workbook.
-
-    The error messages name the specific failure mode and point at the fix.
+    If service_account_file or workbook_id is None, reads from the matching
+    env var (GOOGLE_SERVICE_ACCOUNT_FILE / SHEETS WORKBOOK_ID). Pass explicit
+    values for testing.
 
     Returns:
         The opened gspread.Spreadsheet.
 
     Raises:
-        RuntimeError: for any of the following:
+        RuntimeError: for any of:
           - Missing env var (when the corresponding arg is None)
           - Service account file path doesn't exist or isn't readable
           - JSON key file is malformed or wrong format
-          - Workbook ID is wrong, or the workbook isn't shared with the
-          service account's email.
+          - Workbook ID is wrong, or not shared with the service account
     """
     if service_account_file is None:
         service_account_file = os.environ.get("GOOGLE_SERVICE_ACCOUNT_FILE")
@@ -101,8 +81,8 @@ def get_workbook(
             scopes=list(SCOPES),
         )
     except ValueError as e:
-        # google-auth raises ValueError for malformed JSON or wrong key
-        # file type (e.g., user credentials when service-account expected).
+        # google-auth raises ValueError for malformed JSON or wrong key type
+        # (e.g., user credentials when service-account expected).
         raise RuntimeError(
             f"Service account file at {sa_path} could not be parsed as a "
             f"service-account JSON key. Original key: {e}"
@@ -113,10 +93,8 @@ def get_workbook(
     try:
         return client.open_by_key(workbook_id)
     except gspread.exceptions.APIError as e:
-        # The most common failure here is the workbook not being shared
-        # with the service account, which returns 403. We don't try to
-        # parse the error structure exhaustively - just surface enough
-        # context for the operator to debug.
+        # Usually a 403 because the workbook isn't shared with the service
+        # account. Surface the email so the operator can fix it.
         sa_email = credentials.service_account_email
         raise RuntimeError(
             f"Could not open workbook {workbook_id!r}. Most likely the "
@@ -127,18 +105,8 @@ def get_workbook(
         ) from e
 
 
-# ------------------------------------------------------------
-# Tab management - list, create-or-get, clear.
-# ------------------------------------------------------------
-
-
 def list_tab_names(workbook: gspread.Spreadsheet) -> list[str]:
-    """Return the title of every worksheet/tab in the workbook, in order.
-
-    Thin wrapper over gspread; exists so callers can ask "does this tab
-    exist?" without fishing through the gspread API directly, and so we
-    have a single point to add caching or logging later if needed.
-    """
+    """Return the title of every worksheet/tab in the workbook, in order."""
     return [ws.title for ws in workbook.worksheets()]
 
 
@@ -151,16 +119,16 @@ def get_or_create_tab(
 ) -> gspread.Worksheet:
     r"""Return the worksheet with the given title, creating it if absent.
 
-    rows and cols are required (keyword-only) - callers should size tabs
-    based on the data they're about to write, not on arbitrary defaults.
-    They apply only when creating a new tab; existing tabs keep their
-    current dimensions regardless of what's passed. Resizing on every
-    call would shrink/grow tabs unpredictably and risk losing operator-
-    set sizing.
+    `rows` and `cols` apply only on creation; existing tabs keep their
+    current dimensions. They're keyword-only to force callers to size
+    new tabs based on the data they're about to write.
 
-    Title matching is exact and case-sensitive (the underlying gspread
-    behavior). Google Sheets allows tab titles up to 100 chars and forbids
-    `[`, `]`, `*`, `?`, `:`, `/`, `\` — we don't validate here,
+    Title matching is exact and case-sensitive. Tab titles forbid
+    `[`, `]`, `*`, `?`, `:`, `/`, `\` — not validated here; gspread
+    will surface the API error.
+
+    Returns:
+        The worksheet.
     """
     try:
         return workbook.worksheet(title)
@@ -169,27 +137,11 @@ def get_or_create_tab(
 
 
 def clear_tab(worksheet: gspread.Worksheet) -> None:
-    """Wipe all cell values in the worksheet, leaving formatting intact.
-
-    Uses gspread's worksheet.clear(), which clears cell values but
-    preserves column widths, frozen rows, conditional formatting, and
-    other operator-set sheet formatting. This is the right level for
-    our re-write workflow — operators set up formatting once and
-    re-runs preserve it. A "factory reset" that wipes formatting too
-    would need a separate function.
-    """
+    """Wipe all cell values in the worksheet, leaving formatting intact."""
     worksheet.clear()
 
 
-# ---------------------------------------------------
-# Writers - populate workbook tabs from script data
-# ---------------------------------------------------
-
-
-# Daily Data tab schema. Long format, one row per (date, delegate).
-# Workbook-wide tab: accumulates rows across all months ever fetched.
-# The dataframe shape mirrors df_ranking from sky_dao so values copy
-# through without reshaping
+# Daily Data tab: long format, one row per (date, delegate), workbook-wide.
 DAILY_DATA_COLUMNS: tuple[str, ...] = ("Date", "Delegate", "Total Delegation", "Rank")
 
 DAILY_DATA_TAB_TITLE = "Daily Data"
@@ -200,11 +152,11 @@ def _read_daily_data_existing(
 ) -> dict[tuple[str, str], tuple[float, int]]:
     """Read the existing Daily Data tab into a dict keyed at (date, delegate).
 
-    Empty worksheets (no header or no data) return an empty dict - the caller
-    treats a missing/empty tab the same as a fresh start.
+    Empty worksheets return an empty dict. Malformed rows are skipped
+    rather than crashing - better to lose one row than the whole tab.
 
     Returns:
-        A mapping from (date_iso_str, delegate_name) to (sky, rank).
+        Mapping from (date_iso_str, delegate_name) to (sky, rank).
     """
     all_rows = worksheet.get_all_values()
     if not all_rows or len(all_rows) < 2:
@@ -212,6 +164,8 @@ def _read_daily_data_existing(
 
     header = all_rows[0]
     if header != list(DAILY_DATA_COLUMNS):
+        # Different shape (older version or operator-modified) - treat as
+        # empty; the clear-and-rewrite below will replace it.
         return {}
 
     existing: dict[tuple[str, str], tuple[float, int]] = {}
@@ -238,12 +192,32 @@ def write_daily_data(
 ) -> gspread.Worksheet:
     """Write the workbook-wide Daily Data tab, merging in the current fetch.
 
+    Long format, one row per (date, delegate). Columns are exactly
+    DAILY_DATA_COLUMNS; extras in df_ranking are ignored.
+
+    Merge behavior:
+      - Existing rows for dates not in the current fetch are preserved.
+      - Existing rows for dates in the current fetch are overwritten
+        (re-runs are idempotent).
+      - New dates are added.
+
+    For dates appearing in both existing and new data, the count of
+    delegate rows must match - a mismatch indicates roster drift
+    (delegate added/removed) and the function raises rather than
+    silently shifting which delegates are represented.
+
+    Date values are coerced to 'YYYY-MM-DD' ISO strings. Output is
+    sorted by (Date asc, Rank asc).
+
+    Tab name is "Daily Data" (no period suffix); `period` is retained
+    for error messages.
+
     Returns:
         The worksheet that was written.
 
     Raises:
-        ValueError: if df_ranking is missing required columns, or if a
-            roster-drift mismatch is detected on overlapping dates.
+        ValueError: if df_ranking is missing required columns, or on
+            roster drift.
     """
     missing = [c for c in DAILY_DATA_COLUMNS if c not in df_ranking.columns]
     if missing:
@@ -264,8 +238,7 @@ def write_daily_data(
         new_rows[date_str, delegate] = (sky, rank)
         new_counts_by_date[date_str] += 1
 
-    # Get-or-create the workbook-wide tab. Size generously; clear-and-rewrite
-    # at the end takes care of the actual cell count.
+    # Size generously; clear-and-rewrite at the end sets the actual cell count.
     worksheet = get_or_create_tab(
         workbook,
         DAILY_DATA_TAB_TITLE,
@@ -275,8 +248,6 @@ def write_daily_data(
 
     existing = _read_daily_data_existing(worksheet)
 
-    # Roster drift check: dates present in both existing and new data
-    # should have the same delegate count.
     existing_counts_by_date: Counter[str] = Counter(date_str for (date_str, _delegate) in existing)
 
     for date_str, new_count in new_counts_by_date.items():
@@ -290,8 +261,8 @@ def write_daily_data(
                     f"changed between fetches. Reconcile manually (roster YAML) "
                     f"vs Communication Master / Daily Data) before re-running."
                 )
-    # Merge: existing rows for dates NOT in the current fetch stay; rows for
-    # dates IN the current fetch get overwritten by new_rows values.
+    # Merge: preserve existing dates not in the current fetch; overwrite
+    # the rest with new values.
     dates_in_new = set(new_counts_by_date.keys())
     merged: dict[tuple[str, str], tuple[float, int]] = {}
     for key, value in existing.items():
@@ -300,8 +271,6 @@ def write_daily_data(
             merged[key] = value
     merged.update(new_rows)
 
-    # Sort merged rows: (Date ascending, Rank ascending). Chronological with
-    # rank ordering within each day.
     sorted_keys = sorted(
         merged.keys(),
         key=lambda k: (k[0], merged[k][1]),  # (date_str, rank)
@@ -317,8 +286,6 @@ def write_daily_data(
 
     clear_tab(worksheet)
 
-    # Compute the A1-style range explicitly so gspread doesn't have to
-    # guess from values shape. The end cell is row=len(values), col=len(header).
     end_cell = rowcol_to_a1(len(values), len(header))
     range_name = f"A1:{end_cell}"
     worksheet.update(values=values, range_name=range_name)
@@ -326,9 +293,8 @@ def write_daily_data(
     return worksheet
 
 
-# Participation Raw Data tab. Wide format: one row per poll/spell, columns
-# for poll metadata then one column per delegate with their status.
-# Fixed metadata columns; delegate columns are dynamic per period.
+# Participation Raw Data tab: wide format, one row per poll/spell. Fixed
+# metadata columns followed by one column per delegate.
 PARTICIPATION_METADATA_COLUMNS: tuple[str, ...] = (
     "Poll Id",
     "Start Date",
@@ -338,11 +304,7 @@ PARTICIPATION_METADATA_COLUMNS: tuple[str, ...] = (
 
 
 def _participation_raw_data_tab_title(period: MonthPeriod) -> str:
-    """Tab title for a month's Participation Raw Data.
-
-    Returns:
-        The composed tab title, e.g. "Participation Raw Data April 2026".
-    """
+    """Return the per-month tab title, e.g. "Participation Raw Data April 2026"."""
     return f"Participation Raw Data {period}"
 
 
@@ -351,14 +313,10 @@ def _lookup_poll_or_spell(
     poll_info: list[dict],
     spell_info: list[dict],
 ) -> dict | None:
-    """Find a poll or spell record by ID/address.
-
-    poll_info entries are keyed by `pollId`: spell_info by `address`.
-    Identifiers are compared as strings to avoid type-mismatch surprises
-    (poll IDs to come back as ints from some APIs, strs from others).
+    """Find a poll or spell record by ID/address; compare as strings.
 
     Returns:
-        The matching record, or None if no match is found.
+        The matching record, or None if no match.
     """
     for poll in poll_info:
         if str(poll["pollId"]) == identifier:
@@ -370,12 +328,10 @@ def _lookup_poll_or_spell(
 
 
 def _coerce_date(value: date | datetime | None) -> str:
-    """Convert a date/datetime/Timestamp/str to ISO date string.
+    """Convert a date/datetime/pd.Timestamp/None to a 'YYYY-MM-DD' string.
 
-    Used for the Start Date / End Date columns. Date-only ISO format
-    for date objects; for datetimes and pandas
-    Timestamps (which subclass datetime), take just the date portion.
-    None becomes empty string.
+    None becomes empty string. Datetimes (and pd.Timestamp, which
+    subclasses datetime) collapse to their date portion.
 
     Returns:
         The ISO date string, or empty string for None.
@@ -383,7 +339,6 @@ def _coerce_date(value: date | datetime | None) -> str:
     if value is None:
         return ""
     if isinstance(value, datetime):
-        # datetime (and pd.Timestamp, which subclasses datetime) — take date portion
         return value.date().isoformat()
     return value.isoformat()
 
@@ -398,52 +353,38 @@ def write_participation_raw_data(
     """Write the Participation Raw Data tab for a period.
 
     Layout: one row per poll/spell with metadata + per-delegate status.
-    Columns:
-      Poll Id | Start Date | End Date | Title | <Delegate 1> | <Delegate 2> | ...
+    Columns: Poll Id | Start Date | End Date | Title | <Delegate 1> | ...
 
-    Input shape (df, pre-`custom_sort`):
-      Rows: one per delegate
-      Columns: 'Delegate Name', 'Delegate Contract', 'Start Date'
-               (delegate alignment start; unused here), then one column
-               per poll_id (str) and one per spell address, each
-               containing the per-delegate status for that poll/spell.
+    Input df shape (pre-`custom_sort`): one row per delegate, with
+    fixed columns 'Delegate Name', 'Delegate Contract', 'Start Date',
+    then one column per poll_id(str) and one per spell address.
 
-    The writer transposes the per-poll/spell columns into rows, joins
-    metadata from poll_info and spell_info to fill Start Date / End Date /
-    Title, and uses delegate names as column headers (delegate order
-    preserved from df, which matches the YAML/roster order).
+    Tab is named "Participation Raw Data {period}". Re-runs overwrite.
 
-    Tab is named "Participation Raw Data {period}". Re-runs overwrite the
-    tab idempotently via clear_tab + update.
+    Poll/spell columns in df with no matching poll_info or spell_info
+    get blank metadata cells; the status column is still written
+    so a transient API inconsistency can't drop participation data.
 
-    A poll/spell column in df with no matching entry in poll_info or
-    spell_info gets blank metadata cells but the status column is still
-    written — defensive, so a transient API inconsistency doesn't drop
-    the participation data.
+    Spell rows have blank End Date - spells don't carry endDate in
+    spell_info.
 
     Returns:
         The worksheet that was written.
     """
-    # Pull out delegate metadata. After this, the remaining columns are
-    # all poll/spell IDs (whatever the upstream functions added).
     delegate_names = df["Delegate Name"].tolist()
     fixed_cols = {"Delegate Name", "Delegate Contract", "Start Date"}
     poll_columns = [c for c in df.columns if c not in fixed_cols]
 
     if not poll_columns:
-        # No polls or spells this month. Write header only, no data rows.
-        # Rare but possible (zero-poll month). Operator sees empty table
-        # rather than a confusing error.
+        # Zero-poll month: write header only
         header = [*PARTICIPATION_METADATA_COLUMNS, *delegate_names]
         values: list[list[object]] = [header]
     else:
-        # Header: metadata columns + one column per delegate (by name)
         header_list: list[object] = [
             *PARTICIPATION_METADATA_COLUMNS,
             *delegate_names,
         ]
 
-        # Build data rows: one per poll/spell column
         rows: list[list[object]] = []
         for poll_id in poll_columns:
             metadata = _lookup_poll_or_spell(str(poll_id), poll_info, spell_info)
@@ -486,18 +427,15 @@ def write_participation_raw_data(
     return worksheet
 
 
+# Communication Master: workbook-wide tab matching Participation Raw Data's
+# shape, with one column per delegate. Operators review cells manually;
+# script-set defaults follow the participation cross-reference rule.
 COMMUNICATION_MASTER_TAB_TITLE = "Communication Master"
-
-# Default value for cells where the operator needs to review.
 COMMUNICATION_PENDING_DEFAULT = "Pending verification"
 
 
 def _isblank(value: str | None) -> bool:
-    """Return True for None, empty, or whitespace-only values.
-
-    Matches the spreadsheet notion of "blank" so the fill-on-write
-    logic preserves operator-set cells with real content.
-    """
+    """Return True for None, empty string, or whitespace-only - the spreadsheet sense of "blank"."""
     if value is None:
         return True
     return not value.strip()
@@ -508,16 +446,14 @@ def _read_communication_master_existing(
 ) -> tuple[list[str], dict[str, list[str]]]:
     """Read the existing Communication Master tab.
 
-    Empty worksheets return an empty header and empty dict - the caller
-    treats this as a fresh start.
-
-    Skips rows where the Poll Id (column A) is blank.
+    Empty worksheets return an empty header and empty dict - caller
+    treats this as a fresh start. Rows with a blank Poll Id (column A)
+    are skipped.
 
     Returns:
-        A (header, rows_by_poll_id) tuple where:
-          - header is the list of column names exactly as found in row 1
-          - rows_by_poll_id (from column A) to the row's
-            cell values, padded/truncated to header length.
+        (header, rows_by_poll_id) tuple where:
+          - header 1 is row 1 verbatim
+          - rows_by_poll_id maps poll_id to padded/truncated row values
     """
     all_rows = worksheet.get_all_values()
     if not all_rows or len(all_rows) < 1:
@@ -533,7 +469,6 @@ def _read_communication_master_existing(
         if not row or not row[0].strip():
             continue
         poll_id = row[0]
-        # Pad short rows so every entry has n_cols cells; truncate long ones
         if len(row) < n_cols:
             normalized_row = row + [""] * (n_cols - len(row))
         elif len(row) > n_cols:
@@ -554,7 +489,28 @@ def write_communication_master(
 ) -> gspread.Worksheet:
     """Write the workbook-wide Communication Master tab.
 
-    Layout matches Participation Raw Data.
+    Layout matches Participation Raw Data:
+        Poll Id | Start Date | End Date | Title | <Delegate 1> | ...
+
+    Workbook-wide (not per-month). Each fetch merges new polls/spells
+    into the existing tab; operator edits to existing cells are
+    preserved.
+
+    Cell defaults (for blank or new cells):
+      - In current roster: apply the cross-reference rule
+        ("Yes" -> "Pending verification", "No" -> "Did not vote",
+        DISCOUNTED -> mirror the participation status).
+      - Not in current roster (column persists historically but the
+        delegate is no longer in the YAML): leave blank.
+
+    Every delegate in df must have a column in the existing tab - if a
+    new delegate has been added to the YAML but not to the tab, the
+    operator must add the column manually before re-running. Empty
+    tabs are an exception (first write): columns are created from df.
+
+    Rows are sorted by Start Date descending; rows with missing/
+    unparseable Start Date sort to the end. Spell rows have blank End
+    Date.
 
     Returns:
         The worksheet that was written.
@@ -570,7 +526,6 @@ def write_communication_master(
     fixed_cols = {"Delegate Name", "Delegate Contract", "Start Date"}
     poll_columns = [c for c in df.columns if c not in fixed_cols]
 
-    # Get-or-create the workbook-wide tab.
     worksheet = get_or_create_tab(
         workbook,
         COMMUNICATION_MASTER_TAB_TITLE,
@@ -580,16 +535,13 @@ def write_communication_master(
 
     existing_header, existing_rows = _read_communication_master_existing(worksheet)
 
-    # Determine the output header. First fetch (empty tab): header is
-    # metadata + current roster delegates. Subsequent fetches: preserve
-    # existing header (column order is operator-visible) and validate
-    # that every active delegate has a column
+    # First write: header is metadata + current roster. Subsequent writes:
+    # preserve the existing header order (operator-visible) and check that
+    # every active delegate has a column.
     if not existing_header:
         header: list[str] = [*PARTICIPATION_METADATA_COLUMNS, *delegate_names]
     else:
         header = list(existing_header)
-        # Fatal check: every active-roster delegate must be in the header.
-        # Delegates in the header but not in df are fine (historical).
         existing_columns_set = set(existing_header)
         missing = [n for n in delegate_names if n not in existing_columns_set]
         if missing:
@@ -601,23 +553,19 @@ def write_communication_master(
                 f"column placement and naming.)"
             )
 
-    # Build column_index: where each delegate's column is in the header.
-    # Metadata columns occupy positions 0..3.
+    # Metadata columns occupy positions 0..3; delegate columns follow.
     n_metadata = len(PARTICIPATION_METADATA_COLUMNS)
     delegate_col_index: dict[str, int] = {col: i for i, col in enumerate(header) if i >= n_metadata}
 
-    # Index df rows by delegate name -> row Series (for participation lookups).
     df_by_delegate: dict[str, pd.Series] = {
         str(row["Delegate Name"]): row for _, row in df.iterrows()
     }
     current_roster = set(df_by_delegate.keys())
 
-    # Build merged rows by poll id. For each poll/spell column in df:
-    #   - if poll already in existing rows: take existing row, fill blanks
-    #   - if poll is new: build a fresh row with pending/cross-ref defaults
-    # Plus: preserve existing rows for polls not in current df (historical).
     merged_rows: dict[str, list[str]] = {}
 
+    # Seed with existing rows, padding to current header length so an
+    # operator-added column gets blanks for old polls.
     for poll_id, row in existing_rows.items():
         padded_row = row + [""] * (len(header) - len(row)) if len(row) < len(header) else row
         merged_rows[poll_id] = list(padded_row)
@@ -636,15 +584,12 @@ def write_communication_master(
 
         participation_per_col: list[str] = [""] * len(header)
         for col_name, col_idx in delegate_col_index.items():
-            # Active roster delegate - look up their participation status
-            # for this poll. df has the poll_id as a column with per-row
-            # delegate statuses
+            # Per-column participation status for this poll, indexed by header
+            # position; only delegate columns are populated.
             if col_name in current_roster:
                 p_status = str(df_by_delegate[col_name].get(poll_id, ""))
                 participation_per_col[col_idx] = p_status
-            # else: not in current roster + leave participation blank
-            # default will also be blank
-
+        # Cross-reference; default communication status per delegate column.
         default_comm_per_col: list[str] = [""] * len(header)
         for col_name, col_idx in delegate_col_index.items():
             if col_name not in current_roster:
@@ -660,11 +605,12 @@ def write_communication_master(
                 default_comm_per_col[col_idx] = ""
 
         if poll_id_str in merged_rows:
+            # Existing poll: fill blanks with current metadata/defaults;
+            # preserve any operator-edited cells.
             row = merged_rows[poll_id_str]
             for i, current_val in enumerate([poll_id_str, start_date_iso, end_date_iso, title]):
                 if _isblank(row[i]):
                     row[i] = current_val
-            # Fill delegate-column blanks with the default:
             for col_idx in delegate_col_index.values():
                 if _isblank(row[col_idx]):
                     row[col_idx] = default_comm_per_col[col_idx]
@@ -679,6 +625,9 @@ def write_communication_master(
                 row[col_idx] = default_comm_per_col[col_idx]
             merged_rows[poll_id_str] = row
 
+    # Sort by Start Date descending. Rows with unparseable/blank Start
+    # Date go to the end. Two-pass sort becasue the rank tiebreaker
+    # prevents simple reverse-sort.
     def _sort_key(item: tuple[str, list[str]]) -> tuple[int, str]:
         _, row = item
         start = row[1] if len(row) > 1 else ""

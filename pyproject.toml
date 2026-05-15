@@ -115,7 +115,7 @@ ignore = [
 "tests/*" = [
     "F401",   # unused imports often appear in test fixtures
     "N806",   # camelCase locals (mostly mirroring API field names in fixtures)
-    "D103",   # don't need docstring for all tests
+    "D",      # don't enforce pydocstyle for tests
     "DOC",    # don't enforce returns/raises documentation in tests
     "RUF069", # float equality is fine in tests with exact-representable values
     ]

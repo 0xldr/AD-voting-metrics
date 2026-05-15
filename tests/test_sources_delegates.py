@@ -10,12 +10,7 @@ from ad_voting_metrics.sources.delegates import _MAX_PAGES, DELEGATES_URL, fetch
 
 @pytest.fixture(autouse=True)
 def reset_session():
-    """Reset the module-cached session before each test.
-
-    sources.http caches a Session at module level. Tests that rely
-    on responses mocking should start with a new session so prior
-    tests can't leak state through the adapter.
-    """
+    """Clear sources.http's cached Session before/after each test to prevent state leakage."""
     http_module.get_session.cache_clear()
     yield
     http_module.get_session.cache_clear()
@@ -183,11 +178,7 @@ def test_query_params_include_aligned_filter():
 
 @responses.activate
 def test_stops_on_empty_page_even_when_hasnextpage_true():
-    """Treat an empty page as end-of-data even if hasNextPage is still true.
-
-    The vote.sky.money API has a bug: after the last delegate is returned,
-    subsequent pages have delegates=[] but hasNextPage=true forever.
-    """
+    """Treat an empty page as end-of-data; sky.money returns delegates=[] with hasNextPage=true forever after the last."""
     # Page 1: 2 delegates, hasNextPage = true
     responses.add(
         responses.GET,

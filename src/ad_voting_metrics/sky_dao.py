@@ -414,7 +414,7 @@ def custom_sort(df, hardcoded_order, poll_info, spell_info):
 
     Returns:
         DataFrame whose first column is "Poll Id"and whose remaining
-    columns are delegate-keyed status values.
+        columns are delegate-keyed status values.
     """
     df = df.drop(["Start Date"], axis=1)
 
