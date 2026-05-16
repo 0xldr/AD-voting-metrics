@@ -146,6 +146,29 @@ def clear_tab(worksheet: gspread.Worksheet) -> None:
     worksheet.clear()
 
 
+def _open_required_tab(
+    workbook: gspread.Spreadsheet,
+    title: str,
+    instructions: str,
+) -> gspread.Worksheet:
+    """Open the named tab or raise RuntimeError with an operator-friendly message.
+
+    `instructions` is appended after the standard "Workbook is missing
+    the '<title>' tab." prefix; pass something the operator can act on,
+    typically a hint about which command populates the tab.
+
+    Returns:
+        The worksheet.
+
+    Raises:
+        RuntimeError: if the tab doesn't exist.
+    """
+    try:
+        return workbook.worksheet(title)
+    except gspread.exceptions.WorksheetNotFound as exc:
+        raise RuntimeError(f"Workbook is missing the '{title}' tab. {instructions}") from exc
+
+
 # Daily Data tab: long format, one row per (date, delegate), workbook-wide.
 DAILY_DATA_COLUMNS: tuple[str, ...] = ("Date", "Delegate", "Total Delegation", "Rank")
 
@@ -710,14 +733,11 @@ def read_config(workbook: gspread.Spreadsheet) -> "CompensationConfig":
         ValueError: if a required key is missing or a value can't
             be coerced.
     """
-    try:
-        worksheet = workbook.worksheet(CONFIG_TAB_TITLE)
-    except gspread.exceptions.WorksheetNotFound as exc:
-        raise RuntimeError(
-            f"Workbook is missing the '{CONFIG_TAB_TITLE}' tab. "
-            f"Create it with columns Key and Value, and rows for "
-            f"{', '.join(_REQUIRED_CONFIG_KEYS)}."
-        ) from exc
+    worksheet = _open_required_tab(
+        workbook,
+        CONFIG_TAB_TITLE,
+        f"Create it with columns Key and Value, and rows for: {', '.join(_REQUIRED_CONFIG_KEYS)}",
+    )
 
     rows = worksheet.get_all_values()
     if not rows:
@@ -943,6 +963,49 @@ def _enumerate_months(start: date, end: date) -> list[MonthPeriod]:
     return months
 
 
+def _parse_poll_history_tab(
+    worksheet: gspread.Worksheet,
+) -> tuple[list[str], list[tuple[str, list[str]]]]:
+    """Open the named tab or raise RuntimeError with an operator-friendly message.
+
+    `instructions` is appended after the standard "Workbook is missing
+    the '<title>' tab." prefix; pass something the operator can act on,
+    typically a hint about which command populates the tab.
+
+    Returns:
+        The worksheet.
+
+    Raises:
+        RuntimeError: if the tab doesn't exist.
+    """
+    rows = worksheet.get_all_values()
+    if len(rows) < 2:
+        return [], []
+
+    header = rows[0]
+    n_metadata = len(PARTICIPATION_METADATA_COLUMNS)
+    if len(header) <= n_metadata:
+        return [], []
+
+    delegate_columns = header[n_metadata:]
+
+    validated: list[tuple[str, list[str]]] = []
+    for row in rows[1:]:
+        if not row:
+            continue
+        poll_id = row[0].strip() if len(row) > 0 else ""
+        if not poll_id:
+            continue
+        validated.append((poll_id, row))
+
+    return delegate_columns, validated
+
+
+def _cell(row: list[str], col_idx: int) -> str:
+    """Return row[col_idx] or empty string if the row is too short."""
+    return row[col_idx] if col_idx < len(row) else ""
+
+
 def read_daily_data(
     workbook: gspread.Spreadsheet,
     period: MonthPeriod,
@@ -961,13 +1024,11 @@ def read_daily_data(
             cover any `period` (Case A - operator never ran
             fetch for this period)
     """
-    try:
-        worksheet = workbook.worksheet(DAILY_DATA_TAB_TITLE)
-    except gspread.exceptions.WorksheetNotFound as exc:
-        raise RuntimeError(
-            f"Workbook is missing the '{DAILY_DATA_TAB_TITLE}' tab. "
-            f"Run `fetch` for {period} first to populate it."
-        ) from exc
+    worksheet = _open_required_tab(
+        workbook,
+        DAILY_DATA_TAB_TITLE,
+        f"Run `fetch` for {period} first to populate it.",
+    )
 
     existing = _read_daily_data_existing(worksheet)
 
@@ -998,9 +1059,6 @@ def _read_poll_history_from_tab(
 ) -> dict[str, list[tuple[str, date, str]]]:
     """Parse one Participation Raw Data tab into per-delegate poll history.
 
-    Tab layout: Poll Id | Start Date | End Date | Title | <Delegate 1> | ...
-    One row per poll/spell.
-
     Rows with an unparseable Start Date are skipped (no contribution to
     the window). Empty status cells are kept as empty strings; the
     eligibility computation handles them as not-votable.
@@ -1009,34 +1067,23 @@ def _read_poll_history_from_tab(
         {delegate_name: [(poll_id, poll_start_date, participation_status), ...]}
         in row order.
     """
-    rows = worksheet.get_all_values()
-    if len(rows) < 2:
+    delegate_columns, validated_rows = _parse_poll_history_tab(worksheet)
+    if not delegate_columns:
         return {}
 
-    header = rows[0]
-    if len(header) <= len(PARTICIPATION_METADATA_COLUMNS):
-        return {}
-
-    delegate_columns = header[len(PARTICIPATION_METADATA_COLUMNS) :]
     n_metadata = len(PARTICIPATION_METADATA_COLUMNS)
 
     result: dict[str, list[tuple[str, date, str]]] = {name: [] for name in delegate_columns}
 
-    for row in rows[1:]:
-        if len(row) <= 1:
-            continue
-        poll_id = row[0].strip() if len(row) > 0 else ""
-        if not poll_id:
-            continue
-        start_str = row[1] if len(row) > 1 else ""
+    for poll_id, row in validated_rows:
+        start_str = _cell(row, 1)
         try:
             poll_start = date.fromisoformat(start_str)
         except ValueError:
             continue
 
         for offset, name in enumerate(delegate_columns):
-            col_idx = n_metadata + offset
-            status = row[col_idx] if col_idx < len(row) else ""
+            status = _cell(row, n_metadata + offset)
             result[name].append((poll_id, poll_start, status))
 
     return result
@@ -1095,36 +1142,22 @@ def read_communication_master(
     Raises:
         RuntimeError: if the Communication Master is absent.
     """
-    try:
-        worksheet = workbook.worksheet(COMMUNICATION_MASTER_TAB_TITLE)
-    except gspread.exceptions.WorksheetNotFound as exc:
-        raise RuntimeError(
-            f"Workbook is missing the '{COMMUNICATION_MASTER_TAB_TITLE}' tab. "
-            f"Run `fetch` first to populate it."
-        ) from exc
+    worksheet = _open_required_tab(
+        workbook,
+        COMMUNICATION_MASTER_TAB_TITLE,
+        "Run `fetch` first to populate it.",
+    )
 
-    rows = worksheet.get_all_values()
-    if len(rows) < 2:
+    delegate_columns, validated_rows = _parse_poll_history_tab(worksheet)
+    if not delegate_columns:
         return {}
 
-    header = rows[0]
     n_metadata = len(PARTICIPATION_METADATA_COLUMNS)
-    if len(header) <= n_metadata:
-        return {}
-
-    delegate_columns = header[n_metadata:]
 
     result: dict[str, dict[str, str]] = {name: {} for name in delegate_columns}
 
-    for row in rows[1:]:
-        if not row or len(row) < 1:
-            continue
-        poll_id = row[0].strip()
-        if not poll_id:
-            continue
+    for poll_id, row in validated_rows:
         for offset, name in enumerate(delegate_columns):
-            col_idx = n_metadata + offset
-            status = row[col_idx] if col_idx < len(row) else ""
-            result[name][poll_id] = status
+            result[name][poll_id] = _cell(row, n_metadata + offset)
 
     return result
