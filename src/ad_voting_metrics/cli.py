@@ -242,11 +242,6 @@ def _run_fetch(args: argparse.Namespace) -> None:
     logger.info("Getting VOTE FROM SPELL...")
     df = sky.get_vote_executive_ids(spell_info, df, df_sky)
 
-    output_csv = OUTPUT_DIR / "vote_participation.csv"
-    df.to_csv(output_csv, index=False)
-    output_files.append(output_csv)
-    logger.info("Participation vote data saved to %s", output_csv)
-
     # Open the workbook once and reuse for the writers below. Failures
     # are handled per-writer so one tab's problem doesn't drop the others.
     workbook: gspread.Spreadsheet | None
@@ -296,11 +291,6 @@ def _run_fetch(args: argparse.Namespace) -> None:
     output_files.append(output_csv)
     logger.info("SKY data by date saved to %s", output_csv)
 
-    output_csv = OUTPUT_DIR / "ranking.csv"
-    df_ranking.to_csv(output_csv, index=False)
-    output_files.append(output_csv)
-    logger.info("Ranking data saved to %s", output_csv)
-
     if workbook is not None:
         try:
             sheets.write_daily_data(workbook, period, df_ranking)
@@ -308,10 +298,10 @@ def _run_fetch(args: argparse.Namespace) -> None:
         except (RuntimeError, gspread.exceptions.APIError) as e:
             logger.error("Could not write Daily Data to tab: %s", e)
 
-    output_csv = OUTPUT_DIR / "vote_participation_final_transposed.csv"
+    output_csv = OUTPUT_DIR / "vote_participation.csv"
     df.to_csv(output_csv, header=False, index=True)
     output_files.append(output_csv)
-    logger.info("(transposed) Participation vote data saved to %s", output_csv)
+    logger.info("Participation vote data saved to %s", output_csv)
 
     entry = build_entry(
         period=period,
