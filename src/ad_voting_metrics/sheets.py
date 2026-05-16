@@ -995,7 +995,7 @@ def read_daily_data(
 
 def _read_poll_history_from_tab(
     worksheet: gspread.Worksheet,
-) -> dict[str, list[tuple[date, str]]]:
+) -> dict[str, list[tuple[str, date, str]]]:
     """Parse one Participation Raw Data tab into per-delegate poll history.
 
     Tab layout: Poll Id | Start Date | End Date | Title | <Delegate 1> | ...
@@ -1006,7 +1006,7 @@ def _read_poll_history_from_tab(
     eligibility computation handles them as not-votable.
 
     Returns:
-        {delegate_name: [(poll_start_date, participation_status), ...]}
+        {delegate_name: [(poll_id, poll_start_date, participation_status), ...]}
         in row order.
     """
     rows = worksheet.get_all_values()
@@ -1020,10 +1020,13 @@ def _read_poll_history_from_tab(
     delegate_columns = header[len(PARTICIPATION_METADATA_COLUMNS) :]
     n_metadata = len(PARTICIPATION_METADATA_COLUMNS)
 
-    result: dict[str, list[tuple[date, str]]] = {name: [] for name in delegate_columns}
+    result: dict[str, list[tuple[str, date, str]]] = {name: [] for name in delegate_columns}
 
     for row in rows[1:]:
         if len(row) <= 1:
+            continue
+        poll_id = row[0].strip() if len(row) > 0 else ""
+        if not poll_id:
             continue
         start_str = row[1] if len(row) > 1 else ""
         try:
@@ -1034,7 +1037,7 @@ def _read_poll_history_from_tab(
         for offset, name in enumerate(delegate_columns):
             col_idx = n_metadata + offset
             status = row[col_idx] if col_idx < len(row) else ""
-            result[name].append((poll_start, status))
+            result[name].append((poll_id, poll_start, status))
 
     return result
 
@@ -1043,7 +1046,7 @@ def read_participation_for_window(
     workbook: gspread.Spreadsheet,
     window_start: date,
     window_end: date,
-) -> dict[str, list[tuple[date, str]]]:
+) -> dict[str, list[tuple[str, date, str]]]:
     """Aggregate per-delegate poll history across all months in [window_start, window_end].
 
     Walks each month touching the window. For each, looks for a tab
@@ -1052,12 +1055,12 @@ def read_participation_for_window(
     by start date within the window bounds.
 
     Returns:
-        {delegate_name: [(poll_start_date, participation_status), ...]}
+        {delegate_name: [(poll_id, poll_start_date, participation_status), ...]}
         aggregated across all available monthly tabs in the window.
     """
     months = _enumerate_months(window_start, window_end)
 
-    aggregated: dict[str, list[tuple[date, str]]] = {}
+    aggregated: dict[str, list[tuple[str, date, str]]] = {}
     for month in months:
         tab_title = _participation_raw_data_tab_title(month)
         try:
@@ -1068,9 +1071,9 @@ def read_participation_for_window(
         per_delegate = _read_poll_history_from_tab(worksheet)
         for name, entries in per_delegate.items():
             bucket = aggregated.setdefault(name, [])
-            for poll_start, status in entries:
+            for poll_id, poll_start, status in entries:
                 if window_start <= poll_start <= window_end:
-                    bucket.append((poll_start, status))
+                    bucket.append((poll_id, poll_start, status))
 
     return aggregated
 

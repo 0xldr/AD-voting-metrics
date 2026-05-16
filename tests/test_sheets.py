@@ -2155,14 +2155,14 @@ def test_read_participation_for_window_aggregates_across_months():
 
     assert result == {
         "Alice": [
-            (date(2026, 3, 15), "Yes"),
-            (date(2026, 4, 5), "Yes"),
-            (date(2026, 4, 15), "No"),
+            ("1001", date(2026, 3, 15), "Yes"),
+            ("1002", date(2026, 4, 5), "Yes"),
+            ("1003", date(2026, 4, 15), "No"),
         ],
         "Bob": [
-            (date(2026, 3, 15), "Yes"),
-            (date(2026, 4, 5), "No"),
-            (date(2026, 4, 15), "Yes"),
+            ("1001", date(2026, 3, 15), "Yes"),
+            ("1002", date(2026, 4, 5), "No"),
+            ("1003", date(2026, 4, 15), "Yes"),
         ],
     }
 
@@ -2182,7 +2182,7 @@ def test_read_participation_for_window_filters_polls_outside_window():
         window_end=date(2026, 4, 15),  # cutoff before poll 1002
     )
 
-    assert result == {"Alice": [(date(2026, 4, 1), "Yes")]}
+    assert result == {"Alice": [("1001", date(2026, 4, 1), "Yes")]}
 
 
 def test_read_participation_for_window_skips_rows_with_unparseable_dates():
@@ -2199,7 +2199,7 @@ def test_read_participation_for_window_skips_rows_with_unparseable_dates():
         window_end=date(2026, 4, 30),
     )
 
-    assert result == {"Alice": [(date(2026, 4, 5), "Yes")]}
+    assert result == {"Alice": [("1002", date(2026, 4, 5), "Yes")]}
 
 
 def test_read_participation_for_window_handles_empty_tab():
@@ -2247,8 +2247,8 @@ def test_read_participation_for_window_partial_rows():
         window_end=date(2026, 4, 30),
     )
 
-    assert result["Alice"] == [(date(2026, 4, 5), "Yes")]
-    assert result["Bob"] == [(date(2026, 4, 5), "")]
+    assert result["Alice"] == [("1001", date(2026, 4, 5), "Yes")]
+    assert result["Bob"] == [("1001", date(2026, 4, 5), "")]
 
 
 # ---------------------------------------------------------------------------

@@ -2,15 +2,19 @@
 
 import argparse
 from datetime import date
+from unittest.mock import MagicMock, patch
 
 import pytest
 
 from ad_voting_metrics.cli import (
     _run_finalize,
+    _window_start_for_period,
     build_arg_parser,
     check_period_has_ended,
     parse_cache_hours,
 )
+from ad_voting_metrics.compensation import CompensationConfig, PeriodCompensation
+from ad_voting_metrics.eligibility import DailyEligibility
 from ad_voting_metrics.period import MonthPeriod
 
 
@@ -176,15 +180,226 @@ def test_parser_both_subcommands_require_month():
 
 
 # ---------------------------------------------------------------------------
-# _run_finalize stub
+# _window_start_for_period
 # ---------------------------------------------------------------------------
 
 
-def test_run_finalize_stub_raises_not_implemented(monkeypatch):
-    """Raise SystemExit with a clear "not yet implemented" message."""
-    fake_args = argparse.Namespace(
+def test_window_start_for_period_april_2026():
+    """April 2026 → November 1, 2025 (6 calendar months back)."""
+    assert _window_start_for_period(MonthPeriod(year=2026, month=4)) == date(2025, 11, 1)
+
+
+def test_window_start_for_period_january_2026():
+    """January 2026 → August 1, 2025 (rolls back across year boundary)."""
+    assert _window_start_for_period(MonthPeriod(year=2026, month=1)) == date(2025, 8, 1)
+
+
+def test_window_start_for_period_june_2026():
+    """June 2026 → January 1, 2026 (same year)."""
+    assert _window_start_for_period(MonthPeriod(year=2026, month=6)) == date(2026, 1, 1)
+
+
+# ---------------------------------------------------------------------------
+# _run_finalize — orchestration
+# ---------------------------------------------------------------------------
+
+
+def _make_finalize_args(month: MonthPeriod | None = None) -> argparse.Namespace:
+    return argparse.Namespace(
         command="finalize",
-        month=MonthPeriod(year=2026, month=1),
+        month=month or MonthPeriod(year=2026, month=4),
     )
-    with pytest.raises(SystemExit, match="not yet implemented"):
-        _run_finalize(fake_args)
+
+
+def test_run_finalize_workbook_open_failure_exits():
+    with (
+        patch(
+            "ad_voting_metrics.cli.sheets.get_workbook", side_effect=RuntimeError("auth failure")
+        ),
+        pytest.raises(SystemExit),
+    ):
+        _run_finalize(_make_finalize_args())
+
+
+def test_run_finalize_config_missing_exits():
+    workbook = MagicMock()
+    with (
+        patch("ad_voting_metrics.cli.sheets.get_workbook", return_value=workbook),
+        patch(
+            "ad_voting_metrics.cli.sheets.read_config",
+            side_effect=RuntimeError("Config tab missing"),
+        ),
+        pytest.raises(SystemExit),
+    ):
+        _run_finalize(_make_finalize_args())
+
+
+def test_run_finalize_daily_data_missing_exits():
+    """Case A: Daily Data tab has no rows for the period → SystemExit."""
+    workbook = MagicMock()
+    config = CompensationConfig(l1_usds=33333.0, l2_usds=14583.0, l3_usds=4000.0, total_slots=6)
+
+    with (
+        patch("ad_voting_metrics.cli.sheets.get_workbook", return_value=workbook),
+        patch("ad_voting_metrics.cli.sheets.read_config", return_value=config),
+        patch("ad_voting_metrics.cli.build_roster_for_period") as mock_roster,
+        patch(
+            "ad_voting_metrics.cli.sheets.read_daily_data",
+            side_effect=RuntimeError("no rows for April 2026"),
+        ),
+    ):
+        mock_roster.return_value = MagicMock(
+            active_delegates=[],
+            drift_warnings=[],
+            yaml_config=MagicMock(delegates=[]),
+            api_delegate_count=0,
+            api_fetch_succeeded=True,
+        )
+        with pytest.raises(SystemExit):
+            _run_finalize(_make_finalize_args())
+
+
+def test_run_finalize_communication_master_missing_exits():
+    workbook = MagicMock()
+    config = CompensationConfig(l1_usds=33333.0, l2_usds=14583.0, l3_usds=4000.0, total_slots=6)
+
+    with (
+        patch("ad_voting_metrics.cli.sheets.get_workbook", return_value=workbook),
+        patch("ad_voting_metrics.cli.sheets.read_config", return_value=config),
+        patch("ad_voting_metrics.cli.build_roster_for_period") as mock_roster,
+        patch("ad_voting_metrics.cli.sheets.read_daily_data", return_value={date(2026, 4, 1): {}}),
+        patch("ad_voting_metrics.cli.sheets.read_participation_for_window", return_value={}),
+        patch(
+            "ad_voting_metrics.cli.sheets.read_communication_master",
+            side_effect=RuntimeError("Communication Master missing"),
+        ),
+    ):
+        mock_roster.return_value = MagicMock(
+            active_delegates=[],
+            drift_warnings=[],
+            yaml_config=MagicMock(delegates=[]),
+            api_delegate_count=0,
+            api_fetch_succeeded=True,
+        )
+        with pytest.raises(SystemExit):
+            _run_finalize(_make_finalize_args())
+
+
+def test_run_finalize_compensation_write_failure_exits():
+    """A failed write_compensation_tab surfaces as SystemExit."""
+    workbook = MagicMock()
+    config = CompensationConfig(l1_usds=33333.0, l2_usds=14583.0, l3_usds=4000.0, total_slots=6)
+    period = MonthPeriod(year=2026, month=4)
+
+    # Empty roster: no delegates → eligibility produces a DailyEligibility
+    # with per_delegate={} per day; compensation produces an empty
+    # PeriodCompensation. Write step then fails (mocked) → exit.
+    with (
+        patch("ad_voting_metrics.cli.sheets.get_workbook", return_value=workbook),
+        patch("ad_voting_metrics.cli.sheets.read_config", return_value=config),
+        patch("ad_voting_metrics.cli.build_roster_for_period") as mock_roster,
+        patch(
+            "ad_voting_metrics.cli.sheets.read_daily_data",
+            return_value={date(2026, 4, d): {} for d in range(1, 31)},
+        ),
+        patch("ad_voting_metrics.cli.sheets.read_participation_for_window", return_value={}),
+        patch("ad_voting_metrics.cli.sheets.read_communication_master", return_value={}),
+        patch(
+            "ad_voting_metrics.cli.sheets.write_compensation_tab",
+            side_effect=RuntimeError("API error"),
+        ),
+    ):
+        mock_roster.return_value = MagicMock(
+            active_delegates=[],
+            drift_warnings=[],
+            yaml_config=MagicMock(delegates=[]),
+            api_delegate_count=0,
+            api_fetch_succeeded=True,
+        )
+        with pytest.raises(SystemExit):
+            _run_finalize(_make_finalize_args(period))
+
+
+def test_run_finalize_happy_path_empty_roster_writes_comp_tab():
+    """Smallest happy path: empty roster, comp tab written successfully."""
+    workbook = MagicMock()
+    config = CompensationConfig(l1_usds=33333.0, l2_usds=14583.0, l3_usds=4000.0, total_slots=6)
+    period = MonthPeriod(year=2026, month=4)
+
+    write_mock = MagicMock(return_value=MagicMock())
+    with (
+        patch("ad_voting_metrics.cli.sheets.get_workbook", return_value=workbook),
+        patch("ad_voting_metrics.cli.sheets.read_config", return_value=config),
+        patch("ad_voting_metrics.cli.build_roster_for_period") as mock_roster,
+        patch(
+            "ad_voting_metrics.cli.sheets.read_daily_data",
+            return_value={date(2026, 4, d): {} for d in range(1, 31)},
+        ),
+        patch("ad_voting_metrics.cli.sheets.read_participation_for_window", return_value={}),
+        patch("ad_voting_metrics.cli.sheets.read_communication_master", return_value={}),
+        patch("ad_voting_metrics.cli.sheets.write_compensation_tab", write_mock),
+        patch("ad_voting_metrics.cli.write_entry"),
+    ):
+        mock_roster.return_value = MagicMock(
+            active_delegates=[],
+            drift_warnings=[],
+            yaml_config=MagicMock(delegates=[]),
+            api_delegate_count=0,
+            api_fetch_succeeded=True,
+        )
+        _run_finalize(_make_finalize_args(period))
+
+    # write_compensation_tab was called with the workbook and a
+    # PeriodCompensation. Empty roster → no per_delegate rows.
+    write_mock.assert_called_once()
+    _, period_comp = write_mock.call_args.args
+    assert isinstance(period_comp, PeriodCompensation)
+    assert period_comp.period == period
+    assert period_comp.config == config
+    assert period_comp.per_delegate == []
+
+
+def test_run_finalize_eligibility_tie_at_cutoff_exits():
+    """A tie at the L3 slot cutoff propagates as SystemExit."""
+    # We need a roster of 7 delegates all tied at the L3 cutoff. The
+    # easiest construction: roster of 7 with same rank, no L1/L2.
+    from ad_voting_metrics.roster import Delegate
+
+    delegates = [
+        Delegate(
+            name=f"D{i}",
+            vote_delegate_address=f"0x{'a' * 39}{i}",
+            start_date=date(2024, 1, 1),
+        )
+        for i in range(7)
+    ]
+    workbook = MagicMock()
+    config = CompensationConfig(l1_usds=33333.0, l2_usds=14583.0, l3_usds=4000.0, total_slots=6)
+    period = MonthPeriod(year=2026, month=4)
+    # All ranked 6 → tie crossing the 6-slot cutoff
+    ranks_per_day = {date(2026, 4, d): {f"D{i}": 6 for i in range(7)} for d in range(1, 31)}
+    # Give everyone perfect participation history so they're all eligible
+    participation = {
+        f"D{i}": [(f"poll_{j}", date(2026, 2, 1), "Yes") for j in range(10)] for i in range(7)
+    }
+    communication = {f"D{i}": {f"poll_{j}": "Yes" for j in range(10)} for i in range(7)}
+
+    with (
+        patch("ad_voting_metrics.cli.sheets.get_workbook", return_value=workbook),
+        patch("ad_voting_metrics.cli.sheets.read_config", return_value=config),
+        patch("ad_voting_metrics.cli.build_roster_for_period") as mock_roster,
+        patch("ad_voting_metrics.cli.sheets.read_daily_data", return_value=ranks_per_day),
+        patch(
+            "ad_voting_metrics.cli.sheets.read_participation_for_window", return_value=participation
+        ),
+        patch("ad_voting_metrics.cli.sheets.read_communication_master", return_value=communication),
+    ):
+        mock_roster.return_value = MagicMock(
+            active_delegates=delegates,
+            drift_warnings=[],
+            yaml_config=MagicMock(delegates=delegates),
+            api_delegate_count=0,
+            api_fetch_succeeded=True,
+        )
+        with pytest.raises(SystemExit):
+            _run_finalize(_make_finalize_args(period))

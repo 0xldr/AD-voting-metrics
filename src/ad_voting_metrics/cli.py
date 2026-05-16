@@ -17,6 +17,8 @@ from dotenv import load_dotenv
 
 from . import sheets
 from . import sky_dao as sky
+from .compensation import compute_period_compensation
+from .eligibility import DelegateMetricsInput, compute_daily_eligibility
 from .period import MonthPeriod
 from .reconciliation import build_entry, write_entry
 from .roster import build_roster_for_period, to_dataframe
@@ -326,23 +328,212 @@ def _run_fetch(args: argparse.Namespace) -> None:
     write_entry(RECONCILIATION_LOG_PATH, period, entry)
 
 
+def _window_start_for_period(period: MonthPeriod) -> date:
+    """Return the first day of the 6-month window ending in `period`.
+
+    For April 2026 (month=4): start is November 1, 2026.
+    """
+    year = period.year
+    month = period.month - 5
+    while month <= 0:
+        month += 12
+        year -= 1
+    return date(year, month, 1)
+
+
 def _run_finalize(args: argparse.Namespace) -> None:
-    """Read the operator-reviewed Communication Master tab, compute metrics, write Compensation.
+    """Read workbook tabs, compute eligibility and compensation, write the Compensation tab.
+
+    Composes:
+      - read_daily_data: per-day delegate ranks
+      - read_participation_for_window: 6-month poll history
+      - read_communication_master: communication status per (delegate, poll)
+      - read_config: L1/L2/L3 USDS amounts and TOTAL_SLOTS
+      - build_roster_for_period: active delegates from YAML
+      - compute_daily_eligibility: per-day slot assignment
+      - compute_period_compensation: pro-rata + modifier
+      - write_compensation_tab: per-period output tab
+
+    Each external IO step has its own failure path. Compute-step failures
+    (ValueError from eligibility/compensation) surface to the operator;
+    they indicate a tie at the L3 cutoff or other actionable conditions.
 
     Raises:
-        SystemExit: with a "not yet implemented" message.
+        SystemExit: on any unrecoverable error (missing tabs, auth
+            failure, tie at cutoff, etc.).
     """
     period = args.month
-    logger.info("Finalize requested for %s", period)
-    raise SystemExit("`finalize` is not yet implemented.")
+    window_start = _window_start_for_period(period)
+    window_end = period.end
+
+    logger.info(
+        "Finalize requested for %s; 6-month window %s to %s",
+        period,
+        window_start,
+        window_end,
+    )
+
+    # 1. Open the workbook
+    try:
+        workbook = sheets.get_workbook()
+    except RuntimeError as e:
+        logger.error("Could not open Sheets workbook: %s", e)
+        raise SystemExit(1) from e
+
+    # 2. Read Config
+    try:
+        config = sheets.read_config(workbook)
+    except (RuntimeError, ValueError) as e:
+        logger.error("Could not read Config tab: %s", e)
+        raise SystemExit(1) from e
+    logger.info(
+        "Config: L1=%s L2=%s L3=%s total_slots=%d",
+        config.l1_usds,
+        config.l2_usds,
+        config.l3_usds,
+        config.total_slots,
+    )
+
+    # 3. Build roster from YAML (source of truth) + API drift check.
+    logger.info("Building delegate roster from delegates.YAML and vote.sky.money API...")
+    roster_result = build_roster_for_period(
+        yaml_path=YAML_PATH,
+        period=period,
+        api_fetcher=fetch_aligned_delegates,
+    )
+    delegates = roster_result.active_delegates
+    drift_warnings = roster_result.drift_warnings
+    for warning in drift_warnings:
+        logger.warning(warning)
+    logger.info("Roster has %d delegates active during %s", len(delegates), period)
+
+    # 4. Read Daily Data (Case A: hard fail if not populated for the period).
+    try:
+        daily_ranks_by_day = sheets.read_daily_data(workbook, period)
+    except RuntimeError as e:
+        logger.error("Could not read Daily Data: %s", e)
+        raise SystemExit(1) from e
+    logger.info("Daily Data has rank rows for %d days in %s", len(daily_ranks_by_day), period)
+
+    # 5. Read window participation history. Missing monthly tabs are OK
+    # (zero-poll months). Pre-populate every roster name with an empty
+    # entry so the eligibility check finds them.
+    participation_by_delegate = sheets.read_participation_for_window(
+        workbook,
+        window_start,
+        window_end,
+    )
+    total_polls = sum(len(v) for v in participation_by_delegate.values())
+    logger.info(
+        "Window participation: %d total (delegate, poll) entries across %d delegates",
+        total_polls,
+        len(participation_by_delegate),
+    )
+
+    # 6. Read Communication Master.
+    try:
+        communication_by_delegate = sheets.read_communication_master(workbook)
+    except RuntimeError as e:
+        logger.error("Could not read Communication Master: %s", e)
+        raise SystemExit(1) from e
+
+    # 7. Build per-delegate metrics_input. Every active roster delegate
+    # gets an entry, even if they have no polls in the window.
+    metrics_input: dict[str, DelegateMetricsInput] = {}
+    for delegate in delegates:
+        entries = participation_by_delegate.get(delegate.name, [])
+        comm_map = communication_by_delegate.get(delegate.name, {})
+        poll_starts: list[date] = []
+        p_statuses: list[str] = []
+        c_statuses: list[str] = []
+        for poll_id, poll_start, p_status in entries:
+            poll_starts.append(poll_start)
+            p_statuses.append(p_status)
+            c_statuses.append(comm_map.get(poll_id, ""))
+        metrics_input[delegate.name] = DelegateMetricsInput(
+            poll_starts=poll_starts,
+            participation_statuses=p_statuses,
+            communication_statuses=c_statuses,
+        )
+
+    # 8. Compute eligibility for each day in the period.
+    daily_results = []
+    current = period.start
+    try:
+        while current <= period.end:
+            daily_ranks = daily_ranks_by_day.get(current, {})
+            day_result = compute_daily_eligibility(
+                day=current,
+                window_start=window_start,
+                window_end=window_end,
+                delegates=delegates,
+                daily_ranks=daily_ranks,
+                metrics_input=metrics_input,
+            )
+            daily_results.append(day_result)
+            current = current + timedelta(days=1)
+    except ValueError as e:
+        logger.error("Eligibility computation failed: %s", e)
+        raise SystemExit(1) from e
+
+    # 9. Period-end metrics, extracted from the last day's DailyEligibility.
+    last_day = daily_results[-1]
+    final_metrics: dict[str, tuple[float | None, float | None]] = {
+        name: (entry.participation_pct, entry.communication_pct)
+        for name, entry in last_day.per_delegate.items()
+    }
+
+    # 10. Period compensation.
+    try:
+        period_comp = compute_period_compensation(
+            period=period,
+            daily_eligibility=daily_results,
+            config=config,
+            final_metrics=final_metrics,
+        )
+    except ValueError as e:
+        logger.error("Compensation computation failed: %s", e)
+        raise SystemExit(1) from e
+
+    logger.info(
+        "Compensation: %d delegates, slot_days_check=%s",
+        len(period_comp.per_delegate),
+        period_comp.validation.get("slot_days_check"),
+    )
+
+    # 11. Write the Compensation tab.
+    try:
+        sheets.write_compensation_tab(workbook, period_comp)
+    except (RuntimeError, gspread.exceptions.APIError) as e:
+        logger.error("Could not write Compensation tab: %s", e)
+        raise SystemExit(1) from e
+    logger.info("Compensation tab written for %s", period)
+
+    # 12. Reconciliation log. Reuse the fetch-shaped build_entry; finalize
+    # doesn't hit Dune or the API, so the dune/api fields are placeholders
+    # — operators reading the log can distinguish runs by the command and
+    # by checking which output files are present.
+    entry = build_entry(
+        period=period,
+        yaml_path=YAML_PATH,
+        yaml_config=roster_result.yaml_config,
+        active_delegates=delegates,
+        drift_warnings=drift_warnings,
+        dune_query_id=sky.DUNE_SKY_QUERY_ID,
+        dune_cache_max_age_hours=None,
+        api_delegate_count=roster_result.api_delegate_count,
+        api_fetch_succeeded=roster_result.api_fetch_succeeded,
+        output_files=[],
+    )
+    write_entry(RECONCILIATION_LOG_PATH, period, entry)
 
 
 def main(argv: list[str] | None = None) -> None:
     """Entry point: configure logging, parse argv, dispatch to the chosen subcommand.
 
     Raises:
-        SystemExit: if the period hasn't ended, if `finalize` is invoked
-            (currently a stub), or if argparse rejects the command line.
+        SystemExit: if the period hasn't ended, on workbook or compute
+            errors during `finalize`, or if argparse rejects the command line.
     """
     logging.basicConfig(
         level=logging.INFO,
