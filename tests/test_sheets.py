@@ -1991,3 +1991,352 @@ def test_write_compensation_tab_returns_worksheet():
 def test_compensation_columns_has_14_columns():
     """Pin the column count; accidental additions fail the test."""
     assert len(sheets.COMPENSATION_COLUMNS) == 14
+
+
+# ---------------------------------------------------------------------------
+# _enumerate_months
+# ---------------------------------------------------------------------------
+
+
+def test_enumerate_months_single_month():
+    """Start and end in the same month → one MonthPeriod."""
+    months = sheets._enumerate_months(date(2026, 4, 1), date(2026, 4, 30))
+    assert months == [MonthPeriod(year=2026, month=4)]
+
+
+def test_enumerate_months_window_spans_year_rollover():
+    """November 2025 through April 2026 = 6 months including rollover."""
+    months = sheets._enumerate_months(date(2025, 11, 1), date(2026, 4, 30))
+    assert months == [
+        MonthPeriod(year=2025, month=11),
+        MonthPeriod(year=2025, month=12),
+        MonthPeriod(year=2026, month=1),
+        MonthPeriod(year=2026, month=2),
+        MonthPeriod(year=2026, month=3),
+        MonthPeriod(year=2026, month=4),
+    ]
+
+
+def test_enumerate_months_partial_month_at_edges():
+    """Mid-month dates still resolve to the containing months."""
+    months = sheets._enumerate_months(date(2025, 11, 15), date(2026, 4, 10))
+    assert len(months) == 6
+
+
+# ---------------------------------------------------------------------------
+# read_daily_data
+# ---------------------------------------------------------------------------
+
+
+def _daily_data_ws(rows: list[list[str]]) -> MagicMock:
+    """Build a MagicMock Daily Data worksheet from row data."""
+    ws = MagicMock(spec=gspread.Worksheet)
+    ws.get_all_values.return_value = rows
+    return ws
+
+
+def test_read_daily_data_missing_tab_raises_with_operator_message():
+    workbook = MagicMock()
+    workbook.worksheet.side_effect = gspread.exceptions.WorksheetNotFound("Daily Data")
+
+    with pytest.raises(RuntimeError, match=r"Daily Data.*tab.*fetch"):
+        sheets.read_daily_data(workbook, MonthPeriod(year=2026, month=4))
+
+
+def test_read_daily_data_no_rows_in_period_raises():
+    """Case A: tab exists but has no rows covering the requested period."""
+    workbook = MagicMock()
+    workbook.worksheet.return_value = _daily_data_ws([
+        ["Date", "Delegate", "Total Delegation", "Rank"],
+        ["2026-01-15", "Alice", "1000000", "1"],  # different period
+    ])
+
+    with pytest.raises(RuntimeError, match="no rows for"):
+        sheets.read_daily_data(workbook, MonthPeriod(year=2026, month=4))
+
+
+def test_read_daily_data_returns_ranks_for_every_day_present():
+    """Pivots rows into {day: {delegate: rank}}."""
+    workbook = MagicMock()
+    workbook.worksheet.return_value = _daily_data_ws([
+        ["Date", "Delegate", "Total Delegation", "Rank"],
+        ["2026-04-01", "Alice", "1000000", "1"],
+        ["2026-04-01", "Bob", "500000", "2"],
+        ["2026-04-02", "Alice", "1000000", "1"],
+        ["2026-04-02", "Bob", "500000", "2"],
+    ])
+
+    result = sheets.read_daily_data(workbook, MonthPeriod(year=2026, month=4))
+
+    assert result[date(2026, 4, 1)] == {"Alice": 1, "Bob": 2}
+    assert result[date(2026, 4, 2)] == {"Alice": 1, "Bob": 2}
+
+
+def test_read_daily_data_filters_out_other_months():
+    """Workbook-wide tab; only rows in the requested period come back."""
+    workbook = MagicMock()
+    workbook.worksheet.return_value = _daily_data_ws([
+        ["Date", "Delegate", "Total Delegation", "Rank"],
+        ["2026-03-31", "Alice", "1000000", "1"],  # March
+        ["2026-04-01", "Alice", "1000000", "1"],  # April — kept
+        ["2026-05-01", "Alice", "1000000", "1"],  # May — filtered
+    ])
+
+    result = sheets.read_daily_data(workbook, MonthPeriod(year=2026, month=4))
+
+    assert list(result.keys()) == [date(2026, 4, 1)]
+
+
+def test_read_daily_data_skips_unparseable_dates():
+    """Malformed date strings are dropped, not raised."""
+    workbook = MagicMock()
+    workbook.worksheet.return_value = _daily_data_ws([
+        ["Date", "Delegate", "Total Delegation", "Rank"],
+        ["not-a-date", "Alice", "1000000", "1"],
+        ["2026-04-01", "Alice", "1000000", "1"],
+    ])
+
+    result = sheets.read_daily_data(workbook, MonthPeriod(year=2026, month=4))
+
+    assert result == {date(2026, 4, 1): {"Alice": 1}}
+
+
+# ---------------------------------------------------------------------------
+# read_participation_for_window
+# ---------------------------------------------------------------------------
+
+
+def _participation_ws(rows: list[list[str]]) -> MagicMock:
+    """Build a MagicMock Participation Raw Data worksheet from row data."""
+    ws = MagicMock(spec=gspread.Worksheet)
+    ws.get_all_values.return_value = rows
+    return ws
+
+
+def test_read_participation_for_window_missing_tabs_skipped_silently():
+    """Months with no Participation Raw Data tab contribute nothing."""
+    workbook = MagicMock()
+    workbook.worksheet.side_effect = gspread.exceptions.WorksheetNotFound("any")
+
+    result = sheets.read_participation_for_window(
+        workbook,
+        window_start=date(2025, 11, 1),
+        window_end=date(2026, 4, 30),
+    )
+
+    assert result == {}
+
+
+def test_read_participation_for_window_aggregates_across_months():
+    """Polls from multiple monthly tabs aggregate into one per-delegate list."""
+    workbook = MagicMock()
+
+    def by_title(title: str) -> MagicMock:
+        if title == "Participation Raw Data March 2026":
+            return _participation_ws([
+                ["Poll Id", "Start Date", "End Date", "Title", "Alice", "Bob"],
+                ["1001", "2026-03-15", "2026-03-20", "Poll 1", "Yes", "Yes"],
+            ])
+        if title == "Participation Raw Data April 2026":
+            return _participation_ws([
+                ["Poll Id", "Start Date", "End Date", "Title", "Alice", "Bob"],
+                ["1002", "2026-04-05", "2026-04-10", "Poll 2", "Yes", "No"],
+                ["1003", "2026-04-15", "2026-04-20", "Poll 3", "No", "Yes"],
+            ])
+        raise gspread.exceptions.WorksheetNotFound(title)
+
+    workbook.worksheet.side_effect = by_title
+
+    result = sheets.read_participation_for_window(
+        workbook,
+        window_start=date(2026, 3, 1),
+        window_end=date(2026, 4, 30),
+    )
+
+    assert result == {
+        "Alice": [
+            (date(2026, 3, 15), "Yes"),
+            (date(2026, 4, 5), "Yes"),
+            (date(2026, 4, 15), "No"),
+        ],
+        "Bob": [
+            (date(2026, 3, 15), "Yes"),
+            (date(2026, 4, 5), "No"),
+            (date(2026, 4, 15), "Yes"),
+        ],
+    }
+
+
+def test_read_participation_for_window_filters_polls_outside_window():
+    """A poll dated outside the window bounds is dropped even if its tab is in scope."""
+    workbook = MagicMock()
+    workbook.worksheet.return_value = _participation_ws([
+        ["Poll Id", "Start Date", "End Date", "Title", "Alice"],
+        ["1001", "2026-04-01", "2026-04-10", "In window", "Yes"],
+        ["1002", "2026-04-30", "2026-05-05", "Out of window", "No"],
+    ])
+
+    result = sheets.read_participation_for_window(
+        workbook,
+        window_start=date(2026, 4, 1),
+        window_end=date(2026, 4, 15),  # cutoff before poll 1002
+    )
+
+    assert result == {"Alice": [(date(2026, 4, 1), "Yes")]}
+
+
+def test_read_participation_for_window_skips_rows_with_unparseable_dates():
+    workbook = MagicMock()
+    workbook.worksheet.return_value = _participation_ws([
+        ["Poll Id", "Start Date", "End Date", "Title", "Alice"],
+        ["1001", "not-a-date", "2026-04-10", "Broken", "Yes"],
+        ["1002", "2026-04-05", "2026-04-10", "OK", "Yes"],
+    ])
+
+    result = sheets.read_participation_for_window(
+        workbook,
+        window_start=date(2026, 4, 1),
+        window_end=date(2026, 4, 30),
+    )
+
+    assert result == {"Alice": [(date(2026, 4, 5), "Yes")]}
+
+
+def test_read_participation_for_window_handles_empty_tab():
+    workbook = MagicMock()
+    workbook.worksheet.return_value = _participation_ws([])
+
+    result = sheets.read_participation_for_window(
+        workbook,
+        window_start=date(2026, 4, 1),
+        window_end=date(2026, 4, 30),
+    )
+
+    assert result == {}
+
+
+def test_read_participation_for_window_header_only_tab():
+    """Header without data rows produces empty lists per delegate."""
+    workbook = MagicMock()
+    workbook.worksheet.return_value = _participation_ws([
+        ["Poll Id", "Start Date", "End Date", "Title", "Alice", "Bob"],
+    ])
+
+    result = sheets.read_participation_for_window(
+        workbook,
+        window_start=date(2026, 4, 1),
+        window_end=date(2026, 4, 30),
+    )
+
+    # The function aggregates only delegates that had at least one poll;
+    # a header-only tab adds no entries.
+    assert result == {}
+
+
+def test_read_participation_for_window_partial_rows():
+    """A row missing trailing status cells gets empty string for those delegates."""
+    workbook = MagicMock()
+    workbook.worksheet.return_value = _participation_ws([
+        ["Poll Id", "Start Date", "End Date", "Title", "Alice", "Bob"],
+        ["1001", "2026-04-05", "2026-04-10", "Poll", "Yes"],  # missing Bob's column
+    ])
+
+    result = sheets.read_participation_for_window(
+        workbook,
+        window_start=date(2026, 4, 1),
+        window_end=date(2026, 4, 30),
+    )
+
+    assert result["Alice"] == [(date(2026, 4, 5), "Yes")]
+    assert result["Bob"] == [(date(2026, 4, 5), "")]
+
+
+# ---------------------------------------------------------------------------
+# read_communication_master
+# ---------------------------------------------------------------------------
+
+
+def _comm_master_ws(rows: list[list[str]]) -> MagicMock:
+    ws = MagicMock(spec=gspread.Worksheet)
+    ws.get_all_values.return_value = rows
+    return ws
+
+
+def test_read_communication_master_missing_tab_raises():
+    workbook = MagicMock()
+    workbook.worksheet.side_effect = gspread.exceptions.WorksheetNotFound("Communication Master")
+
+    with pytest.raises(RuntimeError, match=r"Communication Master.*fetch"):
+        sheets.read_communication_master(workbook)
+
+
+def test_read_communication_master_empty_tab_returns_empty_dict():
+    workbook = MagicMock()
+    workbook.worksheet.return_value = _comm_master_ws([])
+
+    assert sheets.read_communication_master(workbook) == {}
+
+
+def test_read_communication_master_header_only_returns_empty():
+    """Header but no data rows → empty dict (no entries to populate)."""
+    workbook = MagicMock()
+    workbook.worksheet.return_value = _comm_master_ws([
+        ["Poll Id", "Start Date", "End Date", "Title", "Alice", "Bob"],
+    ])
+
+    assert sheets.read_communication_master(workbook) == {}
+
+
+def test_read_communication_master_pivots_into_delegate_keyed_dict():
+    workbook = MagicMock()
+    workbook.worksheet.return_value = _comm_master_ws([
+        ["Poll Id", "Start Date", "End Date", "Title", "Alice", "Bob"],
+        ["1001", "2026-04-05", "2026-04-10", "Poll 1", "Yes", "No"],
+        ["1002", "2026-04-15", "2026-04-20", "Poll 2", "Pending verification", "Yes"],
+    ])
+
+    result = sheets.read_communication_master(workbook)
+
+    assert result == {
+        "Alice": {"1001": "Yes", "1002": "Pending verification"},
+        "Bob": {"1001": "No", "1002": "Yes"},
+    }
+
+
+def test_read_communication_master_skips_blank_poll_id_rows():
+    workbook = MagicMock()
+    workbook.worksheet.return_value = _comm_master_ws([
+        ["Poll Id", "Start Date", "End Date", "Title", "Alice"],
+        ["1001", "2026-04-05", "2026-04-10", "Poll 1", "Yes"],
+        ["", "", "", "", ""],  # blank row
+        ["1002", "2026-04-15", "2026-04-20", "Poll 2", "No"],
+    ])
+
+    result = sheets.read_communication_master(workbook)
+
+    assert result == {"Alice": {"1001": "Yes", "1002": "No"}}
+
+
+def test_read_communication_master_partial_rows_get_empty_string():
+    """A row missing trailing cells gets empty string for those delegates."""
+    workbook = MagicMock()
+    workbook.worksheet.return_value = _comm_master_ws([
+        ["Poll Id", "Start Date", "End Date", "Title", "Alice", "Bob"],
+        ["1001", "2026-04-05", "2026-04-10", "Poll 1", "Yes"],  # missing Bob
+    ])
+
+    result = sheets.read_communication_master(workbook)
+
+    assert result["Alice"] == {"1001": "Yes"}
+    assert result["Bob"] == {"1001": ""}
+
+
+def test_read_communication_master_no_delegate_columns_returns_empty():
+    """A tab with only metadata columns (no delegates) returns {}."""
+    workbook = MagicMock()
+    workbook.worksheet.return_value = _comm_master_ws([
+        ["Poll Id", "Start Date", "End Date", "Title"],
+        ["1001", "2026-04-05", "2026-04-10", "Poll 1"],
+    ])
+
+    assert sheets.read_communication_master(workbook) == {}

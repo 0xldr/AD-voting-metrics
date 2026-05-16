@@ -917,3 +917,211 @@ def write_compensation_tab(
     worksheet.update(values=all_values, range_name=f"A1:{end_cell}")
 
     return worksheet
+
+
+# ---------------------------------------------------------------------------
+# Readers for finalize: Daily Data, Participation Raw Data, Communication Master
+# ---------------------------------------------------------------------------
+
+
+def _enumerate_months(start: date, end: date) -> list[MonthPeriod]:
+    """Return one MonthPeriod per calendar month touched by [start, end].
+
+    Inclusive on both ends. Handles year rollover.
+
+    Returns:
+        Months in chronological order.
+    """
+    months: list[MonthPeriod] = []
+    y, m = start.year, start.month
+    while (y, m) <= (end.year, end.month):
+        months.append(MonthPeriod(year=y, month=m))
+        m += 1
+        if m > 12:
+            m = 1
+            y += 1
+    return months
+
+
+def read_daily_data(
+    workbook: gspread.Spreadsheet,
+    period: MonthPeriod,
+) -> dict[date, dict[str, int]]:
+    """Read the workbook-wide Daily Data tab; return ranks for every day in `period`.
+
+    Filters rows to dates inside the period and pivots into a nested
+    dict keyed by date and delegate name.
+
+    Returns:
+        {day: {delegate_name: rank}} for every day in `period` that
+        appears in the tab.
+
+    Raises:
+        RuntimeError: if the Daily Data tab is absent, or no rows
+            cover any `period` (Case A - operator never ran
+            fetch for this period)
+    """
+    try:
+        worksheet = workbook.worksheet(DAILY_DATA_TAB_TITLE)
+    except gspread.exceptions.WorksheetNotFound as exc:
+        raise RuntimeError(
+            f"Workbook is missing the '{DAILY_DATA_TAB_TITLE}' tab. "
+            f"Run `fetch` for {period} first to populate it."
+        ) from exc
+
+    existing = _read_daily_data_existing(worksheet)
+
+    result: dict[date, dict[str, int]] = {}
+    period_start = period.start
+    period_end = period.end
+    for (date_str, delegate), (_sky, rank) in existing.items():
+        try:
+            day = date.fromisoformat(date_str)
+        except ValueError:
+            continue
+        if not (period_start <= day <= period_end):
+            continue
+        result.setdefault(day, {})[delegate] = rank
+
+    if not result:
+        raise RuntimeError(
+            f"'{DAILY_DATA_TAB_TITLE}' tab has no rows for {period} "
+            f"({period_start} to {period_end}). Run `fetch` for {period} "
+            f"before running `finalize`."
+        )
+
+    return result
+
+
+def _read_poll_history_from_tab(
+    worksheet: gspread.Worksheet,
+) -> dict[str, list[tuple[date, str]]]:
+    """Parse one Participation Raw Data tab into per-delegate poll history.
+
+    Tab layout: Poll Id | Start Date | End Date | Title | <Delegate 1> | ...
+    One row per poll/spell.
+
+    Rows with an unparseable Start Date are skipped (no contribution to
+    the window). Empty status cells are kept as empty strings; the
+    eligibility computation handles them as not-votable.
+
+    Returns:
+        {delegate_name: [(poll_start_date, participation_status), ...]}
+        in row order.
+    """
+    rows = worksheet.get_all_values()
+    if len(rows) < 2:
+        return {}
+
+    header = rows[0]
+    if len(header) <= len(PARTICIPATION_METADATA_COLUMNS):
+        return {}
+
+    delegate_columns = header[len(PARTICIPATION_METADATA_COLUMNS) :]
+    n_metadata = len(PARTICIPATION_METADATA_COLUMNS)
+
+    result: dict[str, list[tuple[date, str]]] = {name: [] for name in delegate_columns}
+
+    for row in rows[1:]:
+        if len(row) <= 1:
+            continue
+        start_str = row[1] if len(row) > 1 else ""
+        try:
+            poll_start = date.fromisoformat(start_str)
+        except ValueError:
+            continue
+
+        for offset, name in enumerate(delegate_columns):
+            col_idx = n_metadata + offset
+            status = row[col_idx] if col_idx < len(row) else ""
+            result[name].append((poll_start, status))
+
+    return result
+
+
+def read_participation_for_window(
+    workbook: gspread.Spreadsheet,
+    window_start: date,
+    window_end: date,
+) -> dict[str, list[tuple[date, str]]]:
+    """Aggregate per-delegate poll history across all months in [window_start, window_end].
+
+    Walks each month touching the window. For each, looks for a tab
+    named "Participation Raw Data <Month Year>". Missing tabs are
+    silently skipped (zero-poll months produce no tab). Filters polls
+    by start date within the window bounds.
+
+    Returns:
+        {delegate_name: [(poll_start_date, participation_status), ...]}
+        aggregated across all available monthly tabs in the window.
+    """
+    months = _enumerate_months(window_start, window_end)
+
+    aggregated: dict[str, list[tuple[date, str]]] = {}
+    for month in months:
+        tab_title = _participation_raw_data_tab_title(month)
+        try:
+            worksheet = workbook.worksheet(tab_title)
+        except gspread.exceptions.WorksheetNotFound:
+            continue
+
+        per_delegate = _read_poll_history_from_tab(worksheet)
+        for name, entries in per_delegate.items():
+            bucket = aggregated.setdefault(name, [])
+            for poll_start, status in entries:
+                if window_start <= poll_start <= window_end:
+                    bucket.append((poll_start, status))
+
+    return aggregated
+
+
+def read_communication_master(
+    workbook: gspread.Spreadsheet,
+) -> dict[str, dict[str, str]]:
+    """Aggregate per-delegate poll history across all months in [window_start, window_end].
+
+    Walks each month touching the window. For each, looks for a tab
+    named "Participation Raw Data <Month Year>". Missing tabs are
+    silently skipped (zero-poll months produce no tab). Filters polls
+    by start date within the window bounds.
+
+    Returns:
+        {delegate_name: [(poll_start_date, participation_status), ...]}
+        aggregated across all available monthly tabs in the window.
+
+    Raises:
+        RuntimeError: if the Communication Master is absent.
+    """
+    try:
+        worksheet = workbook.worksheet(COMMUNICATION_MASTER_TAB_TITLE)
+    except gspread.exceptions.WorksheetNotFound as exc:
+        raise RuntimeError(
+            f"Workbook is missing the '{COMMUNICATION_MASTER_TAB_TITLE}' tab. "
+            f"Run `fetch` first to populate it."
+        ) from exc
+
+    rows = worksheet.get_all_values()
+    if len(rows) < 2:
+        return {}
+
+    header = rows[0]
+    n_metadata = len(PARTICIPATION_METADATA_COLUMNS)
+    if len(header) <= n_metadata:
+        return {}
+
+    delegate_columns = header[n_metadata:]
+
+    result: dict[str, dict[str, str]] = {name: {} for name in delegate_columns}
+
+    for row in rows[1:]:
+        if not row or len(row) < 1:
+            continue
+        poll_id = row[0].strip()
+        if not poll_id:
+            continue
+        for offset, name in enumerate(delegate_columns):
+            col_idx = n_metadata + offset
+            status = row[col_idx] if col_idx < len(row) else ""
+            result[name][poll_id] = status
+
+    return result
