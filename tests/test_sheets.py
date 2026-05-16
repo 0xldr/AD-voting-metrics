@@ -1559,3 +1559,435 @@ def test_write_communication_master_to_real_workbook(_temp_tab, monkeypatch):
     # has "Yes" for BLUE on the spell, so cross-ref defaults to Pending
     # verification.
     assert ws.acell("E2").value == "Pending verification"  # BLUE
+
+
+# ---------------------------------------------------------------------------
+# Config tab — read_config
+# ---------------------------------------------------------------------------
+
+
+def _make_config_ws(rows: list[list[str]]) -> MagicMock:
+    """Build a MagicMock worksheet returning `rows` from get_all_values()."""
+    ws = MagicMock(spec=gspread.Worksheet)
+    ws.get_all_values.return_value = rows
+    return ws
+
+
+def test_read_config_missing_tab_raises_runtime_error():
+    """Hard fail with operator-friendly message when Config tab is absent."""
+    workbook = MagicMock()
+    workbook.worksheet.side_effect = gspread.exceptions.WorksheetNotFound("Config")
+
+    with pytest.raises(RuntimeError, match=r"Config.*tab"):
+        sheets.read_config(workbook)
+
+
+def test_read_config_empty_tab_raises_value_error():
+    workbook = MagicMock()
+    workbook.worksheet.return_value = _make_config_ws([])
+
+    with pytest.raises(ValueError, match="empty"):
+        sheets.read_config(workbook)
+
+
+def test_read_config_missing_required_key_raises():
+    """ValueError lists the missing keys for the operator."""
+    workbook = MagicMock()
+    workbook.worksheet.return_value = _make_config_ws([
+        ["Key", "Value"],
+        ["L1_USDS", "33333"],
+        ["L2_USDS", "14583"],
+        # L3_USDS and TOTAL_SLOTS missing
+    ])
+
+    with pytest.raises(ValueError, match="missing required keys"):
+        sheets.read_config(workbook)
+
+
+def test_read_config_unparseable_value_raises():
+    workbook = MagicMock()
+    workbook.worksheet.return_value = _make_config_ws([
+        ["Key", "Value"],
+        ["L1_USDS", "not_a_number"],
+        ["L2_USDS", "14583"],
+        ["L3_USDS", "4000"],
+        ["TOTAL_SLOTS", "6"],
+    ])
+
+    with pytest.raises(ValueError, match="un-parseable"):
+        sheets.read_config(workbook)
+
+
+def test_read_config_happy_path_returns_compensation_config():
+    from ad_voting_metrics.compensation import CompensationConfig
+
+    workbook = MagicMock()
+    workbook.worksheet.return_value = _make_config_ws([
+        ["Key", "Value"],
+        ["L1_USDS", "33333"],
+        ["L2_USDS", "14583"],
+        ["L3_USDS", "4000"],
+        ["TOTAL_SLOTS", "6"],
+    ])
+
+    config = sheets.read_config(workbook)
+    assert isinstance(config, CompensationConfig)
+    assert config.l1_usds == 33333.0
+    assert config.l2_usds == 14583.0
+    assert config.l3_usds == 4000.0
+    assert config.total_slots == 6
+
+
+def test_read_config_unknown_keys_silently_ignored():
+    """Future-proofing: extra keys in the Config tab don't break the read."""
+    workbook = MagicMock()
+    workbook.worksheet.return_value = _make_config_ws([
+        ["Key", "Value"],
+        ["L1_USDS", "33333"],
+        ["L2_USDS", "14583"],
+        ["L3_USDS", "4000"],
+        ["TOTAL_SLOTS", "6"],
+        ["FUTURE_THRESHOLD", "0.5"],  # not yet defined
+        ["BUFFER_CAP", "100000"],  # not yet defined
+    ])
+
+    config = sheets.read_config(workbook)
+    assert config.l1_usds == 33333.0
+
+
+def test_read_config_handles_short_rows():
+    """A row with only one cell (no value column) is skipped."""
+    workbook = MagicMock()
+    workbook.worksheet.return_value = _make_config_ws([
+        ["Key", "Value"],
+        ["L1_USDS", "33333"],
+        ["accidentally_partial_row"],
+        ["L2_USDS", "14583"],
+        ["L3_USDS", "4000"],
+        ["TOTAL_SLOTS", "6"],
+    ])
+
+    config = sheets.read_config(workbook)
+    assert config.l1_usds == 33333.0
+
+
+def test_read_config_strips_whitespace_from_keys_and_values():
+    workbook = MagicMock()
+    workbook.worksheet.return_value = _make_config_ws([
+        ["Key", "Value"],
+        ["  L1_USDS  ", "  33333  "],
+        ["L2_USDS", "14583"],
+        ["L3_USDS", "4000"],
+        ["TOTAL_SLOTS", "6"],
+    ])
+
+    config = sheets.read_config(workbook)
+    assert config.l1_usds == 33333.0
+
+
+# ---------------------------------------------------------------------------
+# Compensation tab — write_compensation_tab
+# ---------------------------------------------------------------------------
+
+
+def _make_period_comp(
+    *,
+    delegates: list[tuple[str, int | None, float | None, float | None, int]] | None = None,
+    validation: dict[str, str] | None = None,
+):
+    """Build a PeriodCompensation for testing.
+
+    Each delegate tuple is (name, level_at_period_end, p_pct, c_pct, days_l3).
+    Modifier and final_amount are derived. Defaults to a single Alice row.
+    """
+    from ad_voting_metrics.compensation import (
+        CompensationConfig,
+        DelegateCompensation,
+        PeriodCompensation,
+        component_modifier,
+    )
+
+    if delegates is None:
+        delegates = [("Alice", 3, 1.0, 1.0, 30)]
+
+    config = CompensationConfig(
+        l1_usds=33333.0,
+        l2_usds=14583.0,
+        l3_usds=4000.0,
+        total_slots=6,
+    )
+    period = MonthPeriod(year=2026, month=4)
+    rows = []
+    for name, level, p_pct, c_pct, days_l3 in delegates:
+        modifier = component_modifier(p_pct) * component_modifier(c_pct)
+        entitlement = (days_l3 / 30) * config.l3_usds
+        final_amount = round(entitlement * modifier, 0)
+        rows.append(
+            DelegateCompensation(
+                name=name,
+                rank_at_period_end=1,
+                level_at_period_end=level,
+                days_as_l1=0,
+                days_as_l2=0,
+                days_as_l3=days_l3,
+                participation_pct=p_pct,
+                communication_pct=c_pct,
+                metrics_modifier=modifier,
+                entitlement_pre_modifier=entitlement,
+                final_amount=final_amount,
+                buffer_carry_in=0.0,
+                buffer_added=final_amount,
+                payment_amount=0.0,
+                buffer_post_payment=0.0,
+                notes="",
+            )
+        )
+    return PeriodCompensation(
+        period=period,
+        config=config,
+        days_in_period=30,
+        per_delegate=rows,
+        validation=validation or {"slot_days_check": "GOOD"},
+    )
+
+
+def test_write_compensation_tab_uses_correct_tab_name():
+    """Tab is named '{Month Year} Compensation'."""
+    workbook = MagicMock()
+    fake_ws = MagicMock(spec=gspread.Worksheet)
+    workbook.worksheet.return_value = fake_ws
+
+    sheets.write_compensation_tab(workbook, _make_period_comp())
+
+    workbook.worksheet.assert_called_with("April 2026 Compensation")
+
+
+def test_write_compensation_tab_writes_header_block():
+    """Header block in rows 1-5 contains period metadata."""
+    workbook = MagicMock()
+    fake_ws = MagicMock(spec=gspread.Worksheet)
+    workbook.worksheet.return_value = fake_ws
+
+    sheets.write_compensation_tab(workbook, _make_period_comp())
+
+    values = fake_ws.update.call_args.kwargs["values"]
+    assert values[0][0] == "Year"
+    assert values[0][1] == 2026
+    assert values[1][0] == "Month"
+    assert values[1][1] == "April"
+    assert values[2][0] == "Period Start"
+    assert values[2][1] == "2026-04-01"
+    assert values[3][0] == "Period End"
+    assert values[3][1] == "2026-04-30"
+    assert values[4][0] == "Days in Month"
+    assert values[4][1] == 30
+
+
+def test_write_compensation_tab_writes_config_reference_amounts():
+    """Columns D-E rows 1-3 carry the config USDS amounts."""
+    workbook = MagicMock()
+    fake_ws = MagicMock(spec=gspread.Worksheet)
+    workbook.worksheet.return_value = fake_ws
+
+    sheets.write_compensation_tab(workbook, _make_period_comp())
+
+    values = fake_ws.update.call_args.kwargs["values"]
+    # Row 1: D="Level 1 USDS", E=33333
+    assert values[0][3] == "Level 1 USDS"
+    assert values[0][4] == 33333.0
+    assert values[1][3] == "Level 2 USDS"
+    assert values[1][4] == 14583.0
+    assert values[2][3] == "Level 3 USDS"
+    assert values[2][4] == 4000.0
+
+
+def test_write_compensation_tab_writes_level_counts():
+    """Columns G-H rows 1-3 carry counts of delegates at each level."""
+    period_comp = _make_period_comp(
+        delegates=[
+            ("Alice", 1, 1.0, 1.0, 0),
+            ("Bob", 1, 1.0, 1.0, 0),
+            ("Charlie", 2, 1.0, 1.0, 0),
+            ("Dave", 3, 1.0, 1.0, 30),
+            ("Eve", 3, 1.0, 1.0, 30),
+            ("Frank", None, 0.5, 1.0, 0),  # unassigned, doesn't count
+        ]
+    )
+
+    workbook = MagicMock()
+    fake_ws = MagicMock(spec=gspread.Worksheet)
+    workbook.worksheet.return_value = fake_ws
+
+    sheets.write_compensation_tab(workbook, period_comp)
+
+    values = fake_ws.update.call_args.kwargs["values"]
+    assert values[0][6] == "Number of Level 1"
+    assert values[0][7] == 2
+    assert values[1][7] == 1
+    assert values[2][7] == 2
+
+
+def test_write_compensation_tab_writes_total_sum_formula():
+    """Row 7 has 'Total Final Amount' and SUM(H10:H...) formula."""
+    period_comp = _make_period_comp(
+        delegates=[
+            ("Alice", 3, 1.0, 1.0, 30),
+            ("Bob", 3, 1.0, 1.0, 30),
+        ]
+    )
+
+    workbook = MagicMock()
+    fake_ws = MagicMock(spec=gspread.Worksheet)
+    workbook.worksheet.return_value = fake_ws
+
+    sheets.write_compensation_tab(workbook, period_comp)
+
+    values = fake_ws.update.call_args.kwargs["values"]
+    assert values[6][0] == "Total Final Amount"
+    # 2 data rows: rows 10 and 11. SUM(H10:H11).
+    assert values[6][1] == "=SUM(H10:H11)"
+
+
+def test_write_compensation_tab_writes_slot_days_check():
+    """Row 8 carries the slot_days_check validation status."""
+    pc = _make_period_comp(validation={"slot_days_check": "NOT GOOD"})
+
+    workbook = MagicMock()
+    fake_ws = MagicMock(spec=gspread.Worksheet)
+    workbook.worksheet.return_value = fake_ws
+
+    sheets.write_compensation_tab(workbook, pc)
+
+    values = fake_ws.update.call_args.kwargs["values"]
+    assert values[7][0] == "Slot Days Check"
+    assert values[7][1] == "NOT GOOD"
+
+
+def test_write_compensation_tab_writes_column_headers_at_row_9():
+    workbook = MagicMock()
+    fake_ws = MagicMock(spec=gspread.Worksheet)
+    workbook.worksheet.return_value = fake_ws
+
+    sheets.write_compensation_tab(workbook, _make_period_comp())
+
+    values = fake_ws.update.call_args.kwargs["values"]
+    # Row 9 (index 8) is the column header row.
+    assert values[8] == list(sheets.COMPENSATION_COLUMNS)
+
+
+def test_write_compensation_tab_writes_data_rows_in_order():
+    """Data rows preserve the per_delegate order (alphabetical, set by computer)."""
+    period_comp = _make_period_comp(
+        delegates=[
+            ("Alice", 3, 1.0, 1.0, 30),
+            ("Bob", 3, 1.0, 1.0, 30),
+            ("Charlie", 3, 1.0, 1.0, 30),
+        ]
+    )
+
+    workbook = MagicMock()
+    fake_ws = MagicMock(spec=gspread.Worksheet)
+    workbook.worksheet.return_value = fake_ws
+
+    sheets.write_compensation_tab(workbook, period_comp)
+
+    values = fake_ws.update.call_args.kwargs["values"]
+    # Row 10 (index 9) first data row, Delegate column (A, index 0).
+    assert values[9][0] == "Alice"
+    assert values[10][0] == "Bob"
+    assert values[11][0] == "Charlie"
+
+
+def test_write_compensation_tab_none_pct_renders_as_no_data():
+    """A delegate with None participation_pct shows 'No Data' in the cell."""
+    period_comp = _make_period_comp(
+        delegates=[
+            ("Newbie", None, None, None, 0),
+        ]
+    )
+
+    workbook = MagicMock()
+    fake_ws = MagicMock(spec=gspread.Worksheet)
+    workbook.worksheet.return_value = fake_ws
+
+    sheets.write_compensation_tab(workbook, period_comp)
+
+    values = fake_ws.update.call_args.kwargs["values"]
+    # Row 10 first data row; B = participation 6mo, C = communication 6mo.
+    assert values[9][1] == "No Data"
+    assert values[9][2] == "No Data"
+
+
+def test_write_compensation_tab_level_label_mapping():
+    """level_at_period_end maps to 'Level N' or 'No' in column E."""
+    period_comp = _make_period_comp(
+        delegates=[
+            ("A_L1", 1, 1.0, 1.0, 0),
+            ("B_L2", 2, 1.0, 1.0, 0),
+            ("C_L3", 3, 1.0, 1.0, 30),
+            ("D_None", None, 0.5, 1.0, 0),
+        ]
+    )
+
+    workbook = MagicMock()
+    fake_ws = MagicMock(spec=gspread.Worksheet)
+    workbook.worksheet.return_value = fake_ws
+
+    sheets.write_compensation_tab(workbook, period_comp)
+
+    values = fake_ws.update.call_args.kwargs["values"]
+    # Column E (index 4) = "Ranked During Month?".
+    assert values[9][4] == "Level 1"
+    assert values[10][4] == "Level 2"
+    assert values[11][4] == "Level 3"
+    assert values[12][4] == "No"
+
+
+def test_write_compensation_tab_empty_per_delegate_still_writes_header():
+    """No delegates → header block + column header row only, no error."""
+    period_comp = _make_period_comp(delegates=[])
+
+    workbook = MagicMock()
+    fake_ws = MagicMock(spec=gspread.Worksheet)
+    workbook.worksheet.return_value = fake_ws
+
+    sheets.write_compensation_tab(workbook, period_comp)
+
+    values = fake_ws.update.call_args.kwargs["values"]
+    # 8 header-block rows + 1 column-header row = 9 rows total.
+    assert len(values) == 9
+    assert values[8] == list(sheets.COMPENSATION_COLUMNS)
+    # SUM formula points to H10 even with no data rows.
+    assert values[6][1] == "=SUM(H10:H10)"
+
+
+def test_write_compensation_tab_clears_before_writing():
+    """clear_tab is called before update — re-runs replace, don't merge."""
+    workbook = MagicMock()
+    fake_ws = MagicMock(spec=gspread.Worksheet)
+    workbook.worksheet.return_value = fake_ws
+
+    sheets.write_compensation_tab(workbook, _make_period_comp())
+
+    fake_ws.clear.assert_called_once()
+    # Order matters: clear before update.
+    clear_idx = fake_ws.method_calls.index(next(c for c in fake_ws.method_calls if c[0] == "clear"))
+    update_idx = fake_ws.method_calls.index(
+        next(c for c in fake_ws.method_calls if c[0] == "update")
+    )
+    assert clear_idx < update_idx
+
+
+def test_write_compensation_tab_returns_worksheet():
+    workbook = MagicMock()
+    fake_ws = MagicMock(spec=gspread.Worksheet)
+    workbook.worksheet.return_value = fake_ws
+
+    result = sheets.write_compensation_tab(workbook, _make_period_comp())
+
+    assert result is fake_ws
+
+
+def test_compensation_columns_has_14_columns():
+    """Pin the column count; accidental additions fail the test."""
+    assert len(sheets.COMPENSATION_COLUMNS) == 14

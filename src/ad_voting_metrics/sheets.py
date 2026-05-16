@@ -6,10 +6,12 @@ service account's client_email must be added as Editor on the workbook -
 a one-time setup step in the Google Sheets sharing dialog.
 """
 
+import calendar
 import os
 from collections import Counter
 from datetime import date, datetime
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import gspread
 import pandas as pd
@@ -18,6 +20,9 @@ from gspread.utils import rowcol_to_a1
 
 from .metrics import DISCOUNTED, NOT_PARTICIPATED, PARTICIPATED
 from .period import MonthPeriod
+
+if TYPE_CHECKING:
+    from .compensation import CompensationConfig, PeriodCompensation
 
 # Scopes required to read/write spreadsheets and open them by ID. The Drive
 # scope is needed because gspread uses Drive APIs for open_by key.
@@ -655,5 +660,260 @@ def write_communication_master(
     end_cell = rowcol_to_a1(len(values), len(header))
     range_name = f"A1:{end_cell}"
     worksheet.update(values=values, range_name=range_name)
+
+    return worksheet
+
+
+# ---------------------------------------------------------------------------
+# Config tab (workbook-wide) and Compensation tab (per-period)
+# ---------------------------------------------------------------------------
+
+
+CONFIG_TAB_TITLE = "Config"
+
+_REQUIRED_CONFIG_KEYS = ("L1_USDS", "L2_USDS", "L3_USDS", "TOTAL_SLOTS")
+
+COMPENSATION_COLUMNS = (
+    "Delegate",
+    "Participation 6-month %",
+    "Communication 6-month %",
+    "Metrics Modifier",
+    "Ranked During Month?",
+    "Days As Ranked",
+    "Entitlement Pre-Modifiers (USDS)",
+    "Final Amount to AD Buffer (USDS)",
+    "Rank at Month End",
+    "Amount in Buffer at Month Start (USDS)",
+    "Amount Added to AD Buffer (USDS)",
+    "Payment Amount (USDS)",
+    "Scaled Buffer Contents Post Payment (USDS)",
+    "Notes",
+)
+
+
+def _compensation_tab_title(period: MonthPeriod) -> str:
+    """Return the per-period tab title, e.g. "April 2026 Compensation"."""
+    return f"{period} Compensation"
+
+
+def read_config(workbook: gspread.Spreadsheet) -> "CompensationConfig":
+    """Read the workbook-wide Config tab and return a CompensationConfig.
+
+    Format: two columns (Key, Value), header in row 1. Required keys:
+    L1_USDS, L2_USDS, L3_USDS, TOTAL_SLOTS. Unknown keys are ignored.
+
+    Returns:
+        Parsed CompensationConfig.
+
+    Raises:
+        RuntimeError: if the Config tab doesn't exist.
+        ValueError: if a required key is missing or a value can't
+            be coerced.
+    """
+    try:
+        worksheet = workbook.worksheet(CONFIG_TAB_TITLE)
+    except gspread.exceptions.WorksheetNotFound as exc:
+        raise RuntimeError(
+            f"Workbook is missing the '{CONFIG_TAB_TITLE}' tab. "
+            f"Create it with columns Key and Value, and rows for "
+            f"{', '.join(_REQUIRED_CONFIG_KEYS)}."
+        ) from exc
+
+    rows = worksheet.get_all_values()
+    if not rows:
+        raise ValueError(f"'{CONFIG_TAB_TITLE}' tab is empty.")
+
+    # Skip the header rows; collect Key -> raw Value strings
+    kv: dict[str, str] = {}
+    for row in rows[1:]:
+        if len(row) < 2:
+            continue
+        key, value = row[0].strip(), row[1].strip()
+        if not key:
+            continue
+        kv[key] = value
+
+    missing = [k for k in _REQUIRED_CONFIG_KEYS if k not in kv]
+    if missing:
+        raise ValueError(
+            f"'{CONFIG_TAB_TITLE}' tab is missing required keys: {missing}. "
+            f"Required: {list(_REQUIRED_CONFIG_KEYS)}."
+        )
+
+    try:
+        l1 = float(kv["L1_USDS"])
+        l2 = float(kv["L2_USDS"])
+        l3 = float(kv["L3_USDS"])
+        total = int(kv["TOTAL_SLOTS"])
+    except ValueError as exc:
+        raise ValueError(f"'{CONFIG_TAB_TITLE}' has un-parseable value: {exc}") from exc
+
+    from .compensation import CompensationConfig
+
+    return CompensationConfig(
+        l1_usds=l1,
+        l2_usds=l2,
+        l3_usds=l3,
+        total_slots=total,
+    )
+
+
+def _level_label(level: int | None) -> str:
+    """Map an assigned_level (1/2/3/None) to the workbook's H-column label.
+
+    Returns:
+        "Level 1", "Level 2", "Level 3", or "No".
+    """
+    if level == 1:
+        return "Level 1"
+    if level == 2:
+        return "Level 2"
+    if level == 3:
+        return "Level 3"
+    return "No"
+
+
+def _format_pct(pct: float | None) -> str | float:
+    """Format a fractional pct as a value Sheets can render as a percent.
+
+    Returns:
+        The float unchanged for numberic values, or "No Data" for None.
+    """
+    if pct is None:
+        return "No Data"
+    return pct
+
+
+def write_compensation_tab(
+    workbook: gspread.Spreadsheet,
+    period_comp: "PeriodCompensation",
+) -> gspread.Worksheet:
+    """Write the per-period Compensation tab for a finalize run.
+
+    Tab is named "{Month Year} Compensation" (e.g. "April 2026 Compensation").
+    Re-runs overwrite - operator edits to the script-owned cells are lost.
+
+    Layout:
+      - Rows 1-5: period metadata block (Year, Month, Period Start/End,
+        Days in Month).
+      - Rows 1-3 cols D-E: L1/L2/L3 USDS reference values from config.
+      - Rows 1-3 cols G-H: counts of delegates at each level.
+      - Row 7: Total Final Amount label + sum formula.
+      - Row 8: Slot Days Check label + GOOD/NOT GOOD status.
+      - Row 9: column headers (14 columns A-N).
+      - Rows 10+: one row per delegate, alphabetical.
+
+    Returns:
+        The worksheet that was written.
+    """
+    rows_in = period_comp.per_delegate
+
+    # Count delegates at each level (based on level_at_period_end).
+    n_l1 = sum(1 for r in rows_in if r.level_at_period_end == 1)
+    n_l2 = sum(1 for r in rows_in if r.level_at_period_end == 2)
+    n_l3 = sum(1 for r in rows_in if r.level_at_period_end == 3)
+
+    period = period_comp.period
+    config = period_comp.config
+
+    n_data_rows = len(rows_in)
+    last_data_row = 9 + n_data_rows  # row 9 = header, rows 10..(9+n) = data
+    sum_formula = f"=SUM(H10:H{max(last_data_row, 10)})"
+
+    # Build header block as full rows so we can write it with one update
+    # Rows are 1-indexed in Sheets; we'll pad to row 9 for the headers
+    header_block: list[list[object]] = [
+        # Row 1
+        ["Year", period.year, "", "Level 1 USDS", config.l1_usds, "", "Number of Level 1", n_l1],
+        # Row 2
+        [
+            "Month",
+            calendar.month_name[period.month],
+            "",
+            "Level 2 USDS",
+            config.l2_usds,
+            "",
+            "Number of Level 2",
+            n_l2,
+        ],
+        # Row 3
+        [
+            "Period Start",
+            _coerce_date(period.start),
+            "",
+            "Level 3 USDS",
+            config.l3_usds,
+            "",
+            "Number of Level 3",
+            n_l3,
+        ],
+        # Row 4
+        ["Period End", _coerce_date(period.end), "", "", "", "", "", ""],
+        # Row 5
+        ["Days in Month", period_comp.days_in_period, "", "", "", "", "", ""],
+        # Row 6 (blank)
+        ["", "", "", "", "", "", "", ""],
+        # Row 7
+        ["Total Final Amount", sum_formula, "", "", "", "", "", ""],
+        # Row 8
+        [
+            "Slot Days Check",
+            period_comp.validation.get("slot_days_check", ""),
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+        ],
+    ]
+
+    # Row 9: column headers (full 14-column row).
+    header_row: list[object] = list(COMPENSATION_COLUMNS)
+
+    # Data rows (10+).
+    data_rows: list[list[object]] = []
+    for r in rows_in:
+        days_total = r.days_as_l1 + r.days_as_l2 + r.days_as_l3
+        data_rows.append([
+            r.name,
+            _format_pct(r.participation_pct),
+            _format_pct(r.communication_pct),
+            r.metrics_modifier,
+            _level_label(r.level_at_period_end),
+            days_total,
+            r.entitlement_pre_modifier,
+            r.final_amount,
+            r.rank_at_period_end if r.rank_at_period_end is not None else "",
+            r.buffer_carry_in,
+            r.buffer_added,
+            r.payment_amount,
+            r.buffer_post_payment,
+            r.notes,
+        ])
+
+    # Combine: pad header block to 14 columns, then header_row, then data.
+    n_cols = len(COMPENSATION_COLUMNS)
+
+    def _pad(row: list[object]) -> list[object]:
+        return row + [""] * (n_cols - len(row))
+
+    all_values: list[list[object]] = [
+        *(_pad(r) for r in header_block),
+        header_row,
+        *data_rows,
+    ]
+
+    worksheet = get_or_create_tab(
+        workbook,
+        _compensation_tab_title(period),
+        rows=max(len(all_values) + 50, 100),
+        cols=n_cols,
+    )
+
+    clear_tab(worksheet)
+
+    end_cell = rowcol_to_a1(len(all_values), n_cols)
+    worksheet.update(values=all_values, range_name=f"A1:{end_cell}")
 
     return worksheet
