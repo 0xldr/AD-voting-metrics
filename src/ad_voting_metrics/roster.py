@@ -299,30 +299,42 @@ def build_roster_for_period(
     yaml_path: Path,
     period: MonthPeriod,
     api_fetcher: Callable[[], list[dict]],
+    *,
+    skip_api_check: bool = False,
 ) -> RosterResult:
-    """Load YAML, fetch API, run drift detection, filter to active-during-period.
+    """Load YAML, optionally fetch API, run drift detection, filter to active-during-period.
 
-    If the API fetch raises, drift detection is skipped (soft-fail; YAML
-    is source of truth) and a warning is emitted.
+    Drift detection compares the YAML against the live vote.sky.money
+    listing. It's most useful at fetch time; finalize works on a
+    closed historical period where renaming after the fact would be
+    counterproductive, so finalize callers should pass
+    skip_api_check=True.
 
     Returns:
-        RosterResult with active delegates, drift warnings, the full
-        YAML config, and API-fetch metadata.
+        RosterResult with active delegates, drift warnings (empty when
+        skip_api_check=True), the full YAML config, and API-fetch
+        metadata.
     """
     yaml_config = load_delegates(yaml_path)
 
     api_response: list[dict] = []
     api_fetch_succeeded = False
-    try:
-        api_response = api_fetcher()
-        api_fetch_succeeded = True
-        _, warnings = merge_with_api(yaml_config, api_response)
-    except Exception as e:
-        warnings = [
-            f"API drift check skipped due to fetch failure: {type(e).__name__}: {e}. "
-            f"Proceeding with delegates.yaml as the sole source."
-        ]
-        logger.warning("API fetch failed during drift check: %s", e)
+    warnings: list[str] = []
+    if skip_api_check:
+        logger.info("API drift check skipped (skip_api_check=True).")
+    else:
+        try:
+            api_response = api_fetcher()
+            api_fetch_succeeded = True
+            _, warnings = merge_with_api(yaml_config, api_response)
+        except Exception as e:
+            warnings = [
+                (
+                    f"API drift check skipped due to fetch failure: {type(e).__name__}: {e}. "
+                    f"Proceeding with delegates.yaml as the sole source."
+                )
+            ]
+            logger.warning("API fetch failed during drift check: %s", e)
 
     active = [d for d in yaml_config.delegates if d.is_active_during(period.start, period.end)]
     return RosterResult(

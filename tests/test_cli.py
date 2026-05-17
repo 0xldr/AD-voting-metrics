@@ -358,6 +358,10 @@ def test_run_finalize_happy_path_empty_roster_writes_comp_tab():
     assert period_comp.config == config
     assert period_comp.per_delegate == []
 
+    # Verify finalize asks roster to skip the API drift check
+    mock_roster.assert_called_once()
+    assert mock_roster.call_args.kwargs.get("skip_api_check") is True
+
 
 def test_run_finalize_eligibility_tie_at_cutoff_exits():
     """A tie at the L3 slot cutoff propagates as SystemExit."""
