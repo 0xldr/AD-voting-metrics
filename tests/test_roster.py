@@ -781,6 +781,54 @@ def test_build_roster_for_period_records_api_metadata(tmp_path):
     assert len(result.yaml_config.delegates) == 1
 
 
+def test_build_roster_for_period_skip_api_check_does_not_call_fetcher(tmp_path):
+    """skip api-check=True must not invoke api_fetcher; finalize uses this path."""
+    yaml_text = """
+    delegates:
+      - name: Active
+        vote_delegate_address: "0xfc48fbca739079aab08216c4d5e506b96593753d"
+        start_date: 2024-01-01
+        end_date: null
+    """
+    p = tmp_path / "delegates.yaml"
+    p.write_text(yaml_text)
+
+    def fetcher_that_should_not_be_called():
+        raise AssertionError("api_fetcher was called despite skip_api_check=True")
+
+    result = build_roster_for_period(
+        p,
+        MonthPeriod(2026, 4),
+        api_fetcher=fetcher_that_should_not_be_called,
+        skip_api_check=True,
+    )
+
+    # Active delegate still found via YAML alone.
+    assert len(result.active_delegates) == 1
+    assert result.active_delegates[0].name == "Active"
+    # Reconciliation metadata reflects the skipped call
+    assert result.api_fetch_succeeded is False
+    assert result.api_delegate_count == 0
+    # No drift warnings when the check is skipped
+    assert result.drift_warnings == []
+
+
+def test_build_roster_for_skipped_api_check_keyword_only(tmp_path):
+    """skip_api_check must be passed by keyword"""
+    yaml_text = """
+    delegates: []
+    """
+    p = tmp_path / "delegates.yaml"
+    p.write_text(yaml_text)
+
+    fake_fetcher = list  # callable returning []
+
+    # Positional misuse: trying to pass skip_api_check positionally
+    # should raise TypeError
+    with pytest.raises(TypeError):
+        build_roster_for_period(p, MonthPeriod(2026, 4), fake_fetcher, True)  # type: ignore[misc]
+
+
 # ---------------------------------------------------------------------------
 # to_dataframe — DataFrame shape compatible with sky_dao
 # ---------------------------------------------------------------------------
