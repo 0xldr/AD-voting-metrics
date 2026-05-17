@@ -384,12 +384,15 @@ def _run_finalize(args: argparse.Namespace) -> None:
         config.total_slots,
     )
 
-    # 3. Build roster from YAML (source of truth) + API drift check.
-    logger.info("Building delegate roster from delegates.YAML and vote.sky.money API...")
+    # 3. Build roster from YAML (source of truth). Skip the API drift check: finalize works
+    # on a closed historical period, and drift detection is a fetch-time
+    # concern.
+    logger.info("Building delegate roster from delegates.yaml...")
     roster_result = build_roster_for_period(
         yaml_path=YAML_PATH,
         period=period,
         api_fetcher=fetch_aligned_delegates,
+        skip_api_check=True,
     )
     delegates = roster_result.active_delegates
     drift_warnings = roster_result.drift_warnings
