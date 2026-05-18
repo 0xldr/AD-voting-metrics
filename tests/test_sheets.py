@@ -1260,12 +1260,10 @@ def test_write_communication_master_missing_df_column_raises():
     """Raise when the df has no 'Delegate Name' column."""
     df_bad = pd.DataFrame({"NotTheRightColumn": ["foo"]})
     workbook = MagicMock()
-    period = MonthPeriod(year=2026, month=4)
 
     with pytest.raises(ValueError, match="Delegate Name"):
         sheets.write_communication_master(
             workbook,
-            period,
             df_bad,
             _make_poll_info(),
             _make_spell_info(),
@@ -1277,11 +1275,9 @@ def test_write_communication_master_first_fetch_creates_header():
     df = _make_participation_df()
     workbook = MagicMock()
     fake_ws = _empty_existing_comm_ws(workbook)
-    period = MonthPeriod(year=2026, month=4)
 
     sheets.write_communication_master(
         workbook,
-        period,
         df,
         _make_poll_info(),
         _make_spell_info(),
@@ -1311,11 +1307,9 @@ def test_write_communication_master_first_fetch_pending_for_yes_participation():
     })
     workbook = MagicMock()
     fake_ws = _empty_existing_comm_ws(workbook)
-    period = MonthPeriod(year=2026, month=4)
 
     sheets.write_communication_master(
         workbook,
-        period,
         df,
         _make_poll_info(),
         _make_spell_info(),
@@ -1338,11 +1332,9 @@ def test_write_communication_master_first_fetch_did_not_vote_for_no_participatio
     })
     workbook = MagicMock()
     fake_ws = _empty_existing_comm_ws(workbook)
-    period = MonthPeriod(year=2026, month=4)
 
     sheets.write_communication_master(
         workbook,
-        period,
         df,
         _make_poll_info(),
         _make_spell_info(),
@@ -1363,11 +1355,9 @@ def test_write_communication_master_first_fetch_mirrors_discounted():
     })
     workbook = MagicMock()
     fake_ws = _empty_existing_comm_ws(workbook)
-    period = MonthPeriod(year=2026, month=4)
 
     sheets.write_communication_master(
         workbook,
-        period,
         df,
         _make_poll_info(),
         _make_spell_info(),
@@ -1395,12 +1385,10 @@ def test_write_communication_master_missing_column_raises():
         ["12344", "2026-03-01", "2026-03-04", "Old poll", "Yes", "No"],
     ]
     workbook.worksheet.return_value = fake_ws
-    period = MonthPeriod(year=2026, month=4)
 
     with pytest.raises(ValueError, match="NewDelegate"):
         sheets.write_communication_master(
             workbook,
-            period,
             df,
             _make_poll_info(),
             _make_spell_info(),
@@ -1424,11 +1412,9 @@ def test_write_communication_master_preserves_operator_edits():
         ["12345", "2026-04-05", "2026-04-08", "Approve SubDAO X", "Yes", ""],
     ]
     workbook.worksheet.return_value = fake_ws
-    period = MonthPeriod(year=2026, month=4)
 
     sheets.write_communication_master(
         workbook,
-        period,
         df,
         _make_poll_info(),
         _make_spell_info(),
@@ -1457,11 +1443,9 @@ def test_write_communication_master_preserves_historical_polls():
         ["12341", "2026-03-15", "2026-03-18", "Another March poll", "No", "Yes"],
     ]
     workbook.worksheet.return_value = fake_ws
-    period = MonthPeriod(year=2026, month=4)
 
     sheets.write_communication_master(
         workbook,
-        period,
         df,
         _make_poll_info(),
         _make_spell_info(),
@@ -1495,11 +1479,9 @@ def test_write_communication_master_historical_delegate_cells_blank_for_new_poll
         ["12340", "2026-03-01", "2026-03-04", "March poll", "Yes", "No"],
     ]
     workbook.worksheet.return_value = fake_ws
-    period = MonthPeriod(year=2026, month=4)
 
     sheets.write_communication_master(
         workbook,
-        period,
         df,
         _make_poll_info(),
         _make_spell_info(),
@@ -1524,11 +1506,9 @@ def test_write_communication_master_sort_order_start_date_descending():
     })
     workbook = MagicMock()
     fake_ws = _empty_existing_comm_ws(workbook)
-    period = MonthPeriod(year=2026, month=4)
 
     sheets.write_communication_master(
         workbook,
-        period,
         df,
         _make_poll_info(),
         _make_spell_info(),
@@ -1545,11 +1525,9 @@ def test_write_communication_master_clears_before_writing():
     df = _make_participation_df()
     workbook = MagicMock()
     fake_ws = _empty_existing_comm_ws(workbook)
-    period = MonthPeriod(year=2026, month=4)
 
     sheets.write_communication_master(
         workbook,
-        period,
         df,
         _make_poll_info(),
         _make_spell_info(),
@@ -1563,11 +1541,9 @@ def test_write_communication_master_returns_worksheet():
     df = _make_participation_df()
     workbook = MagicMock()
     fake_ws = _empty_existing_comm_ws(workbook)
-    period = MonthPeriod(year=2026, month=4)
 
     result = sheets.write_communication_master(
         workbook,
-        period,
         df,
         _make_poll_info(),
         _make_spell_info(),
@@ -1583,11 +1559,9 @@ def test_write_communication_master_uses_correct_tab_name():
     fake_ws.get_all_values.return_value = []
     workbook.worksheet.side_effect = gspread.exceptions.WorksheetNotFound
     workbook.add_worksheet.return_value = fake_ws
-    period = MonthPeriod(year=2026, month=4)
 
     sheets.write_communication_master(
         workbook,
-        period,
         df,
         _make_poll_info(),
         _make_spell_info(),
@@ -1613,10 +1587,8 @@ def test_write_communication_master_to_real_workbook(_temp_tab, monkeypatch):
     )
 
     workbook = sheets.get_workbook()
-    period = MonthPeriod(year=2026, month=4)
     ws = sheets.write_communication_master(
         workbook,
-        period,
         df,
         _make_poll_info(),
         _make_spell_info(),

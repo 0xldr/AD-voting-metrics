@@ -519,9 +519,86 @@ def _read_communication_master_existing(
     return header, rows_by_poll_id
 
 
+def _apply_cross_reference_rule(participation: str) -> str:
+    """Return the default communication status for a given participation status."""
+    if participation in NOT_PARTICIPATED:
+        return "Did not vote"
+    if participation in DISCOUNTED:
+        return participation
+    if participation in PARTICIPATED:
+        return COMMUNICATION_PENDING_DEFAULT
+    return ""
+
+
+def _build_comm_row_for_poll(
+    poll_id_str: str,
+    start_date_iso: str,
+    end_date_iso: str,
+    title: str,
+    header_len: int,
+    delegate_col_index: dict[str, int],
+    df_by_delegate: dict[str, pd.Series],
+    current_roster: set[str],
+    poll_id: object,
+    existing_row: list[str] | None,
+) -> list[str]:
+    """Build one merged Communication Master row.
+
+    For an existing row, blanks are filled with current metadata or
+    defaults; non-blank cells (operator edits) are preserved. For a new
+    row, metadata cells and per-delegate defaults are written; cells
+    for delegates no longer in the roster stay blank.
+
+    Returns:
+        A row matching the current header length.
+    """
+    defaults: dict[int, str] = {}
+    for col_name, col_idx in delegate_col_index.items():
+        if col_name not in current_roster:
+            continue
+        p_status = str(df_by_delegate[col_name].get(poll_id, ""))
+        defaults[col_idx] = _apply_cross_reference_rule(p_status)
+
+    if existing_row is not None:
+        row = list(existing_row)
+        for i, current_val in enumerate([poll_id_str, start_date_iso, end_date_iso, title]):
+            if _isblank(row[i]):
+                row[i] = current_val
+        for col_idx, default_val in defaults.items():
+            row[col_idx] = default_val
+        return row
+
+    row = [""] * header_len
+    row[0] = poll_id_str
+    row[1] = start_date_iso
+    row[2] = end_date_iso
+    row[3] = title
+    for col_idx, default_val in defaults.items():
+        row[col_idx] = default_val
+    return row
+
+
+def _sort_comm_rows_by_start_date(merged_rows: dict[str, list[str]]) -> list[tuple[str, list[str]]]:
+    """Sort rows by Start Date descending; unparseable/blank Start Date go to end.
+
+    Returns:
+        List of (poll_id, row) tuples in the final write order.
+    """
+    parseable: list[tuple[str, list[str]]] = []
+    unparseable: list[tuple[str, list[str]]] = []
+    for poll_id, row in merged_rows.items():
+        start = row[1] if len(row) > 1 else ""
+        try:
+            datetime.fromisoformat(start.replace("Z", "+00:00"))
+            parseable.append((poll_id, row))
+        except ValueError:
+            unparseable.append((poll_id, row))
+    parseable.sort(key=lambda it: it[1][1], reverse=True)
+    return parseable + unparseable
+
+
 def write_communication_master(
     workbook: gspread.Spreadsheet,
-    period: MonthPeriod,
     df: pd.DataFrame,
     poll_info: list[dict],
     spell_info: list[dict],
@@ -574,15 +651,11 @@ def write_communication_master(
 
     existing_header, existing_rows = _read_communication_master_existing(worksheet)
 
-    # First write: header is metadata + current roster. Subsequent writes:
-    # preserve the existing header order (operator-visible) and check that
-    # every active delegate has a column.
     if not existing_header:
         header: list[str] = [*PARTICIPATION_METADATA_COLUMNS, *delegate_names]
     else:
         header = list(existing_header)
-        existing_columns_set = set(existing_header)
-        missing = [n for n in delegate_names if n not in existing_columns_set]
+        missing = [n for n in delegate_names if n not in set(existing_header)]
         if missing:
             raise ValueError(
                 f"Communication Master is missing column(s) for delegate(s): "
@@ -592,101 +665,41 @@ def write_communication_master(
                 f"column placement and naming.)"
             )
 
-    # Metadata columns occupy positions 0..3; delegate columns follow.
     n_metadata = len(PARTICIPATION_METADATA_COLUMNS)
     delegate_col_index: dict[str, int] = {col: i for i, col in enumerate(header) if i >= n_metadata}
 
-    df_by_delegate: dict[str, pd.Series] = {
-        str(row["Delegate Name"]): row for _, row in df.iterrows()
-    }
+    df_by_delegate: dict[str, pd.Series] = {str(row["Delegate Name"]): row for _, row in df.iterrows()}
     current_roster = set(df_by_delegate.keys())
-
-    merged_rows: dict[str, list[str]] = {}
 
     # Seed with existing rows, padding to current header length so an
     # operator-added column gets blanks for old polls.
-    for poll_id, row in existing_rows.items():
-        padded_row = row + [""] * (len(header) - len(row)) if len(row) < len(header) else row
-        merged_rows[poll_id] = list(padded_row)
+    merged_rows: dict[str, list[str]] = {
+        poll_id: list(row) + [""] * max(0, len(header) - len(row)) for poll_id, row in existing_rows.items()
+    }
 
     for poll_id in poll_columns:
         poll_id_str = str(poll_id)
         metadata = _lookup_poll_or_spell(poll_id_str, poll_info, spell_info)
-        if metadata is None:
-            start_date_iso = ""
-            end_date_iso = ""
-            title = ""
-        else:
-            start_date_iso = _coerce_date(metadata.get("startDate"))
-            end_date_iso = _coerce_date(metadata.get("endDate"))
-            title = str(metadata.get("title", ""))
 
-        participation_per_col: list[str] = [""] * len(header)
-        for col_name, col_idx in delegate_col_index.items():
-            # Per-column participation status for this poll, indexed by header
-            # position; only delegate columns are populated.
-            if col_name in current_roster:
-                p_status = str(df_by_delegate[col_name].get(poll_id, ""))
-                participation_per_col[col_idx] = p_status
-        # Cross-reference; default communication status per delegate column.
-        default_comm_per_col: list[str] = [""] * len(header)
-        for col_name, col_idx in delegate_col_index.items():
-            if col_name not in current_roster:
-                continue
-            p = participation_per_col[col_idx]
-            if p in NOT_PARTICIPATED:
-                default_comm_per_col[col_idx] = "Did not vote"
-            elif p in DISCOUNTED:
-                default_comm_per_col[col_idx] = p
-            elif p in PARTICIPATED:
-                default_comm_per_col[col_idx] = COMMUNICATION_PENDING_DEFAULT
-            else:
-                default_comm_per_col[col_idx] = ""
+        start_date_iso = _coerce_date(metadata.get("startDate")) if metadata else ""
+        end_date_iso = _coerce_date(metadata.get("endDate")) if metadata else ""
+        title = str(metadata.get("title", "")) if metadata else ""
 
-        if poll_id_str in merged_rows:
-            # Existing poll: fill blanks with current metadata/defaults;
-            # preserve any operator-edited cells.
-            row = merged_rows[poll_id_str]
-            for i, current_val in enumerate([poll_id_str, start_date_iso, end_date_iso, title]):
-                if _isblank(row[i]):
-                    row[i] = current_val
-            for col_idx in delegate_col_index.values():
-                if _isblank(row[col_idx]):
-                    row[col_idx] = default_comm_per_col[col_idx]
-            merged_rows[poll_id_str] = row
-        else:
-            row = [""] * len(header)
-            row[0] = poll_id_str
-            row[1] = start_date_iso
-            row[2] = end_date_iso
-            row[3] = title
-            for col_idx in delegate_col_index.values():
-                row[col_idx] = default_comm_per_col[col_idx]
-            merged_rows[poll_id_str] = row
+        merged_rows[poll_id_str] = _build_comm_row_for_poll(
+            poll_id_str=poll_id_str,
+            start_date_iso=start_date_iso,
+            end_date_iso=end_date_iso,
+            title=title,
+            header_len=len(header),
+            delegate_col_index=delegate_col_index,
+            df_by_delegate=df_by_delegate,
+            current_roster=current_roster,
+            poll_id=poll_id,
+            existing_row=merged_rows.get(poll_id_str),
+        )
 
-    # Sort by Start Date descending. Rows with unparseable/blank Start
-    # Date go to the end. Two-pass sort becasue the rank tiebreaker
-    # prevents simple reverse-sort.
-    def _sort_key(item: tuple[str, list[str]]) -> tuple[int, str]:
-        _, row = item
-        start = row[1] if len(row) > 1 else ""
-        try:
-            datetime.fromisoformat(start.replace("Z", "+00:00"))
-            return (0, start)
-        except ValueError:
-            return (1, "")
-
-    items = list(merged_rows.items())
-    items.sort(
-        key=_sort_key,
-        reverse=False,
-    )
-    rank0 = [it for it in items if _sort_key(it)[0] == 0]
-    rank1 = [it for it in items if _sort_key(it)[0] == 1]
-    rank0.reverse()
-    items = rank0 + rank1
-
-    rows: list[list[object]] = [list(row) for _, row in items]
+    sorted_items = _sort_comm_rows_by_start_date(merged_rows)
+    rows: list[list[object]] = [list(row) for _, row in sorted_items]
     values: list[list[object]] = [list(header), *rows]
 
     clear_tab(worksheet)
