@@ -212,7 +212,7 @@ def _run_fetch(args: argparse.Namespace) -> None:
     output_files: list[Path] = []
 
     df = to_dataframe(delegates)
-    hardcoded_order = df["Delegate Contract"].str.lower().tolist()
+    hardcoded_order = df["Delegate Contract"].tolist()
 
     logger.info("Getting RANKING...")
     delegate_list_sky, delegate_list_rank = sky.get_delegate_list_sky(
