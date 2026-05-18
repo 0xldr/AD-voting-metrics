@@ -9,8 +9,10 @@ writes the Compensation tab.
 import argparse
 import csv
 import logging
+from collections.abc import Callable
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
+from typing import TypeVar
 
 import gspread
 import pandas as pd
@@ -19,13 +21,15 @@ from dotenv import load_dotenv
 from . import sheets
 from . import sky_dao as sky
 from .compensation import compute_period_compensation
-from .eligibility import DelegateMetricsInput, compute_daily_eligibility
+from .eligibility import DailyEligibility, DelegateMetricsInput, compute_daily_eligibility
 from .period import MonthPeriod
 from .reconciliation import build_entry, write_entry
-from .roster import build_roster_for_period, to_dataframe
+from .roster import Delegate, build_roster_for_period, to_dataframe
 from .sources.delegates import fetch_aligned_delegates
 
 logger = logging.getLogger(__name__)
+
+_T = TypeVar("_T")
 
 # Locate data and output directories relative to the repo root
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
@@ -34,7 +38,7 @@ YAML_PATH = REPO_ROOT / "delegates.yaml"
 RECONCILIATION_LOG_PATH = OUTPUT_DIR / "reconciliation"
 
 
-def parse_month(value):
+def parse_month(value: str) -> MonthPeriod:
     """Argparse type callback: parse --month value into a MonthPeriod.
 
     Wraps MonthPeriod.from_string() and rejects future months.
@@ -81,7 +85,7 @@ def parse_cache_hours(value: str) -> int:
     return hours
 
 
-def build_arg_parser():
+def build_arg_parser() -> argparse.ArgumentParser:
     """Build the top-level argparse parser with `fetch` and `finalize` subcommands.
 
     Returns:
@@ -181,13 +185,16 @@ def check_period_has_ended(period: MonthPeriod, today: date) -> None:
     """
     if today <= period.end:
         next_day = period.end + timedelta(days=1)
-        raise SystemExit(
+        msg = (
             f"Refusing to compute metrics for {period}: the period has not yet "
             f"ended (UTC date is {today.isoformat()}, period ends "
             f"{period.end.isoformat()}). Re-run on or after "
             f"{next_day.isoformat()} UTC."
         )
-def _required_step(description: str, fn, *args, **kwargs):
+        raise SystemExit(msg)
+
+
+def _required_step(description: str, fn: Callable[..., _T], *args: object, **kwargs: object) -> _T:
     """Run an IO/compute step; on failure, log, and exit.
 
     Returns:
@@ -204,7 +211,9 @@ def _required_step(description: str, fn, *args, **kwargs):
 
 
 def _build_metrics_input(
-    delegates: list, participation_by_delegate: dict, communication_by_delegate: dict
+    delegates: list[Delegate],
+    participation_by_delegate: dict[str, list[tuple[str, date, str]]],
+    communication_by_delegate: dict[str, dict[str, str]],
 ) -> dict[str, DelegateMetricsInput]:
     """Build per-delegate metrics input from workbook participation + communication data.
 
@@ -234,16 +243,16 @@ def _compute_daily_results(
     period: MonthPeriod,
     window_start: date,
     window_end: date,
-    delegates: list,
-    daily_ranks_by_day: dict,
+    delegates: list[Delegate],
+    daily_ranks_by_day: dict[date, dict[str, int]],
     metrics_input: dict[str, DelegateMetricsInput],
-) -> list:
+) -> list[DailyEligibility]:
     """Compute eligibility for each day in the period.
 
     Returns:
         List of DailyEligibility, one per day in period.start..period.end inclusive.
     """
-    daily_results = []
+    daily_results: list[DailyEligibility] = []
     current = period.start
     while current <= period.end:
         daily_results.append(
@@ -327,7 +336,7 @@ def _run_fetch(args: argparse.Namespace) -> None:
 
     if workbook is not None:
 
-        def _safe_write(description, fn, *args):
+        def _safe_write(description: str, fn: Callable[..., object], *args: object) -> None:
             try:
                 fn(*args)
                 logger.info("%s tab written to workbook for %s", description, period)
