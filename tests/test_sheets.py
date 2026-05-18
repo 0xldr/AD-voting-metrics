@@ -850,6 +850,79 @@ def _make_spell_info():
     ]
 
 
+def test_build_participation_values_returns_header_plus_one_row_per_poll():
+    """Header row first, then one row per poll/spell column in df."""
+    df = _make_participation_df()
+    values = sheets.build_participation_values(df, _make_poll_info(), _make_spell_info())
+
+    # 1 header + 3 poll/spell rows (12345, 12346, 0xspell001)
+    assert len(values) == 4
+
+
+def test_build_participation_values_header_format():
+    """Header is metadata columns + delegate names in df row order."""
+    df = _make_participation_df()
+    values = sheets.build_participation_values(df, _make_poll_info(), _make_spell_info())
+
+    assert values[0] == ["Poll Id", "Start Date", "End Date", "Title", "BLUE", "Cloaky", "BONAPUBLICA"]
+
+
+def test_build_participation_values_row_format():
+    """Each non-header row: poll_id, start_date, end_date, title, then per-delegate statuses."""
+    df = _make_participation_df()
+    values = sheets.build_participation_values(df, _make_poll_info(), _make_spell_info())
+
+    # First poll row: 12345
+    assert values[1] == ["12345", "2026-04-05", "2026-04-08", "Approve SubDAO X", "Yes", "No", "Yes"]
+
+
+def test_build_participation_values_spell_has_empty_end_date():
+    """Spell rows have blank End Date in the values matrix (spells lack endDate)."""
+    df = _make_participation_df()
+    # Drop endDate from spell_info to confirm it surfaces as ""
+    spell_info = [
+        {
+            "address": "0xspell001",
+            "title": "Spell: April risk adjustment",
+            "startDate": date(2026, 4, 20),
+        }
+    ]
+    values = sheets.build_participation_values(df, _make_poll_info(), spell_info)
+
+    # Spell row (third data row) should have empty End Date.
+    spell_row = values[3]
+    assert spell_row[0] == "0xspell001"
+    assert spell_row[2] == ""  # End Date
+
+
+def test_build_participation_values_unknown_column_has_blank_metadata():
+    """Poll/spell column in df with no matching info: metadata cells blank, statuses still written."""
+    df = pd.DataFrame({
+        "Delegate Name": ["Alice"],
+        "Delegate Contract": ["0xaaa"],
+        "Start Date": ["2025-12-01"],
+        "99999": ["Yes"],  # not in poll_info or spell_info
+    })
+    values = sheets.build_participation_values(df, [], [])
+
+    # Header + 1 row for the unknown column
+    assert len(values) == 2
+    assert values[1] == ["99999", "", "", "", "Yes"]
+
+
+def test_build_participation_values_zero_polls_returns_header_only():
+    """Zero-poll month: only the header row, no data rows."""
+    df = pd.DataFrame({
+        "Delegate Name": ["Alice"],
+        "Delegate Contract": ["0xaaa"],
+        "Start Date": ["2025-12-01"],
+    })
+    values = sheets.build_participation_values(df, [], [])
+
+    assert len(values) == 1
+    assert values[0] == ["Poll Id", "Start Date", "End Date", "Title", "Alice"]
+
+
 def test_participation_metadata_columns_pinned():
     """The metadata columns are pinned so an edit fails the test."""
     assert sheets.PARTICIPATION_METADATA_COLUMNS == ("Poll Id", "Start Date", "End Date", "Title")

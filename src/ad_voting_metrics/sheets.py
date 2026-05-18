@@ -369,6 +369,56 @@ def _coerce_date(value: date | datetime | None) -> str:
     return value.isoformat()
 
 
+def build_participation_values(
+    df: pd.DataFrame,
+    poll_info: list[dict],
+    spell_info: list[dict],
+) -> list[list[object]]:
+    """Build the 2D values matrix for the Participation Raw Data layout.
+
+    Input df shape: one row per delegate, with fixed columns
+    'Delegate Name', 'Delegate Contract', 'Start Date', then one column
+    per poll_id (str) and one per spell address.
+
+    Returns:
+        A list-of-lists with header row first, then one row per poll/spell:
+          [Poll Id, Start Date, End Date, Title, <Delegate 1 status>, ...]
+
+        Zero-poll months return a header-only matrix (single row).
+
+        Poll/spell columns with no matching poll_info or spell_info entry
+        get blank metadata cells; the status column is still written so a
+        transient API inconsistency can't drop participation data.
+
+        Spell rows have blank End Date — spells don't carry endDate in
+        spell_info.
+    """
+    delegate_names = df["Delegate Name"].tolist()
+    fixed_cols = {"Delegate Name", "Delegate Contract", "Start Date"}
+    poll_columns = [c for c in df.columns if c not in fixed_cols]
+
+    header: list[object] = [*PARTICIPATION_METADATA_COLUMNS, *delegate_names]
+    if not poll_columns:
+        return [header]
+
+    rows: list[list[object]] = []
+    for poll_id in poll_columns:
+        metadata = _lookup_poll_or_spell(str(poll_id), poll_info, spell_info)
+        if metadata is None:
+            start_date_iso = ""
+            end_date_iso = ""
+            title = ""
+        else:
+            start_date_iso = _coerce_date(metadata.get("startDate"))
+            end_date_iso = _coerce_date(metadata.get("endDate"))
+            title = metadata.get("title", "")
+
+        statuses = df[poll_id].tolist()
+        rows.append([str(poll_id), start_date_iso, end_date_iso, title, *statuses])
+
+    return [header, *rows]
+
+
 def write_participation_raw_data(
     workbook: gspread.Spreadsheet,
     period: MonthPeriod,
@@ -397,49 +447,12 @@ def write_participation_raw_data(
     Returns:
         The worksheet that was written.
     """
-    delegate_names = df["Delegate Name"].tolist()
-    fixed_cols = {"Delegate Name", "Delegate Contract", "Start Date"}
-    poll_columns = [c for c in df.columns if c not in fixed_cols]
+    values = build_participation_values(df, poll_info, spell_info)
 
-    if not poll_columns:
-        # Zero-poll month: write header only
-        header = [*PARTICIPATION_METADATA_COLUMNS, *delegate_names]
-        values: list[list[object]] = [header]
-    else:
-        header_list: list[object] = [
-            *PARTICIPATION_METADATA_COLUMNS,
-            *delegate_names,
-        ]
-
-        rows: list[list[object]] = []
-        for poll_id in poll_columns:
-            metadata = _lookup_poll_or_spell(str(poll_id), poll_info, spell_info)
-            if metadata is None:
-                start_date_iso = ""
-                end_date_iso = ""
-                title = ""
-            else:
-                start_date_iso = _coerce_date(metadata.get("startDate"))
-                end_date_iso = _coerce_date(metadata.get("endDate"))
-                title = metadata.get("title", "")
-
-            statuses = df[poll_id].tolist()
-
-            row: list[object] = [
-                str(poll_id),
-                start_date_iso,
-                end_date_iso,
-                title,
-                *statuses,
-            ]
-            rows.append(row)
-
-        values = [header_list, *rows]
-
-    title = _participation_raw_data_tab_title(period)
+    tab_title = _participation_raw_data_tab_title(period)
     worksheet = get_or_create_tab(
         workbook,
-        title,
+        tab_title,
         rows=max(len(values) + 10, 100),
         cols=max(len(values[0]), len(PARTICIPATION_METADATA_COLUMNS) + 1),
     )

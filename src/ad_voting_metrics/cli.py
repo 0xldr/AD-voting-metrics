@@ -7,6 +7,7 @@ writes the Compensation tab.
 """
 
 import argparse
+import csv
 import logging
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
@@ -212,7 +213,6 @@ def _run_fetch(args: argparse.Namespace) -> None:
     output_files: list[Path] = []
 
     df = to_dataframe(delegates)
-    hardcoded_order = df["Delegate Contract"].tolist()
 
     logger.info("Getting RANKING...")
     delegate_list_sky, delegate_list_rank = sky.get_delegate_list_sky(
@@ -298,8 +298,10 @@ def _run_fetch(args: argparse.Namespace) -> None:
         except (RuntimeError, gspread.exceptions.APIError) as e:
             logger.error("Could not write Daily Data to tab: %s", e)
 
+    participation_values = sheets.build_participation_values(df, poll_info, spell_info)
     output_csv = OUTPUT_DIR / "vote_participation.csv"
-    df.to_csv(output_csv, header=False, index=True)
+    with output_csv.open("w", newline="") as f:
+        csv.writer(f).writerows(participation_values)
     output_files.append(output_csv)
     logger.info("Participation vote data saved to %s", output_csv)
 
