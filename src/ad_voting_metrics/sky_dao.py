@@ -5,7 +5,7 @@ Owns the close-day vote-status rule (see `determine_vote_status`).
 
 import logging
 import os
-from datetime import UTC, date, datetime, timedelta
+from datetime import UTC, date, datetime
 
 import pandas as pd
 from dateutil import parser
@@ -111,51 +111,26 @@ def get_delegate_list_sky(df, period: MonthPeriod, cache_max_age_hours: int | No
     """
     all_sky_delegated = get_all_sky_delegated(cache_max_age_hours=cache_max_age_hours)
 
-    delegate_data_sky: dict[str, dict[str, dict[date, dict[str, float]]]] = {
-        "contract": {},
-        "name": {},
-    }
+    days = list(pd.date_range(period.start, period.end, freq="D").date)
+
+    delegate_list_sky = []
+    delegate_list_rank = []
     for _index, row in df.iterrows():
         delegate_name = row["Delegate Name"].strip().lower()
-        delegate_contract = row["Delegate Contract"]
-        if delegate_name not in delegate_data_sky["name"]:
-            delegate_data_sky["name"][delegate_name] = {}
-
-        if delegate_contract not in delegate_data_sky["contract"]:
-            delegate_data_sky["contract"][delegate_contract] = {}
-
-        current_date = period.start
-        while current_date <= period.end:
-            if current_date not in delegate_data_sky["name"][delegate_name]:
-                delegate_data_sky["name"][delegate_name][current_date] = {"sky": 0}
-            if current_date not in delegate_data_sky["contract"][delegate_contract]:
-                delegate_data_sky["contract"][delegate_contract][current_date] = {"sky": 0}
-
+        delegate_contract = row["Delegate Contract"].lower()
+        for current_date in days:
             sky_delegated = get_sky_delegated(all_sky_delegated, delegate_contract, current_date)
-
-            delegate_data_sky["name"][delegate_name][current_date]["sky"] += sky_delegated
-            delegate_data_sky["contract"][delegate_contract][current_date]["sky"] = sky_delegated
-
-            current_date += timedelta(days=1)
-
-    delegate_list_rank = []
-    for delegate_name, data in delegate_data_sky["name"].items():
-        for entry_date, data_sky in data.items():
-            delegate_list_rank.append({
-                "Delegate": delegate_name,
-                "Total Delegation": round(data_sky["sky"], 2),
-                "Rank": 1,
-                "Date": entry_date,
-            })
-    delegate_list_sky = []
-    for delegate_contract, data in delegate_data_sky["contract"].items():
-        for entry_date, data_sky in data.items():
-            delegate_list_sky.append({
-                "contract": delegate_contract.lower(),
-                "sky": data_sky["sky"],
-                "date": entry_date,
-            })
-
+            delegate_list_sky.append(
+                {"contract": delegate_contract, "sky": sky_delegated, "date": current_date},
+            )
+            delegate_list_rank.append(
+                {
+                    "Delegate": delegate_name,
+                    "Total Delegation": round(sky_delegated, 2),
+                    "Rank": 1,
+                    "Date": current_date,
+                },
+            )
     return delegate_list_sky, delegate_list_rank
 
 
@@ -338,9 +313,7 @@ def get_executive_ids(period: MonthPeriod):
             break
 
         for execute in data:
-            date_execute = parser.parse(
-                execute["date"].replace("(Coordinated Universal Time)", "")
-            ).date()
+            date_execute = datetime.fromisoformat(execute["date"]).date()
 
             if period.start <= date_execute <= period.end:
                 spell_info.append({
@@ -409,8 +382,9 @@ def custom_sort(df, hardcoded_order, poll_info, spell_info):
     """Reshape and reorder the per-poll/spell df for participation output.
 
     Drops working columns, adds blank rows for delegates in
-    hardcoded_order that don't appear in df, transposes so each row is
-    a poll or a spell, and chronologically sorts those rows.
+    hardcoded_order that don't appear in df, sorts rows by hardcoded_order
+    position (unknowns at the end), and transposes so each row is a
+    poll or a spell.
 
     Returns:
         DataFrame whose first column is "Poll Id"and whose remaining
@@ -423,18 +397,16 @@ def custom_sort(df, hardcoded_order, poll_info, spell_info):
 
     column_names = df.columns
 
+    poll_by_id = {str(p["pollId"]): p for p in poll_info}
+    spell_by_addr = {str(s["address"]): s for s in spell_info}
+
     title_list = []
     start_date_list = []
     end_date_list = []
 
     for column_name in column_names:
-        object_found = next(
-            (obj for obj in poll_info if str(obj["pollId"]) == str(column_name)), None
-        )
-        if not object_found:
-            object_found = next(
-                (obj for obj in spell_info if str(obj["address"]) == str(column_name)), None
-            )
+        key = str(column_name)
+        object_found = poll_by_id.get(key) or spell_by_addr.get(key)
 
         if object_found:
             title_list.append(object_found["title"])
@@ -448,11 +420,7 @@ def custom_sort(df, hardcoded_order, poll_info, spell_info):
             # Spells have no endDate; use "N/A" to keep column lengths aligned.
             end_date_list.append("End Date")
 
-    missing_rows = [
-        row
-        for row in hardcoded_order
-        if row.lower() not in df["Delegate Contract"].str.lower().tolist()
-    ]
+    missing_rows = [row for row in hardcoded_order if row.lower() not in df["Delegate Contract"].str.lower().tolist()]
 
     num_columns = len(df.columns)
     for row in missing_rows:
@@ -460,13 +428,8 @@ def custom_sort(df, hardcoded_order, poll_info, spell_info):
         blank_row[0] = row
         df.loc[len(df)] = blank_row
 
-    df["SortKey"] = df["Delegate Contract"].apply(
-        lambda x: (
-            hardcoded_order.index(x.lower())
-            if x.lower() in hardcoded_order
-            else len(hardcoded_order)
-        )
-    )
+    sort_keys = {addr.lower(): i for i, addr in enumerate(hardcoded_order)}
+    df["SortKey"] = df["Delegate Contract"].str.lower().map(sort_keys).fillna(len(hardcoded_order)).astype(int)
 
     sorted_df = df.sort_values(by="SortKey")
     sorted_df = sorted_df.drop(columns=["SortKey"])
