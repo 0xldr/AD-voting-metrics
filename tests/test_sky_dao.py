@@ -6,7 +6,8 @@ from unittest.mock import MagicMock, patch
 import pandas as pd
 import pytest
 
-import ad_voting_metrics.sky_dao as sky_dao
+from ad_voting_metrics import sky_dao
+from ad_voting_metrics.period import MonthPeriod
 
 # ---------------------------------------------------------------------------
 # get_all_sky_delegated — dune-client integration and DataFrame return shape
@@ -424,3 +425,425 @@ def test_status_close_day_after_1600_utc_treated_as_closed():
         )
         == "No"
     )
+
+
+# ---------------------------------------------------------------------------
+# get_delegate_list_sky — characterization tests pinning current behavior
+# before the refactor that flattens the four-level dict accumulator.
+# ---------------------------------------------------------------------------
+
+
+def _all_sky_df(rows: list[tuple[str, str, float]]) -> pd.DataFrame:
+    """Return a DataFrame shaped like get_all_sky_delegated's return value.
+
+    rows is a list of (contract, dt_iso, running_total_balance) tuples.
+    The returned DataFrame is indexed on (delegation_contract, dt) with
+    contract lowercased — matching get_all_sky_delegated.
+    """
+    df = pd.DataFrame(rows, columns=["delegation_contract", "dt", "running_total_balance"])
+    df["delegation_contract"] = df["delegation_contract"].str.lower()
+    df["dt"] = df["dt"].astype(str)
+    return df.set_index(["delegation_contract", "dt"])
+
+
+def test_get_delegate_list_sky_returns_one_row_per_delegate_per_day():
+    """For a 2-day period with 1 delegate, output covers both days."""
+    df = pd.DataFrame([
+        {"Delegate Name": "Alice", "Delegate Contract": "0xaaa", "Start Date": "2024-01-01"},
+    ])
+    fake_all_sky = _all_sky_df([
+        ("0xaaa", "2026-04-01", 1000.0),
+        ("0xaaa", "2026-04-02", 1500.0),
+    ])
+    period_2day = MagicMock(spec=MonthPeriod)
+    period_2day.start = date(2026, 4, 1)
+    period_2day.end = date(2026, 4, 2)
+    period_2day.year = 2026
+    period_2day.month = 4
+
+    with patch.object(sky_dao, "get_all_sky_delegated", return_value=fake_all_sky):
+        sky_list, rank_list = sky_dao.get_delegate_list_sky(df, period_2day)
+
+    # Two rows each: one per (entity, day).
+    assert len(sky_list) == 2
+    assert len(rank_list) == 2
+
+
+def test_get_delegate_list_sky_fills_missing_dune_days_with_zero():
+    """Period has 3 days; Dune only has data for day 2; days 1 and 3 are zero."""
+    df = pd.DataFrame([
+        {"Delegate Name": "Alice", "Delegate Contract": "0xaaa", "Start Date": "2024-01-01"},
+    ])
+    fake_all_sky = _all_sky_df([
+        ("0xaaa", "2026-04-02", 1500.0),
+        # day 1 and day 3 missing
+    ])
+    period_3day = MagicMock(spec=MonthPeriod)
+    period_3day.start = date(2026, 4, 1)
+    period_3day.end = date(2026, 4, 3)
+
+    with patch.object(sky_dao, "get_all_sky_delegated", return_value=fake_all_sky):
+        sky_list, _rank_list = sky_dao.get_delegate_list_sky(df, period_3day)
+
+    by_date = {r["date"]: r["sky"] for r in sky_list}
+    assert by_date[date(2026, 4, 1)] == 0
+    assert by_date[date(2026, 4, 2)] == 1500.0
+    assert by_date[date(2026, 4, 3)] == 0
+
+
+def test_get_delegate_list_sky_rank_list_lowercases_name():
+    """Names in the rank list are lowercased and stripped."""
+    df = pd.DataFrame([
+        {"Delegate Name": "  Alice  ", "Delegate Contract": "0xaaa", "Start Date": "2024-01-01"},
+    ])
+    fake_all_sky = _all_sky_df([("0xaaa", "2026-04-01", 1000.0)])
+    period_1day = MagicMock(spec=MonthPeriod)
+    period_1day.start = date(2026, 4, 1)
+    period_1day.end = date(2026, 4, 1)
+
+    with patch.object(sky_dao, "get_all_sky_delegated", return_value=fake_all_sky):
+        _, rank_list = sky_dao.get_delegate_list_sky(df, period_1day)
+
+    assert rank_list[0]["Delegate"] == "alice"
+
+
+def test_get_delegate_list_sky_list_lowercases_contract():
+    """Contracts in the sky list are lowercased (regardless of input casing)."""
+    df = pd.DataFrame([
+        {"Delegate Name": "Alice", "Delegate Contract": "0xAAA", "Start Date": "2024-01-01"},
+    ])
+    fake_all_sky = _all_sky_df([("0xAAA", "2026-04-01", 1000.0)])
+    period_1day = MagicMock(spec=MonthPeriod)
+    period_1day.start = date(2026, 4, 1)
+    period_1day.end = date(2026, 4, 1)
+
+    with patch.object(sky_dao, "get_all_sky_delegated", return_value=fake_all_sky):
+        sky_list, _ = sky_dao.get_delegate_list_sky(df, period_1day)
+
+    assert sky_list[0]["contract"] == "0xaaa"
+
+
+def test_get_delegate_list_sky_rank_total_rounded_to_2dp():
+    """Total Delegation rounds to 2 decimal places; raw sky is unrounded."""
+    df = pd.DataFrame([
+        {"Delegate Name": "Alice", "Delegate Contract": "0xaaa", "Start Date": "2024-01-01"},
+    ])
+    fake_all_sky = _all_sky_df([("0xaaa", "2026-04-01", 1234.56789)])
+    period_1day = MagicMock(spec=MonthPeriod)
+    period_1day.start = date(2026, 4, 1)
+    period_1day.end = date(2026, 4, 1)
+
+    with patch.object(sky_dao, "get_all_sky_delegated", return_value=fake_all_sky):
+        sky_list, rank_list = sky_dao.get_delegate_list_sky(df, period_1day)
+
+    assert rank_list[0]["Total Delegation"] == 1234.57
+    # Raw sky stays unrounded
+    assert sky_list[0]["sky"] == 1234.56789
+
+
+def test_get_delegate_list_sky_rank_field_constant_one():
+    """The Rank field is a placeholder constant 1 in every row.
+
+    Ranking is computed downstream; this function just builds the inputs.
+    """
+    df = pd.DataFrame([
+        {"Delegate Name": "Alice", "Delegate Contract": "0xaaa", "Start Date": "2024-01-01"},
+        {"Delegate Name": "Bob", "Delegate Contract": "0xbbb", "Start Date": "2024-01-01"},
+    ])
+    fake_all_sky = _all_sky_df([
+        ("0xaaa", "2026-04-01", 5000.0),
+        ("0xbbb", "2026-04-01", 1000.0),
+    ])
+    period_1day = MagicMock(spec=MonthPeriod)
+    period_1day.start = date(2026, 4, 1)
+    period_1day.end = date(2026, 4, 1)
+
+    with patch.object(sky_dao, "get_all_sky_delegated", return_value=fake_all_sky):
+        _, rank_list = sky_dao.get_delegate_list_sky(df, period_1day)
+
+    assert all(r["Rank"] == 1 for r in rank_list)
+
+
+def test_get_delegate_list_sky_date_is_date_object():
+    """Date fields in both output lists are datetime.date objects, not strings."""
+    df = pd.DataFrame([
+        {"Delegate Name": "Alice", "Delegate Contract": "0xaaa", "Start Date": "2024-01-01"},
+    ])
+    fake_all_sky = _all_sky_df([("0xaaa", "2026-04-01", 1000.0)])
+    period_1day = MagicMock(spec=MonthPeriod)
+    period_1day.start = date(2026, 4, 1)
+    period_1day.end = date(2026, 4, 1)
+
+    with patch.object(sky_dao, "get_all_sky_delegated", return_value=fake_all_sky):
+        sky_list, rank_list = sky_dao.get_delegate_list_sky(df, period_1day)
+
+    assert isinstance(rank_list[0]["Date"], date)
+    assert isinstance(sky_list[0]["date"], date)
+
+
+def test_get_delegate_list_sky_same_name_multiple_contracts_sums_on_name():
+    """LEGACY behavior: if the same name appears with two contracts, rank list sums.
+
+    The current implementation handles a delegate name with multiple
+    contracts by summing on the name side and keeping separate on the
+    contract side. This is a legacy capability we plan to drop, but
+    pinning the behavior now ensures the refactor's behavior change is
+    explicit.
+    """
+    df = pd.DataFrame([
+        {"Delegate Name": "Alice", "Delegate Contract": "0xaaa", "Start Date": "2024-01-01"},
+        {"Delegate Name": "Alice", "Delegate Contract": "0xbbb", "Start Date": "2024-01-01"},
+    ])
+    fake_all_sky = _all_sky_df([
+        ("0xaaa", "2026-04-01", 100.0),
+        ("0xbbb", "2026-04-01", 200.0),
+    ])
+    period_1day = MagicMock(spec=MonthPeriod)
+    period_1day.start = date(2026, 4, 1)
+    period_1day.end = date(2026, 4, 1)
+
+    with patch.object(sky_dao, "get_all_sky_delegated", return_value=fake_all_sky):
+        sky_list, rank_list = sky_dao.get_delegate_list_sky(df, period_1day)
+
+    # Rank list: one row for "alice", summed
+    alice_rows = [r for r in rank_list if r["Delegate"] == "alice"]
+    assert len(alice_rows) == 1
+    assert alice_rows[0]["Total Delegation"] == 300.0
+    # Sky list: two rows, one per contract, with their individual balances
+    sky_by_contract = {r["contract"]: r["sky"] for r in sky_list}
+    assert sky_by_contract["0xaaa"] == 100.0
+    assert sky_by_contract["0xbbb"] == 200.0
+
+
+def test_get_delegate_list_sky_multiple_delegates_distinct_names():
+    """Two distinct delegates produce separate (name, date) and (contract, date) entries."""
+    df = pd.DataFrame([
+        {"Delegate Name": "Alice", "Delegate Contract": "0xaaa", "Start Date": "2024-01-01"},
+        {"Delegate Name": "Bob", "Delegate Contract": "0xbbb", "Start Date": "2024-01-01"},
+    ])
+    fake_all_sky = _all_sky_df([
+        ("0xaaa", "2026-04-01", 1000.0),
+        ("0xbbb", "2026-04-01", 500.0),
+    ])
+    period_1day = MagicMock(spec=MonthPeriod)
+    period_1day.start = date(2026, 4, 1)
+    period_1day.end = date(2026, 4, 1)
+
+    with patch.object(sky_dao, "get_all_sky_delegated", return_value=fake_all_sky):
+        sky_list, rank_list = sky_dao.get_delegate_list_sky(df, period_1day)
+
+    rank_by_name = {r["Delegate"]: r["Total Delegation"] for r in rank_list}
+    assert rank_by_name == {"alice": 1000.0, "bob": 500.0}
+    sky_by_contract = {r["contract"]: r["sky"] for r in sky_list}
+    assert sky_by_contract == {"0xaaa": 1000.0, "0xbbb": 500.0}
+
+
+def test_get_delegate_list_sky_passes_cache_max_age_hours_through():
+    """cache_max_age_hours forwards to get_all_sky_delegated."""
+    df = pd.DataFrame([
+        {"Delegate Name": "Alice", "Delegate Contract": "0xaaa", "Start Date": "2024-01-01"},
+    ])
+    fake_all_sky = _all_sky_df([("0xaaa", "2026-04-01", 1000.0)])
+    period_1day = MagicMock(spec=MonthPeriod)
+    period_1day.start = date(2026, 4, 1)
+    period_1day.end = date(2026, 4, 1)
+
+    with patch.object(sky_dao, "get_all_sky_delegated", return_value=fake_all_sky) as mock_dune:
+        sky_dao.get_delegate_list_sky(df, period_1day, cache_max_age_hours=24)
+
+    mock_dune.assert_called_once_with(cache_max_age_hours=24)
+
+
+# ---------------------------------------------------------------------------
+# custom_sort — characterization tests pinning current behavior before
+# the refactor that replaces the lambda + linear lookups with dict maps.
+# ---------------------------------------------------------------------------
+
+
+def _custom_sort_df(rows: list[dict]) -> pd.DataFrame:
+    """Return a DataFrame in the shape custom_sort expects.
+
+    Required columns: Delegate Name, Delegate Contract, Start Date, then
+    one column per poll/spell with status values.
+    """
+    return pd.DataFrame(rows)
+
+
+def test_custom_sort_drops_start_date_and_keeps_status_columns():
+    """custom_sort drops the Start Date column and preserves status columns."""
+    df = _custom_sort_df([
+        {"Delegate Name": "Alice", "Delegate Contract": "0xaaa", "Start Date": "2024-01-01", "1234": "Yes"},
+    ])
+    result = sky_dao.custom_sort(
+        df,
+        hardcoded_order=["0xaaa"],
+        poll_info=[{"pollId": "1234", "title": "Poll T", "startDate": date(2026, 4, 1), "endDate": date(2026, 4, 3)}],
+        spell_info=[],
+    )
+
+    # After transpose, columns are the (sorted) delegate rows plus the
+    # 3 prepended metadata columns. Start Date column is gone.
+    # The index contains the original column names; "Start Date" must not be present.
+    assert "Start Date" not in result.index
+
+
+def test_custom_sort_replaces_delegate_name_with_delegate_column():
+    """custom_sort renames "Delegate Name" to "Delegate" (positioned after Contract)."""
+    df = _custom_sort_df([
+        {"Delegate Name": "Alice", "Delegate Contract": "0xaaa", "Start Date": "2024-01-01", "1234": "Yes"},
+    ])
+    result = sky_dao.custom_sort(
+        df,
+        hardcoded_order=["0xaaa"],
+        poll_info=[{"pollId": "1234", "title": "Poll T", "startDate": date(2026, 4, 1), "endDate": date(2026, 4, 3)}],
+        spell_info=[],
+    )
+
+    # In the transposed result, the "Delegate" column became the "Poll Id" row,
+    # holding the delegate names (here, "Alice").
+    assert "Poll Id" in result.index
+    # The first delegate-data column carries "Alice" in the Poll Id row.
+    poll_id_row = result.loc["Poll Id"]
+    # Skip the 3 metadata columns at the start
+    assert "Alice" in list(poll_id_row)
+
+
+def test_custom_sort_metadata_lookup_for_poll_columns():
+    """For columns whose name matches a pollId, populate title/startDate/endDate."""
+    df = _custom_sort_df([
+        {"Delegate Name": "Alice", "Delegate Contract": "0xaaa", "Start Date": "2024-01-01", "1234": "Yes"},
+    ])
+    poll = {"pollId": "1234", "title": "Atlas Edit", "startDate": date(2026, 4, 1), "endDate": date(2026, 4, 3)}
+    result = sky_dao.custom_sort(
+        df,
+        hardcoded_order=["0xaaa"],
+        poll_info=[poll],
+        spell_info=[],
+    )
+
+    # Find the "1234" row (the poll's column after transpose).
+    assert result.loc["1234", "Title"] == "Atlas Edit"
+    assert result.loc["1234", "Start Date"] == date(2026, 4, 1)
+    assert result.loc["1234", "End Date"] == date(2026, 4, 3)
+
+
+def test_custom_sort_metadata_lookup_for_spell_columns():
+    """For columns matching a spell address, populate title/startDate; End Date is "N/A"."""
+    df = _custom_sort_df([
+        {"Delegate Name": "Alice", "Delegate Contract": "0xaaa", "Start Date": "2024-01-01", "0xspell001": "Yes"},
+    ])
+    spell = {"address": "0xspell001", "title": "Spell T", "startDate": date(2026, 4, 5)}
+    result = sky_dao.custom_sort(
+        df,
+        hardcoded_order=["0xaaa"],
+        poll_info=[],
+        spell_info=[spell],
+    )
+
+    assert result.loc["0xspell001", "Title"] == "Spell T"
+    assert result.loc["0xspell001", "Start Date"] == date(2026, 4, 5)
+    assert result.loc["0xspell001", "End Date"] == "N/A"
+
+
+def test_custom_sort_unknown_column_gets_placeholder_metadata():
+    """Columns not matching any poll/spell get placeholder strings.
+
+    These rows are the original metadata columns ("Delegate Contract",
+    "Delegate"); the placeholders fill what would otherwise be NaN.
+    """
+    df = _custom_sort_df([
+        {"Delegate Name": "Alice", "Delegate Contract": "0xaaa", "Start Date": "2024-01-01", "1234": "Yes"},
+    ])
+    result = sky_dao.custom_sort(
+        df,
+        hardcoded_order=["0xaaa"],
+        poll_info=[{"pollId": "1234", "title": "T", "startDate": date(2026, 4, 1), "endDate": date(2026, 4, 3)}],
+        spell_info=[],
+    )
+
+    # The "" row (former Delegate Contract column) gets placeholder metadata
+    assert result.loc["", "Title"] == "Title"
+    assert result.loc["", "Start Date"] == "Start Date"
+    assert result.loc["", "End Date"] == "End Date"
+
+
+def test_custom_sort_adds_blank_rows_for_missing_hardcoded_order_addresses():
+    """Addresses in hardcoded_order but missing from df get blank rows added."""
+    df = _custom_sort_df([
+        {"Delegate Name": "Alice", "Delegate Contract": "0xaaa", "Start Date": "2024-01-01", "1234": "Yes"},
+    ])
+    # hardcoded_order has 0xaaa AND 0xmissing; the latter isn't in df
+    result = sky_dao.custom_sort(
+        df,
+        hardcoded_order=["0xaaa", "0xmissing"],
+        poll_info=[{"pollId": "1234", "title": "T", "startDate": date(2026, 4, 1), "endDate": date(2026, 4, 3)}],
+        spell_info=[],
+    )
+
+    # After transpose, the "" row carries the Delegate Contract values
+    # spread across columns. Both addresses should appear.
+    empty_row = result.loc[""]
+    values = list(empty_row)
+    assert "0xaaa" in values
+    assert "0xmissing" in values
+
+
+def test_custom_sort_orders_delegates_by_hardcoded_order():
+    """Rows are sorted by hardcoded_order's position; unknowns go to the end."""
+    df = _custom_sort_df([
+        {"Delegate Name": "Alice", "Delegate Contract": "0xaaa", "Start Date": "2024-01-01", "1234": "A"},
+        {"Delegate Name": "Bob", "Delegate Contract": "0xbbb", "Start Date": "2024-01-01", "1234": "B"},
+        {"Delegate Name": "Carol", "Delegate Contract": "0xccc", "Start Date": "2024-01-01", "1234": "C"},
+    ])
+    # Reverse the natural order of bbb/aaa/ccc in hardcoded_order
+    result = sky_dao.custom_sort(
+        df,
+        hardcoded_order=["0xbbb", "0xaaa", "0xccc"],
+        poll_info=[{"pollId": "1234", "title": "T", "startDate": date(2026, 4, 1), "endDate": date(2026, 4, 3)}],
+        spell_info=[],
+    )
+
+    # The poll row "1234" carries the per-delegate vote statuses;
+    # ordering follows hardcoded_order.
+    poll_row = result.loc["1234"]
+    # Skip the 3 metadata columns (Start Date, End Date, Title)
+    statuses = [v for v in poll_row if v in {"A", "B", "C"}]
+    assert statuses == ["B", "A", "C"]
+
+
+def test_custom_sort_sort_key_is_case_insensitive():
+    """SortKey lookup uses .lower() on the contract address."""
+    df = _custom_sort_df([
+        {"Delegate Name": "Alice", "Delegate Contract": "0xAAA", "Start Date": "2024-01-01", "1234": "Yes"},
+    ])
+    # hardcoded_order has the lowercased form
+    result = sky_dao.custom_sort(
+        df,
+        hardcoded_order=["0xaaa"],
+        poll_info=[{"pollId": "1234", "title": "T", "startDate": date(2026, 4, 1), "endDate": date(2026, 4, 3)}],
+        spell_info=[],
+    )
+
+    # If sort-key matching is case-insensitive, 0xAAA finds its slot.
+    # The function would still run if it didn't; the test asserts the
+    # delegate's row appears in hardcoded_order's slot rather than at
+    # the end.
+    empty_row = result.loc[""]
+    values = list(empty_row)
+    # First non-metadata column carries 0xAAA (uppercase from df)
+    assert values[3] == "0xAAA"
+
+
+def test_custom_sort_transpose_first_three_columns_are_metadata():
+    """After insert, columns 0/1/2 are Start Date, End Date, Title."""
+    df = _custom_sort_df([
+        {"Delegate Name": "Alice", "Delegate Contract": "0xaaa", "Start Date": "2024-01-01", "1234": "Yes"},
+    ])
+    result = sky_dao.custom_sort(
+        df,
+        hardcoded_order=["0xaaa"],
+        poll_info=[{"pollId": "1234", "title": "T", "startDate": date(2026, 4, 1), "endDate": date(2026, 4, 3)}],
+        spell_info=[],
+    )
+
+    assert list(result.columns[:3]) == ["Start Date", "End Date", "Title"]
