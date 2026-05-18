@@ -8,7 +8,6 @@ import os
 from datetime import UTC, date, datetime, timedelta
 
 import pandas as pd
-from dateutil import parser
 from dune_client.client import DuneClient
 from dune_client.query import QueryBase
 
@@ -81,7 +80,7 @@ def get_all_sky_delegated(cache_max_age_hours: int | None = None) -> pd.DataFram
 
 def get_sky_delegated(data: pd.DataFrame, contract_address: str, dt: date) -> float:
     """Return the running total SKY balance for a (delegate, date) pair, or 0 if absent."""
-    key = (contract_address.strip().lower(), dt.strftime("%Y-%m-%d"))
+    key = (contract_address, dt.strftime("%Y-%m-%d"))
     try:
         value = data.loc[key, "running_total_balance"]
     except KeyError:
@@ -117,7 +116,7 @@ def get_delegate_list_sky(df, period: MonthPeriod, cache_max_age_hours: int | No
     delegate_list_rank = []
     for _index, row in df.iterrows():
         delegate_name = row["Delegate Name"].strip().lower()
-        delegate_contract = row["Delegate Contract"].lower()
+        delegate_contract = row["Delegate Contract"]
         for current_date in days:
             sky_delegated = get_sky_delegated(all_sky_delegated, delegate_contract, current_date)
             delegate_list_sky.append(
@@ -161,11 +160,11 @@ def get_poll_ids(period: MonthPeriod):
             break
 
         for poll in polls:
-            start_date_poll = parser.parse(poll["startDate"]).date()
+            start_date_poll = datetime.fromisoformat(poll["startDate"]).date()
 
             if period.start <= start_date_poll <= period.end:
                 poll["startDate"] = start_date_poll
-                poll["endDate"] = parser.parse(poll["endDate"]).date()
+                poll["endDate"] = datetime.fromisoformat(poll["endDate"]).date()
                 poll_info.append(poll)
 
         if pagination_info["numPages"] == 1:
@@ -252,11 +251,8 @@ def get_vote_poll_ids(poll_info, df, df_sky, current_datetime: datetime):
     Returns:
         The same df, mutated in place with one new column per poll.
     """
-    # Build a (contract_lower, date) -> sky lookup once. Replaces the
-    # per-(poll, delegate) boolean-mask filter + iterrows that the
-    # previous implementation ran inside the inner loop.
     sky_lookup: dict[tuple[str, date], float] = {
-        (r["contract"].lower(), r["date"]): float(r["sky"]) for r in df_sky.to_dict(orient="records")
+        (r["contract"], r["date"]): float(r["sky"]) for r in df_sky.to_dict(orient="records")
     }
 
     for poll in poll_info:
@@ -273,12 +269,12 @@ def get_vote_poll_ids(poll_info, df, df_sky, current_datetime: datetime):
         poll_window_days = [start_date + timedelta(days=i) for i in range((end_date - start_date).days + 1)]
 
         for _index, row in df.iterrows():
-            address_lower = row["Delegate Contract"].lower()
+            address = row["Delegate Contract"]
             first_delegate_date = datetime.strptime(row["Start Date"], "%Y-%m-%d").replace(tzinfo=UTC).date()
-            delegate_voted = address_lower in voter_set
+            delegate_voted = address in voter_set
 
             sky_by_date: dict[date, float] = {
-                d: sky_lookup[address_lower, d] for d in poll_window_days if (address_lower, d) in sky_lookup
+                d: sky_lookup[address, d] for d in poll_window_days if (address, d) in sky_lookup
             }
             status = determine_vote_status(sky_by_date, end_date, delegate_voted, current_datetime)
 
@@ -338,33 +334,25 @@ def get_vote_executive_ids(spell_info, df, df_sky):
     response.raise_for_status()
     data = response.json()
 
-    # Build a (contract_lower, date) -> sky lookup once. Replaces the
-    # per-(spell, delegate) boolean-mask filter + iterrows that the
-    # previous implementation ran inside the inner loop.
     sky_lookup: dict[tuple[str, date], float] = {
-        (r["contract"].lower(), r["date"]): float(r["sky"]) for r in df_sky.to_dict(orient="records")
+        (r["contract"], r["date"]): float(r["sky"]) for r in df_sky.to_dict(orient="records")
     }
 
     for spell in spell_info:
         vote_statuses = []
         spell_address = spell["address"]
         start_date = spell["startDate"]
-        supporter_set = {s["address"] for s in data.get(spell_address, [])}
+        supporter_set = {s["address"].lower() for s in data.get(spell_address, [])}
 
         for _index, row in df.iterrows():
-            address_lower = row["Delegate Contract"].lower()
+            address = row["Delegate Contract"]
             first_delegate_date = datetime.strptime(row["Start Date"], "%Y-%m-%d").replace(tzinfo=UTC).date()
 
-            # df_sky is built by get_delegate_list_sky to cover every
-            # (delegate, day) in the period, and spell startDate is
-            # filtered to fall within the period. So this lookup always
-            # hits in normal pipeline execution; a KeyError here means
-            # the caller built df_sky inconsistently with spell_info
-            sky_on_start = sky_lookup[address_lower, start_date]
+            sky_on_start = sky_lookup[address, start_date]
 
             voted: str
             if sky_on_start != 0:
-                voted = "Yes" if address_lower in supporter_set else "Pending verification"
+                voted = "Yes" if address in supporter_set else "Pending verification"
             else:
                 voted = "No Delegated SKY"
 
@@ -420,7 +408,7 @@ def custom_sort(df, hardcoded_order, poll_info, spell_info):
             # Spells have no endDate; use "N/A" to keep column lengths aligned.
             end_date_list.append("End Date")
 
-    missing_rows = [row for row in hardcoded_order if row.lower() not in df["Delegate Contract"].str.lower().tolist()]
+    missing_rows = [row for row in hardcoded_order if row not in df["Delegate Contract"].tolist()]
 
     num_columns = len(df.columns)
     for row in missing_rows:
@@ -428,8 +416,8 @@ def custom_sort(df, hardcoded_order, poll_info, spell_info):
         blank_row[0] = row
         df.loc[len(df)] = blank_row
 
-    sort_keys = {addr.lower(): i for i, addr in enumerate(hardcoded_order)}
-    df["SortKey"] = df["Delegate Contract"].str.lower().map(sort_keys).fillna(len(hardcoded_order)).astype(int)
+    sort_keys = {addr: i for i, addr in enumerate(hardcoded_order)}
+    df["SortKey"] = df["Delegate Contract"].map(sort_keys).fillna(len(hardcoded_order)).astype(int)
 
     sorted_df = df.sort_values(by="SortKey")
     sorted_df = sorted_df.drop(columns=["SortKey"])

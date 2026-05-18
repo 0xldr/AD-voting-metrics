@@ -129,24 +129,6 @@ def test_get_sky_delegated_returns_zero_for_missing_date():
     assert result == 0
 
 
-def test_get_sky_delegated_normalizes_address_case():
-    df = _make_indexed_df([
-        {"delegation_contract": "0xfc48fbca", "dt": "2026-03-01", "running_total_balance": 999.0}
-    ])
-    result = sky_dao.get_sky_delegated(df, "0xFc48fBcA", date(2026, 3, 1))
-
-    assert result == 999.0
-
-
-def test_get_sky_delegated_normalizes_address_whitespace():
-    df = _make_indexed_df([
-        {"delegation_contract": "0xabc", "dt": "2026-03-01", "running_total_balance": 1000.0}
-    ])
-    result = sky_dao.get_sky_delegated(df, "  0xabc  ", date(2026, 3, 1))
-
-    assert result == 1000.0
-
-
 def test_get_sky_delegated_returns_float():
     df = _make_indexed_df([
         {"delegation_contract": "0xabc", "dt": "2026-03-01", "running_total_balance": 1000.0}
@@ -507,22 +489,6 @@ def test_get_delegate_list_sky_rank_list_lowercases_name():
     assert rank_list[0]["Delegate"] == "alice"
 
 
-def test_get_delegate_list_sky_list_lowercases_contract():
-    """Contracts in the sky list are lowercased (regardless of input casing)."""
-    df = pd.DataFrame([
-        {"Delegate Name": "Alice", "Delegate Contract": "0xAAA", "Start Date": "2024-01-01"},
-    ])
-    fake_all_sky = _all_sky_df([("0xAAA", "2026-04-01", 1000.0)])
-    period_1day = MagicMock(spec=MonthPeriod)
-    period_1day.start = date(2026, 4, 1)
-    period_1day.end = date(2026, 4, 1)
-
-    with patch.object(sky_dao, "get_all_sky_delegated", return_value=fake_all_sky):
-        sky_list, _ = sky_dao.get_delegate_list_sky(df, period_1day)
-
-    assert sky_list[0]["contract"] == "0xaaa"
-
-
 def test_get_delegate_list_sky_rank_total_rounded_to_2dp():
     """Total Delegation rounds to 2 decimal places; raw sky is unrounded."""
     df = pd.DataFrame([
@@ -777,29 +743,6 @@ def test_custom_sort_orders_delegates_by_hardcoded_order():
     assert statuses == ["B", "A", "C"]
 
 
-def test_custom_sort_sort_key_is_case_insensitive():
-    """SortKey lookup uses .lower() on the contract address."""
-    df = _custom_sort_df([
-        {"Delegate Name": "Alice", "Delegate Contract": "0xAAA", "Start Date": "2024-01-01", "1234": "Yes"},
-    ])
-    # hardcoded_order has the lowercased form
-    result = sky_dao.custom_sort(
-        df,
-        hardcoded_order=["0xaaa"],
-        poll_info=[{"pollId": "1234", "title": "T", "startDate": date(2026, 4, 1), "endDate": date(2026, 4, 3)}],
-        spell_info=[],
-    )
-
-    # If sort-key matching is case-insensitive, 0xAAA finds its slot.
-    # The function would still run if it didn't; the test asserts the
-    # delegate's row appears in hardcoded_order's slot rather than at
-    # the end.
-    empty_row = result.loc[""]
-    values = list(empty_row)
-    # First non-metadata column carries 0xAAA (uppercase from df)
-    assert values[3] == "0xAAA"
-
-
 def test_custom_sort_transpose_first_three_columns_are_metadata():
     """After insert, columns 0/1/2 are Start Date, End Date, Title."""
     df = _custom_sort_df([
@@ -939,10 +882,10 @@ def test_get_vote_poll_ids_no_delegated_sky_returns_no_delegated_sky():
     assert result.loc[0, "1234"] == "No Delegated SKY"
 
 
-def test_get_vote_poll_ids_address_matching_case_insensitive():
-    """Delegate contract case shouldn't matter for matching against voter list."""
+def test_get_vote_poll_ids_normalizes_voter_address_case():
+    """Mixed-case voter addresses from the API are lowercased at the boundary."""
     df = pd.DataFrame([
-        {"Delegate Name": "Alice", "Delegate Contract": "0xAAA", "Start Date": "2024-01-01"},
+        {"Delegate Name": "Alice", "Delegate Contract": "0xaaa", "Start Date": "2024-01-01"},
     ])
     df_sky = _df_sky_for_window([
         ("0xaaa", date(2026, 4, 1), 1000.0),
@@ -952,8 +895,9 @@ def test_get_vote_poll_ids_address_matching_case_insensitive():
     poll_info = [{"pollId": 1234, "startDate": date(2026, 4, 1), "endDate": date(2026, 4, 3)}]
 
     with patch("ad_voting_metrics.sky_dao.get_session") as mock_session:
-        # Voter address all lowercase, df contract all uppercase: should still match.
-        mock_session.return_value.get.return_value = _mock_poll_response(["0xaaa"])
+        # API returns mixed-case voter address; lowercasing at boundary
+        # makes the match work against the lowercase df contract.
+        mock_session.return_value.get.return_value = _mock_poll_response(["0xAAA"])
         result = sky_dao.get_vote_poll_ids(poll_info, df, df_sky, current_datetime=_CLOSED_POLL_NOW)
 
     assert result.loc[0, "1234"] == "Yes"
@@ -1134,20 +1078,27 @@ def test_get_vote_executive_ids_not_started_if_spell_started_before_delegate():
     assert result.loc[0, "0xspell1"] == "Not Started"
 
 
-def test_get_vote_executive_ids_supporter_address_matching_case_insensitive():
-    """Supporter address case shouldn't matter; df contract is compared lowercased."""
+def test_get_vote_executive_ids_normalizes_supporter_address_case():
+    """Mixed-case supporter addresses from the API are lowercased at the boundary.
+
+    The API may return supporter addresses in any case (the spells list
+    endpoint returns mixed case; the supporters endpoint's casing isn't
+    contractually specified). Lowercasing at the boundary lets downstream
+    comparison against pydantic-lowercased contract addresses just work.
+    """
     df = pd.DataFrame([
-        {"Delegate Name": "Alice", "Delegate Contract": "0xAAA", "Start Date": "2024-01-01"},
+        {"Delegate Name": "Alice", "Delegate Contract": "0xaaa", "Start Date": "2024-01-01"},
     ])
     df_sky = _df_sky_for_window([("0xaaa", date(2026, 4, 5), 1000.0)])
     spell_info = [{"address": "0xspell1", "startDate": date(2026, 4, 5)}]
 
     with patch("ad_voting_metrics.sky_dao.get_session") as mock_session:
         mock_session.return_value.get.return_value = _mock_executive_supporters_response(
-            {"0xspell1": ["0xaaa"]},  # supporter lowercase, df contract uppercase
+            {"0xspell1": ["0xAAA"]},  # API returns mixed-case
         )
         result = sky_dao.get_vote_executive_ids(spell_info, df, df_sky)
 
+    # Despite API casing mismatch, the boundary-lowercase makes this work.
     assert result.loc[0, "0xspell1"] == "Yes"
 
 
