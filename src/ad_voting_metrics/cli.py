@@ -187,30 +187,92 @@ def check_period_has_ended(period: MonthPeriod, today: date) -> None:
             f"{period.end.isoformat()}). Re-run on or after "
             f"{next_day.isoformat()} UTC."
         )
+def _required_step(description: str, fn, *args, **kwargs):
+    """Run an IO/compute step; on failure, log, and exit.
+
+    Returns:
+        Whatever fn(*args, **kwargs) returns.
+
+    Raises:
+        SystemExit: on any caught exception.
+    """
+    try:
+        return fn(*args, **kwargs)
+    except (RuntimeError, ValueError, gspread.exceptions.APIError) as e:
+        logger.exception("Could not %s", description)
+        raise SystemExit(1) from e
+
+
+def _build_metrics_input(
+    delegates: list, participation_by_delegate: dict, communication_by_delegate: dict
+) -> dict[str, DelegateMetricsInput]:
+    """Build per-delegate metrics input from workbook participation + communication data.
+
+    Returns:
+        Mapping of delegate name to DelegateMetricsInput.
+    """
+    metrics_input: dict[str, DelegateMetricsInput] = {}
+    for delegate in delegates:
+        entries = participation_by_delegate.get(delegate.name, [])
+        comm_map = communication_by_delegate.get(delegate.name, {})
+        poll_starts: list[date] = []
+        p_statuses: list[str] = []
+        c_statuses: list[str] = []
+        for poll_id, poll_start, p_status in entries:
+            poll_starts.append(poll_start)
+            p_statuses.append(p_status)
+            c_statuses.append(comm_map.get(poll_id, ""))
+        metrics_input[delegate.name] = DelegateMetricsInput(
+            poll_starts=poll_starts,
+            participation_statuses=p_statuses,
+            communication_statuses=c_statuses,
+        )
+    return metrics_input
+
+
+def _compute_daily_results(
+    period: MonthPeriod,
+    window_start: date,
+    window_end: date,
+    delegates: list,
+    daily_ranks_by_day: dict,
+    metrics_input: dict[str, DelegateMetricsInput],
+) -> list:
+    """Compute eligibility for each day in the period.
+
+    Returns:
+        List of DailyEligibility, one per day in period.start..period.end inclusive.
+    """
+    daily_results = []
+    current = period.start
+    while current <= period.end:
+        daily_results.append(
+            compute_daily_eligibility(
+                day=current,
+                window_start=window_start,
+                window_end=window_end,
+                delegates=delegates,
+                daily_ranks=daily_ranks_by_day.get(current, {}),
+                metrics_input=metrics_input,
+            )
+        )
+        current += timedelta(days=1)
+    return daily_results
 
 
 def _run_fetch(args: argparse.Namespace) -> None:
     """Pull data from Dune + APIs, write CSVs and workbook tabs."""
     period = args.month
 
-    logger.info(
-        "Querying %s (%s through %s)", period, period.start.isoformat(), period.end.isoformat()
-    )
+    logger.info("Querying %s (%s through %s)", period, period.start.isoformat(), period.end.isoformat())
 
-    # YAML is the source of truth; the API call is for drift detection only.
     logger.info("Building delegate roster from delegates.yaml and vote.sky.money API...")
-    roster_result = build_roster_for_period(
-        yaml_path=YAML_PATH,
-        period=period,
-        api_fetcher=fetch_aligned_delegates,
-    )
+    roster_result = build_roster_for_period(yaml_path=YAML_PATH, period=period, api_fetcher=fetch_aligned_delegates)
     delegates = roster_result.active_delegates
     drift_warnings = roster_result.drift_warnings
     for warning in drift_warnings:
         logger.warning(warning)
     logger.info("Roster has %d delegates active during %s", len(delegates), period)
-
-    output_files: list[Path] = []
 
     df = to_dataframe(delegates)
 
@@ -220,17 +282,16 @@ def _run_fetch(args: argparse.Namespace) -> None:
         period,
         cache_max_age_hours=args.cache_hours,
     )
+    df_sky = pd.DataFrame(delegate_list_sky).sort_values(
+        by=["date", "sky", "contract"],
+        ascending=False,
+    )
 
-    df_sky = pd.DataFrame(delegate_list_sky)
     df_ranking = pd.DataFrame(delegate_list_rank)
-
-    df_sky = df_sky.sort_values(by=["date", "sky", "contract"], ascending=False)
-    df_ranking = df_ranking.sort_values(by=["Date", "Total Delegation"], ascending=False)
-
-    # Rank within each Date by Total Delegation (already sorted descending).
-    df_ranking["Rank"] = df_ranking.groupby("Date").cumcount() + 1
-
-    df_ranking = df_ranking.sort_values(by=["Rank", "Date"], ascending=[True, True])
+    df_ranking["Rank"] = (
+        df_ranking.groupby("Date")["Total Delegation"].rank(method="first", ascending=False).astype(int)
+    )
+    df_ranking = df_ranking.sort_values(by=["Rank", "Date"])
 
     logger.info("Getting POLL IDS...")
     poll_info = sky.get_poll_ids(period)
@@ -242,68 +303,46 @@ def _run_fetch(args: argparse.Namespace) -> None:
     logger.info("Getting VOTE FROM SPELL...")
     df = sky.get_vote_executive_ids(spell_info, df, df_sky)
 
-    # Open the workbook once and reuse for the writers below. Failures
-    # are handled per-writer so one tab's problem doesn't drop the others.
-    workbook: gspread.Spreadsheet | None
+    output_files: list[Path] = []
+
+    sky_csv = OUTPUT_DIR / "sky.csv"
+    df_sky.to_csv(sky_csv, index=False)
+    output_files.append(sky_csv)
+    logger.info("SKY data by date saved to %s", sky_csv)
+
+    participation_csv = OUTPUT_DIR / "vote_participation.csv"
+    with participation_csv.open("w", newline="") as f:
+        csv.writer(f).writerows(
+            sheets.build_participation_values(df, poll_info, spell_info),
+        )
+    output_files.append(participation_csv)
+    logger.info("Participation vote data saved to %s", participation_csv)
+
     try:
-        workbook = sheets.get_workbook()
-    except RuntimeError as e:
-        logger.error("Could not open Sheets workbook: %s", e)
-        logger.error("CSV outputs in output_date/ are complete; skipping Sheets writes.")
+        workbook: gspread.Spreadsheet | None = sheets.get_workbook()
+    except RuntimeError:
+        logger.exception("Could not open Sheets workbook")
+        logger.exception("CSV outputs in output_date/ are complete; skipping Sheets writes.")
         workbook = None
 
-    # Write Participation Raw Data BEFORE custom_sort, which transposes df.
     if workbook is not None:
-        try:
-            sheets.write_participation_raw_data(
-                workbook,
-                period,
-                df,
-                poll_info,
-                spell_info,
-            )
-            logger.info("Participation Raw Data tab written to workbook for %s", period)
-        except (RuntimeError, gspread.exceptions.APIError) as e:
-            logger.error("Could not write Participation Raw Data tab: %s", e)
 
-    # Communication Master: workbook-wide, merges new polls into the
-    # existing tab. ValueError here means the operator must add a column
-    # before re-running; surface the message rather than treat as transient.
-    if workbook is not None:
-        try:
-            sheets.write_communication_master(
-                workbook,
-                period,
-                df,
-                poll_info,
-                spell_info,
-            )
-            logger.info("Communication Master tab written to workbook for %s", period)
-        except ValueError as e:
-            logger.error("Communication Master writer rejected the data: %s", e)
-        except (RuntimeError, gspread.exceptions.APIError) as e:
-            logger.error("Could not write Communication Master tab: %s", e)
+        def _safe_write(description, fn, *args):
+            try:
+                fn(*args)
+                logger.info("%s tab written to workbook for %s", description, period)
+            except ValueError as e:
+                logger.error("%s writer rejected the data: %s", description, e)
+            except (RuntimeError, gspread.exceptions.APIError) as e:
+                logger.error("Could not write %s tab: %s", description, e)
 
-    df = sky.custom_sort(df, hardcoded_order, poll_info, spell_info)
-
-    output_csv = OUTPUT_DIR / "sky.csv"
-    df_sky.to_csv(output_csv, index=False)
-    output_files.append(output_csv)
-    logger.info("SKY data by date saved to %s", output_csv)
-
-    if workbook is not None:
-        try:
-            sheets.write_daily_data(workbook, period, df_ranking)
-            logger.info("Daily Data written to workbook for %s", period)
-        except (RuntimeError, gspread.exceptions.APIError) as e:
-            logger.error("Could not write Daily Data to tab: %s", e)
-
-    participation_values = sheets.build_participation_values(df, poll_info, spell_info)
-    output_csv = OUTPUT_DIR / "vote_participation.csv"
-    with output_csv.open("w", newline="") as f:
-        csv.writer(f).writerows(participation_values)
-    output_files.append(output_csv)
-    logger.info("Participation vote data saved to %s", output_csv)
+        _safe_write(
+            "Participation Raw Data", sheets.write_participation_raw_data, workbook, period, df, poll_info, spell_info
+        )
+        _safe_write(
+            "Communication Master", sheets.write_communication_master, workbook, period, df, poll_info, spell_info
+        )
+        _safe_write("Daily Data", sheets.write_daily_data, workbook, period, df_ranking)
 
     entry = build_entry(
         period=period,
@@ -336,10 +375,6 @@ def _window_start_for_period(period: MonthPeriod) -> date:
 def _run_finalize(args: argparse.Namespace) -> None:
     """Read workbook tabs, compute eligibility and compensation, write the Compensation tab.
 
-    Each external IO step has its own try/except -> SystemExit path.
-    Compute-step ValueErrors (tie at L3 cutoff, validation failures)
-    surface the same way for operator action.
-
     Raises:
         SystemExit: on any unrecoverable error.
     """
@@ -354,19 +389,8 @@ def _run_finalize(args: argparse.Namespace) -> None:
         window_end,
     )
 
-    # 1. Open the workbook
-    try:
-        workbook = sheets.get_workbook()
-    except RuntimeError as e:
-        logger.error("Could not open Sheets workbook: %s", e)
-        raise SystemExit(1) from e
-
-    # 2. Read Config
-    try:
-        config = sheets.read_config(workbook)
-    except (RuntimeError, ValueError) as e:
-        logger.error("Could not read Config tab: %s", e)
-        raise SystemExit(1) from e
+    workbook = _required_step("open Sheets workbook", sheets.get_workbook)
+    config = _required_step("read Config tab", sheets.read_config, workbook)
     logger.info(
         "Config: L1=%s L2=%s L3=%s total_slots=%d",
         config.l1_usds,
@@ -375,9 +399,6 @@ def _run_finalize(args: argparse.Namespace) -> None:
         config.total_slots,
     )
 
-    # 3. Build roster from YAML (source of truth). Skip the API drift check: finalize works
-    # on a closed historical period, and drift detection is a fetch-time
-    # concern.
     logger.info("Building delegate roster from delegates.yaml...")
     roster_result = build_roster_for_period(
         yaml_path=YAML_PATH,
@@ -391,114 +412,59 @@ def _run_finalize(args: argparse.Namespace) -> None:
         logger.warning(warning)
     logger.info("Roster has %d delegates active during %s", len(delegates), period)
 
-    # 4. Read Daily Data (Case A: hard fail if not populated for the period).
-    try:
-        daily_ranks_by_day = sheets.read_daily_data(workbook, period)
-    except RuntimeError as e:
-        logger.error("Could not read Daily Data: %s", e)
-        raise SystemExit(1) from e
+    daily_ranks_by_day = _required_step("read Daily Data", sheets.read_daily_data, workbook, period)
     logger.info("Daily Data has rank rows for %d days in %s", len(daily_ranks_by_day), period)
 
-    # 5. Read window participation history. Missing monthly tabs are OK
-    # (zero-poll months). Pre-populate every roster name with an empty
-    # entry so the eligibility check finds them.
-    participation_by_delegate = sheets.read_participation_for_window(
-        workbook,
-        window_start,
-        window_end,
-    )
-    total_polls = sum(len(v) for v in participation_by_delegate.values())
+    participation_by_delegate = sheets.read_participation_for_window(workbook, window_start, window_end)
     logger.info(
         "Window participation: %d total (delegate, poll) entries across %d delegates",
-        total_polls,
+        sum(len(v) for v in participation_by_delegate.values()),
         len(participation_by_delegate),
     )
 
-    # 6. Read Communication Master.
-    try:
-        communication_by_delegate = sheets.read_communication_master(workbook)
-    except RuntimeError as e:
-        logger.error("Could not read Communication Master: %s", e)
-        raise SystemExit(1) from e
+    communication_by_delegate = _required_step(
+        "read Communication Master",
+        sheets.read_communication_master,
+        workbook,
+    )
 
-    # 7. Build per-delegate metrics_input. Every active roster delegate
-    # gets an entry, even if they have no polls in the window.
-    metrics_input: dict[str, DelegateMetricsInput] = {}
-    for delegate in delegates:
-        entries = participation_by_delegate.get(delegate.name, [])
-        comm_map = communication_by_delegate.get(delegate.name, {})
-        poll_starts: list[date] = []
-        p_statuses: list[str] = []
-        c_statuses: list[str] = []
-        for poll_id, poll_start, p_status in entries:
-            poll_starts.append(poll_start)
-            p_statuses.append(p_status)
-            c_statuses.append(comm_map.get(poll_id, ""))
-        metrics_input[delegate.name] = DelegateMetricsInput(
-            poll_starts=poll_starts,
-            participation_statuses=p_statuses,
-            communication_statuses=c_statuses,
-        )
+    metrics_input = _build_metrics_input(delegates, participation_by_delegate, communication_by_delegate)
+    daily_results = _required_step(
+        "compute eligibility",
+        _compute_daily_results,
+        period,
+        window_start,
+        window_end,
+        delegates,
+        daily_ranks_by_day,
+        metrics_input,
+    )
 
-    # 8. Compute eligibility for each day in the period.
-    daily_results = []
-    current = period.start
-    try:
-        while current <= period.end:
-            daily_ranks = daily_ranks_by_day.get(current, {})
-            day_result = compute_daily_eligibility(
-                day=current,
-                window_start=window_start,
-                window_end=window_end,
-                delegates=delegates,
-                daily_ranks=daily_ranks,
-                metrics_input=metrics_input,
-            )
-            daily_results.append(day_result)
-            current = current + timedelta(days=1)
-    except ValueError as e:
-        logger.error("Eligibility computation failed: %s", e)
-        raise SystemExit(1) from e
-
-    # 9. Period-end metrics, extracted from the last day's DailyEligibility.
-    last_day = daily_results[-1]
     final_metrics: dict[str, tuple[float | None, float | None]] = {
         name: (entry.participation_pct, entry.communication_pct)
-        for name, entry in last_day.per_delegate.items()
+        for name, entry in daily_results[-1].per_delegate.items()
     }
 
-    # 10. Period compensation.
-    try:
-        period_comp = compute_period_compensation(
-            period=period,
-            daily_eligibility=daily_results,
-            config=config,
-            final_metrics=final_metrics,
-        )
-    except ValueError as e:
-        logger.error("Compensation computation failed: %s", e)
-        raise SystemExit(1) from e
-
+    period_comp = _required_step(
+        "compute compensation",
+        compute_period_compensation,
+        period=period,
+        daily_eligibility=daily_results,
+        config=config,
+        final_metrics=final_metrics,
+    )
     logger.info(
         "Compensation: %d delegates, slot_days_check=%s",
         len(period_comp.per_delegate),
         period_comp.validation.get("slot_days_check"),
     )
 
-    # 11. Write the Compensation tab.
-    try:
-        sheets.write_compensation_tab(workbook, period_comp)
-    except (RuntimeError, gspread.exceptions.APIError) as e:
-        logger.error("Could not write Compensation tab: %s", e)
-        raise SystemExit(1) from e
+    _required_step("write Compensation tab", sheets.write_compensation_tab, workbook, period_comp)
     logger.info("Compensation tab written for %s", period)
 
-    # 12. Reconciliation log. Reuse the fetch-shaped build_entry. Finalize
-    # doesn't hit Dune or the API (so dune/api fields are placeholders) and
-    # writes to a workbook tab rather than to a file - we record the tab
-    # title in output_files so operators reading the log can tell finalize
-    # runs apart from fetch runs at a glance.
-    compensation_tab_title = sheets._compensation_tab_title(period)
+    # Finalize doesn't hit Dune or the API and writes to a workbook tab
+    # rather than a file - record the tab title in output_files so log
+    # readers can tell finalize runs apart from fetch runs.
     entry = build_entry(
         period=period,
         yaml_path=YAML_PATH,
@@ -509,7 +475,7 @@ def _run_finalize(args: argparse.Namespace) -> None:
         dune_cache_max_age_hours=None,
         api_delegate_count=roster_result.api_delegate_count,
         api_fetch_succeeded=roster_result.api_fetch_succeeded,
-        output_files=[Path(f"workbook:{compensation_tab_title}")],
+        output_files=[Path(f"workbook:{sheets._compensation_tab_title(period)}")],
     )
     write_entry(RECONCILIATION_LOG_PATH, period, entry)
 
