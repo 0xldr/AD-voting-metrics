@@ -383,8 +383,6 @@ def custom_sort(df, hardcoded_order, poll_info, spell_info):
     df.insert(df.columns.get_loc("Delegate Contract") + 1, "Delegate", df["Delegate Name"])
     df = df.drop(["Delegate Name"], axis=1)
 
-    column_names = df.columns
-
     poll_by_id = {str(p["pollId"]): p for p in poll_info}
     spell_by_addr = {str(s["address"]): s for s in spell_info}
 
@@ -392,40 +390,33 @@ def custom_sort(df, hardcoded_order, poll_info, spell_info):
     start_date_list = []
     end_date_list = []
 
-    for column_name in column_names:
+    for column_name in df.columns:
         key = str(column_name)
-        object_found = poll_by_id.get(key) or spell_by_addr.get(key)
-
-        if object_found:
-            title_list.append(object_found["title"])
-
-            start_date_list.append(object_found["startDate"])
-            end_date_list.append(object_found.get("endDate", "N/A"))
+        metadata = poll_by_id.get(key) or spell_by_addr.get(key)
+        if metadata:
+            title_list.append(metadata["title"])
+            start_date_list.append(metadata["startDate"])
+            # Spells have no endDate; use "N/A" to keep column lengths aligned.
+            end_date_list.append(metadata.get("endDate", "N/A"))
 
         else:
             title_list.append("Title")
             start_date_list.append("Start Date")
-            # Spells have no endDate; use "N/A" to keep column lengths aligned.
             end_date_list.append("End Date")
 
-    missing_rows = [row for row in hardcoded_order if row not in df["Delegate Contract"].tolist()]
+    existing = df["Delegate Contract"].tolist()
+    for row in hardcoded_order:
+        if row not in existing:
+            df.loc[len(df)] = [row] + [None] * (len(df.columns) - 1)
 
-    num_columns = len(df.columns)
-    for row in missing_rows:
-        blank_row = [None] * num_columns
-        blank_row[0] = row
-        df.loc[len(df)] = blank_row
+    sort_index = {addr: i for i, addr in enumerate(hardcoded_order)}
+    df = df.sort_values(
+        by="Delegate Contract",
+        key=lambda col: col.map(sort_index).fillna(len(hardcoded_order)),
+    ).rename(columns={"Delegate Contract": "", "Delegate": "Poll Id"})
 
-    sort_keys = {addr: i for i, addr in enumerate(hardcoded_order)}
-    df["SortKey"] = df["Delegate Contract"].map(sort_keys).fillna(len(hardcoded_order)).astype(int)
-
-    sorted_df = df.sort_values(by="SortKey")
-    sorted_df = sorted_df.drop(columns=["SortKey"])
-    sorted_df = sorted_df.rename(columns={"Delegate Contract": "", "Delegate": "Poll Id"})
-
-    transposed_df = sorted_df.transpose()
-    transposed_df.insert(0, "Start Date", start_date_list)
-    transposed_df.insert(1, "End Date", end_date_list)
-    transposed_df.insert(2, "Title", title_list)
-
-    return transposed_df
+    transposed = df.transpose()
+    transposed.insert(0, "Start Date", start_date_list)
+    transposed.insert(1, "End Date", end_date_list)
+    transposed.insert(2, "Title", title_list)
+    return transposed
