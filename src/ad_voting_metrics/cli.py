@@ -348,9 +348,7 @@ def _run_fetch(args: argparse.Namespace) -> None:
         _safe_write(
             "Participation Raw Data", sheets.write_participation_raw_data, workbook, period, df, poll_info, spell_info
         )
-        _safe_write(
-            "Communication Master", sheets.write_communication_master, workbook, period, df, poll_info, spell_info
-        )
+        _safe_write("Communication Master", sheets.write_communication_master, workbook, df, poll_info, spell_info)
         _safe_write("Daily Data", sheets.write_daily_data, workbook, period, df_ranking)
 
     entry = build_entry(
