@@ -1,8 +1,8 @@
-"""Period compensation: pro-rata by days held, then scaled by the metrics modifier.
+"""Period compensation: pro-rata by days held, scaled by the metrics modifier.
 
-Pure functions. Given the per-day eligibility outputs from `eligibility`
-and the period-end metric percentages, returns one DelegateCompensation
-per active delegate, sorted alphabetically.
+Pure functions. Given per-day eligibility outputs and period-end metric
+percentages, returns one DelegateCompensation per active delegate,
+alphabetical by name.
 
 Per delegate:
   entitlement = (days_as_l1 / N) * L1_USDS
@@ -15,10 +15,9 @@ Component modifier (per the SKY DAO brief):
   >= 0.95  → 1.0
   >= 0.75  → (pct - 0.75) / 0.20   (linear ramp 0 → 1)
   < 0.75   → 0.0
-  None     → 0.0  (no votable polls in window)
+  None     → 0.0
 
-The buffer columns (carry-in, payment, post-payment) are stubs returning
-0.0; the carry-over mechanism is a later commit.
+Buffer columns (carry-in, payment, post-payment) are stubs returning 0.0.
 """
 
 from collections.abc import Mapping, Sequence
@@ -115,16 +114,10 @@ def compute_period_compensation(
     communication_pct) evaluated on the period's last day (the 6-month
     track-record values that gate the modifier).
 
-    Active delegates are those appearing in at least one DailyEligibility
-    in `daily_eligibility`. Their level on each day determines the
-    days_as_l1/l2/l3 counts; days they were not assigned a slot don't
-    contribute to entitlement.
-
     The output is sorted alphabetically by delegate name.
 
     Returns:
-        PeriodCompensation with config, days_in_period, sorted
-        per_delegate rows, and validation checks.
+        PeriodCompensation with alphabetical per-delegate rows.
 
     Raises:
         ValueError: if daily_eligibility's day count doesn't match
