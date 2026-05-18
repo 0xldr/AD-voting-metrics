@@ -581,40 +581,6 @@ def test_get_delegate_list_sky_date_is_date_object():
     assert isinstance(sky_list[0]["date"], date)
 
 
-def test_get_delegate_list_sky_same_name_multiple_contracts_sums_on_name():
-    """LEGACY behavior: if the same name appears with two contracts, rank list sums.
-
-    The current implementation handles a delegate name with multiple
-    contracts by summing on the name side and keeping separate on the
-    contract side. This is a legacy capability we plan to drop, but
-    pinning the behavior now ensures the refactor's behavior change is
-    explicit.
-    """
-    df = pd.DataFrame([
-        {"Delegate Name": "Alice", "Delegate Contract": "0xaaa", "Start Date": "2024-01-01"},
-        {"Delegate Name": "Alice", "Delegate Contract": "0xbbb", "Start Date": "2024-01-01"},
-    ])
-    fake_all_sky = _all_sky_df([
-        ("0xaaa", "2026-04-01", 100.0),
-        ("0xbbb", "2026-04-01", 200.0),
-    ])
-    period_1day = MagicMock(spec=MonthPeriod)
-    period_1day.start = date(2026, 4, 1)
-    period_1day.end = date(2026, 4, 1)
-
-    with patch.object(sky_dao, "get_all_sky_delegated", return_value=fake_all_sky):
-        sky_list, rank_list = sky_dao.get_delegate_list_sky(df, period_1day)
-
-    # Rank list: one row for "alice", summed
-    alice_rows = [r for r in rank_list if r["Delegate"] == "alice"]
-    assert len(alice_rows) == 1
-    assert alice_rows[0]["Total Delegation"] == 300.0
-    # Sky list: two rows, one per contract, with their individual balances
-    sky_by_contract = {r["contract"]: r["sky"] for r in sky_list}
-    assert sky_by_contract["0xaaa"] == 100.0
-    assert sky_by_contract["0xbbb"] == 200.0
-
-
 def test_get_delegate_list_sky_multiple_delegates_distinct_names():
     """Two distinct delegates produce separate (name, date) and (contract, date) entries."""
     df = pd.DataFrame([
