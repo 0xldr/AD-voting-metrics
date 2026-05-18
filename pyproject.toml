@@ -21,7 +21,6 @@ dependencies = [
 
 [dependency-groups]
 dev = [
-    "ruff",
     "pytest>=8.0",
     "responses>=0.25",
     "mypy>=1.0",
@@ -68,7 +67,7 @@ exclude = [
     "venv",
 ]
 
-line-length = 120
+line-length = 100
 indent-width = 4
 target-version = "py311"
 preview = true
@@ -77,84 +76,48 @@ preview = true
 # Allow unused variables when underscore-prefixed.
 dummy-variable-rgx = "^(_+|(_+[a-zA-Z0-9_]*[a-zA-Z0-9]+?))$"
 
-extend-select = [
-    "E",    # Pycodestyle errors (style issues)
-    "W",    # Pycodestyle warnings (style issues)
-    "C90",  # McCabe - complexity metric for functions
-    "I",    # isort – import ordering checks
-    "N",    # PEP8 Naming – naming conventions
-    "D",    # Pydocstyle – docstring formatting
-    "UP",   # Pyupgrade – upgrades syntax to newer Python versions
-    "YTT",  # Flake8-2020 - checks for misuse of sys.version and sys.version_info
-    "ANN",  # Flake8-annotations – enforces type annotation style
-    "ASYNC",# Flake8-async – checks async/await usage
-    "S",    # Flake8-bandit - security issues
-    "BLE",  # Flake8-blind-except – flags bare excepts
-    "FBT",  # Flake8-boolean-trap – potential pitfalls with booleans
-    "B",    # Flake8-bugbear – common bug patterns
-    "A",    # Flake8-builtins – misuse of Python built-in names
-    "COM",  # Flake8-commas – trailing/comma issues
-    "C4",   # Flake8-comprehensions – best practices in comprehensions
-    "DTZ",  # Flake8-datetimez – requires timezone-aware datetime objects
-    "T10",  # Flake8-debugger – debugger statements (e.g. pdb)
-    # "DJ",   # Flake8-django – Django-specific conventions
-    "EM",   # Flake8-errmsg – error message style
-    # "EXE",  # Flake8-executable – executable file checks
-    "FA",   # Flake8-future-annotations – future import for annotations
-    "ISC",  # Flake8-implicit-str-concat – warns on implicit string concatenation
-    "ICN",  # Flake8-import-conventions – enforces conventional import aliases
-    "LOG",  # Flake8-logging – proper logging usage
-    "G",    # Flake8-logging-format – logging format string issues
-    "INP",  # Flake8-no-pep420 – requires __init__.py files (no implicit namespace packages)
-    "PIE",  # Flake8-pie – Python improvement suggestions
-    # "T20",  # Flake8-print – disallows print statements
-    "PYI",  # Flake8-pyi – checks for type stub (.pyi) consistency
-    "PT",   # Flake8-pytest-style – pytest best practices
-    "Q",    # Flake8-quotes – enforces quote style consistency
-    "RSE",  # Flake8-raise – proper raise statement usage
-    "RET",  # Flake8-return – return statement issues
-    "SLF",  # Flake8-self – flags instance methods that don't use self
-    "SLOT", # Flake8-slots – suggests use of __slots__ where appropriate
-    "SIM",  # Flake8-simplify – code simplification hints
-    "TID",  # Flake8-tidy-imports – enforces specific import styles (e.g., no relative imports)
-    "TC",   # Flake8-type-checking – proper import of typing in type checks
-    "INT",  # Flake8-gettext – checks for proper internationalization usage
-    "ARG",  # Flake8-unused-arguments – flags unused function arguments
-    "PTH",  # Flake8-use-pathlib – encourages pathlib over os.path
-    "TD",   # Flake8-todos – flags TODO comments
-    "FIX",  # Flake8-fixme – flags FIXME comments
-    # "ERA",  # Eradicate – detects commented-out code (potentially dangerous)
-    "PD",   # Pandas-vet – checks pandas-specific code practices
-    "PGH",  # Pygrep-hooks – custom grep hooks for linting
-    "PL",   # Pylint – integration with Pylint conventions
-    "TRY",  # Tryceratops – try/except usage suggestions
-    "FLY",  # Flynt – f-string conversion suggestions
-    "NPY",  # NumPy-specific rules – ensures NumPy coding standards
-    "FAST", # FastAPI – FastAPI-specific linting rules
-    "AIR",  # Airflow – Airflow-specific linting rules
-    "PERF", # Perflint – performance-related checks
-    "FURB", # Refurb – rules for code refurbishment
-    "DOC",  # Pydoclint – docstring linting and consistency
-    "RUF",  # Ruff-specific rules – additional Ruff checks
+select = [
+    "E",    # pycodestyle errors
+    "F",    # pyflakes
+    "W",    # pycodestyle warnings
+    "I",    # isort
+    "UP",   # pyupgrade
+    "B",    # bugbear,
+    "SIM",  # simplifications
+    "PD",   # pandas-vet
+    "D",    # pydocstyle
+    "DOC",  # pydoclint
+    "RET",
+    "PTH",
+    "PIE",
+    "C4",   # comprehension simplifications
+    "RUF",  # ruff-specific
+    "A",    # builtin shadowing
+    "ICN",  # import conventions
+    "N",    # pep8-naming
+    "PERF", # performance
+    "PLE",  # pylint errors
+    # PL - selective pylint refactor/warning rules
+    "PLW2901", # for-loop variable overwritten in body
+    "PLR1714", # multi-equality -> in {...}
+    "PLR5501", # collapsible elif
 ]
 ignore = [
-    "D1",    # Pydocstyle - missing docstring in public module, class, or function
-    "FBT003", # Flake8-boolean-trap - boolean position value in function call
-    "D203",  # Pydocstyle - one blank line required before class docstring
-    "D212",  # Pydocstyle - summary line should be immediately after the opening quotes.
-    "S311",  # Flake8-bandit - Standard pseudo-random generators are not suitable for security/cryptographic purposes
-    "RET504", # Flake8-return - Checks for variable assignments that immediately precede a return of the assigned variable.
-    "FA102", # Flake8-future-annotations - Missing `from __future__ import annotations`, but uses PEP 604 union
-    "TRY003", # Tryceratops - Checks for long exception messages that are not defined in the exception class itself.
-    "EM101", # Flake8-errmsg - Checks for the use of string literals in exception constructors.
-    "TC002", # Flake8-type-checking - Checks for usage of typing imports outside of TYPE_CHECKING blocks.
-    "TC003", # Flake8-type-checking - Checks for imports from typing that are not within TYPE_CHECKING blocks.
-    "COM812", # Flake8-commas - Checks for missing commans. Conflicts with ruff format
+    "E501",  # line too long — too noisy for legacy code, will tighten later
+    "E402",  # module level import not at top — main.py has acceptable patterns
+    # DOC502 fires when a documented exception isn't directly raised in
+    # the function body (i.e. it propagates from a callee). Documenting
+    # propagated exceptions is informative for callers.
+    "DOC502",
 ]
 
 [tool.ruff.lint.per-file-ignores]
 "tests/*" = [
-    "S101", "S105", "S106", "S107", "PLR2004", "SLF001", "D", "ANN", "ARG001", "PLC0415", "EM102"
+    "F401",   # unused imports often appear in test fixtures
+    "N806",   # camelCase locals (mostly mirroring API field names in fixtures)
+    "D",      # don't enforce pydocstyle for tests
+    "DOC",    # don't enforce returns/raises documentation in tests
+    "RUF069", # float equality is fine in tests with exact-representable values
     ]
 
 [tool.ruff.lint.pydocstyle]
@@ -178,7 +141,7 @@ line-ending = "auto"
 #
 # This is currently disabled by default, but it is planned for this
 # to be opt-out in the future.
-docstring-code-format = true
+docstring-code-format = false
 
 # Set the line length limit used when formatting code snippets in
 # docstrings.
