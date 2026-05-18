@@ -1,70 +1,101 @@
-# Delegate Tracking
+# AD Voting Metrics
 
-This repository contains a Python script to track the states of votes cast in polls and spells at SKY.
+Python pipeline for computing monthly compensation for SKY DAO Aligned Delegates fron their on-chain voting participation and off-chain communication record.
 
-## Current Functionality
+## How It Works
 
-- Reads the Aligned Delegate roster from `delegates.yaml` and verifies it against vote.sky.money.
-- Fetches SKY delegation data per delegate per date from a Dune Analytics query.
-- Retrieves information of polls corresponding to the entered dates from vote.sky.money.
-- Retrieves information of spells corresponding to the entered dates from vote.sky.money.
-- Exports a CSV file with the SKY holdings of each delegate per date.
-- Exports a CSV file with the total SKY ranking of each delegate per date.
-- Exports two CSV files (one of them transposed for usability) with the status of the votes corresponding to each poll and spell.
+The pipeline is two-step, with operator review in between:
+
+1. **`fetch`** pulls SKY delegations from DUNE and poll/spell vote data from vote.sky.money for a given month. It writes per-delegate ranks, participation statuses, and a starting communication record to the configured Google Sheets workbook.
+2. An operator reviews the **Communication Master** tab in the workbook, marking each (delegate, poll) cell as `Yes`, `No`, `Did not vote`, or `Pending verification` based on whether the delegate communicated their vote rationale in time.
+3. **`finalize`** reads back the reviewed workbook tabs, evaluates each delegate's 6-month participation and communication track record, runs Level 3 slot eligibility, applies the metrics modifier (linear ramp 0→1 between 75% and 95% on each dimension, multiplied), and writes a **Compensation** tab for the month.
+
+Compensation is pro-rata by days held at each level (L1/L2/L3) and scaled by the modifier. Rates come from a workbook-wide **Config** tab.
 
 ## Requirements
 
-- Python 3.11 or later. Dependencies are declared in `pyproject.toml` and installed automatically via `pip install -e .`.
+- Python 3.11 or later.
+- A Dune Analytics API key
+- A Google Cloud service account with access to a Google Sheets workbook
 
 ## Installation
 
 Follow these steps to set up the project:
 
-1. Clone the repository and navigate to it:
-
-   ```bash
-   git clone <repo-url>
-   cd AD-voting-metrics
-   ```
-
-2. Install the package and its dependencies:
-
-   ```bash
-   pip install -e .
-   ```
+```bash
+git clone <repo-url>
+cd AD-voting-metrics
+pip install -e .
+```
 
 ## Configuration
 
+### Environment Variables
+
 The script needs a Dune Analytics API key to fetch delegated amounts.
 
-1. Get an API key from [Dune](https://dune.com/settings/api).
-2. Copy `.env.example` to `.env`:
+Copy `.env.example` to `.env` and fill in:
 
-   ```bash
-   cp .env.example .env
-   ```
+- `DUNE_API_KEY` - from https://dune.com/settings/api
+- `GOOGLE_SERVICE_ACCOUNT_FILE` - path to a service account JSON key file (create in Google Cloud Console, store outside the repo)
+- `SHEETS_WORKBOOK_ID` — the long ID in the workbook URL between `/d/` and `/edit`
 
-3. Edit `.env` and set `DUNE_API_KEY` to your key.
+Share the workbook with the service account email as Editor.
 
-## Maintaining the delegate roster
+### Workbook Setup
 
-The list of Aligned Delegates lives in `delegates.yaml` at the repo root. This is the source of truth for the script which reads it and verifies against the vote.sky.money API.
+The workbook needs a **Config** tab before `finalize` will run. Create a tab named exactly `Config` with two columns and these rows:
 
-Each entry has:
+| Key          | Value |
+|--------------|-------|
+| L1_USDS      | 33333 |
+| L2_USDS      | 14583 |
+| L3_USDS      | 4000  |
+| TOTAL_SLOTS  | 6     |
 
-- `name`: display name of the delegate
-- `vote_delegate_address`: the on-chain voteDelegate contract (lowercase 0x...)
-- `start_date`: the date that the delegate was recognized as aligned. This is not necessarily the same date the contract was deployed.
-- `end_date`: optional. The inclusive last day that they were an AD. `null` for currently active delegates.
+Adjust the USDS values to match the current DAO compensation rates. Values are monthly amounts in USDS.
 
-When a new delegate is recognized, add an entry with their `start_date` and `end_date: null`. When a delegate exits, set their `end_date` to the inclusive last day they were active. The script will warn if the YAML drifts from the API state (e.g., a delegate marked active in YAML who no longer appears in the API as currently-aligned).
+### Delegate Roster
+
+`delegates.yaml` at the repo root is the source of truth for who is an Aligned Delegate. Each entry has:
+
+- `name`: display name
+- `vote_delegate_address`: on-chain voteDelegate contract, lowercase `0x...`
+- `start_date`: date the delegate was recognized as aligned
+- `end_date`: inclusive last day they were active, or `null` if currently active
+
+When a delegate is recognized, add an entry with `end_date: null`. When they exit, set `end_date`. `fetch` warns if the YAML drifts from the live vote.sky.money state.
 
 ## Usage
 
-Run the script for a specific month:
-
 ```bash
-python -m ad_voting_metrics --month "April 2026"
-```
+# Step 1: pull data for the month
+python -m ad_voting_metrics fetch --month "April 2026"
 
+# Step 2: review the Communication Master tab in the workbook, then:
+python -m ad_voting_metrics finalize --month "April 2026"
+```
+ 
 Output CSVs are written to `output_data/`.
+`fetch` accepts `--cache-hours N` to reuse a Dune execution at most N hours old. Omit for fresh executions (recommended for monthly production runs).
+
+The month argument accepts either natural form (`"April 2026"`) or ISO (`"2026-04"`).
+
+## Outputs
+
+**`fetch`** writes:
+
+- Workbook tabs: `Daily Data` (workbook-wide), `Communication Master` (workbook-wide), `Participation Raw Data <Month Year>` (per-period)
+- CSVs in `output_data/`: `sky.csv` (raw Dune output), `vote_participation.csv` (per-delegate poll matrix)
+- A reconciliation log entry in `output_data/reconciliation/`
+
+**`finalize`** writes:
+
+- Workbook tab: `<Month Year> Compensation` (per-period)
+- A reconciliation log entry in `output_data/reconciliation/`
+
+Re-runs of either command overwrite the relevant per-period tabs.
+
+## Reconciliation log
+
+Every run writes a JSON file to `output_data/reconciliation/` with the period, timestamp, delegate counts, and metadata about the run. Useful for answering "what happened on this run" without re-running. `fetch` entries carry CSV paths in `output_files`; `finalize` entries carry the compensation tab name prefixed with `workbook:`.
