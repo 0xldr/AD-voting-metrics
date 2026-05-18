@@ -813,3 +813,394 @@ def test_custom_sort_transpose_first_three_columns_are_metadata():
     )
 
     assert list(result.columns[:3]) == ["Start Date", "End Date", "Title"]
+
+
+# ---------------------------------------------------------------------------
+# get_vote_poll_ids — characterization tests pinning current behavior before
+# the refactor that replaces per-(poll, delegate) df_sky filtering with a
+# precomputed dict lookup.
+# ---------------------------------------------------------------------------
+
+
+def _df_sky_for_window(rows: list[tuple[str, date, float]]) -> pd.DataFrame:
+    """Return a df_sky-shaped DataFrame: columns contract, date, sky."""
+    return pd.DataFrame(rows, columns=["contract", "date", "sky"])
+
+
+def _mock_poll_response(voter_addresses: list[str]) -> MagicMock:
+    """Return a mock for the polls/tally/{pollId} endpoint."""
+    response = MagicMock()
+    response.json.return_value = {"votesByAddress": [{"voter": addr} for addr in voter_addresses]}
+    response.raise_for_status.return_value = None
+    return response
+
+
+_CLOSED_POLL_NOW = datetime(2026, 4, 10, 17, 0, tzinfo=UTC)  # after poll ends 2026-04-03 16:00
+
+
+def test_get_vote_poll_ids_adds_column_per_poll():
+    """Each poll in poll_info gets its own column on df, keyed by str(pollId)."""
+    df = pd.DataFrame([
+        {"Delegate Name": "Alice", "Delegate Contract": "0xaaa", "Start Date": "2024-01-01"},
+    ])
+    df_sky = _df_sky_for_window([
+        ("0xaaa", date(2026, 4, 1), 1000.0),
+        ("0xaaa", date(2026, 4, 2), 1000.0),
+        ("0xaaa", date(2026, 4, 3), 1000.0),
+    ])
+    poll_info = [
+        {"pollId": 1234, "startDate": date(2026, 4, 1), "endDate": date(2026, 4, 3)},
+        {"pollId": 5678, "startDate": date(2026, 4, 1), "endDate": date(2026, 4, 3)},
+    ]
+
+    with patch("ad_voting_metrics.sky_dao.get_session") as mock_session:
+        mock_session.return_value.get.return_value = _mock_poll_response([])
+        result = sky_dao.get_vote_poll_ids(poll_info, df, df_sky, current_datetime=_CLOSED_POLL_NOW)
+
+    assert "1234" in result.columns
+    assert "5678" in result.columns
+
+
+def test_get_vote_poll_ids_voted_returns_yes():
+    """Delegate appearing in votesByAddress gets status 'Yes'."""
+    df = pd.DataFrame([
+        {"Delegate Name": "Alice", "Delegate Contract": "0xaaa", "Start Date": "2024-01-01"},
+    ])
+    df_sky = _df_sky_for_window([
+        ("0xaaa", date(2026, 4, 1), 1000.0),
+        ("0xaaa", date(2026, 4, 2), 1000.0),
+        ("0xaaa", date(2026, 4, 3), 1000.0),
+    ])
+    poll_info = [{"pollId": 1234, "startDate": date(2026, 4, 1), "endDate": date(2026, 4, 3)}]
+
+    with patch("ad_voting_metrics.sky_dao.get_session") as mock_session:
+        mock_session.return_value.get.return_value = _mock_poll_response(["0xaaa"])
+        result = sky_dao.get_vote_poll_ids(poll_info, df, df_sky, current_datetime=_CLOSED_POLL_NOW)
+
+    assert result.loc[0, "1234"] == "Yes"
+
+
+def test_get_vote_poll_ids_not_voted_with_sky_returns_no():
+    """Closed poll, didn't vote, had SKY throughout → 'No'."""
+    df = pd.DataFrame([
+        {"Delegate Name": "Alice", "Delegate Contract": "0xaaa", "Start Date": "2024-01-01"},
+    ])
+    df_sky = _df_sky_for_window([
+        ("0xaaa", date(2026, 4, 1), 1000.0),
+        ("0xaaa", date(2026, 4, 2), 1000.0),
+        ("0xaaa", date(2026, 4, 3), 1000.0),
+    ])
+    poll_info = [{"pollId": 1234, "startDate": date(2026, 4, 1), "endDate": date(2026, 4, 3)}]
+
+    with patch("ad_voting_metrics.sky_dao.get_session") as mock_session:
+        mock_session.return_value.get.return_value = _mock_poll_response([])
+        result = sky_dao.get_vote_poll_ids(poll_info, df, df_sky, current_datetime=_CLOSED_POLL_NOW)
+
+    assert result.loc[0, "1234"] == "No"
+
+
+def test_get_vote_poll_ids_poll_still_open_returns_voting_open():
+    """Poll still open + delegate didn't vote yet → 'Voting Open'."""
+    df = pd.DataFrame([
+        {"Delegate Name": "Alice", "Delegate Contract": "0xaaa", "Start Date": "2024-01-01"},
+    ])
+    df_sky = _df_sky_for_window([
+        ("0xaaa", date(2026, 4, 1), 1000.0),
+        ("0xaaa", date(2026, 4, 2), 1000.0),
+        ("0xaaa", date(2026, 4, 3), 1000.0),
+    ])
+    poll_info = [{"pollId": 1234, "startDate": date(2026, 4, 1), "endDate": date(2026, 4, 3)}]
+    # Before poll closes (2026-04-03 16:00 UTC)
+    open_now = datetime(2026, 4, 2, 12, 0, tzinfo=UTC)
+
+    with patch("ad_voting_metrics.sky_dao.get_session") as mock_session:
+        mock_session.return_value.get.return_value = _mock_poll_response([])
+        result = sky_dao.get_vote_poll_ids(poll_info, df, df_sky, current_datetime=open_now)
+
+    assert result.loc[0, "1234"] == "Voting Open"
+
+
+def test_get_vote_poll_ids_no_delegated_sky_returns_no_delegated_sky():
+    """No SKY anywhere in window → 'No Delegated SKY'."""
+    df = pd.DataFrame([
+        {"Delegate Name": "Alice", "Delegate Contract": "0xaaa", "Start Date": "2024-01-01"},
+    ])
+    df_sky = _df_sky_for_window([
+        ("0xaaa", date(2026, 4, 1), 0.0),
+        ("0xaaa", date(2026, 4, 2), 0.0),
+        ("0xaaa", date(2026, 4, 3), 0.0),
+    ])
+    poll_info = [{"pollId": 1234, "startDate": date(2026, 4, 1), "endDate": date(2026, 4, 3)}]
+
+    with patch("ad_voting_metrics.sky_dao.get_session") as mock_session:
+        mock_session.return_value.get.return_value = _mock_poll_response([])
+        result = sky_dao.get_vote_poll_ids(poll_info, df, df_sky, current_datetime=_CLOSED_POLL_NOW)
+
+    assert result.loc[0, "1234"] == "No Delegated SKY"
+
+
+def test_get_vote_poll_ids_address_matching_case_insensitive():
+    """Delegate contract case shouldn't matter for matching against voter list."""
+    df = pd.DataFrame([
+        {"Delegate Name": "Alice", "Delegate Contract": "0xAAA", "Start Date": "2024-01-01"},
+    ])
+    df_sky = _df_sky_for_window([
+        ("0xaaa", date(2026, 4, 1), 1000.0),
+        ("0xaaa", date(2026, 4, 2), 1000.0),
+        ("0xaaa", date(2026, 4, 3), 1000.0),
+    ])
+    poll_info = [{"pollId": 1234, "startDate": date(2026, 4, 1), "endDate": date(2026, 4, 3)}]
+
+    with patch("ad_voting_metrics.sky_dao.get_session") as mock_session:
+        # Voter address all lowercase, df contract all uppercase: should still match.
+        mock_session.return_value.get.return_value = _mock_poll_response(["0xaaa"])
+        result = sky_dao.get_vote_poll_ids(poll_info, df, df_sky, current_datetime=_CLOSED_POLL_NOW)
+
+    assert result.loc[0, "1234"] == "Yes"
+
+
+def test_get_vote_poll_ids_not_started_if_poll_ended_before_delegate_start():
+    """If poll endDate < delegate's Start Date, status overridden to 'Not Started'."""
+    df = pd.DataFrame([
+        # Alice's start date is AFTER the poll ends
+        {"Delegate Name": "Alice", "Delegate Contract": "0xaaa", "Start Date": "2026-05-01"},
+    ])
+    df_sky = _df_sky_for_window([])  # no SKY data
+    poll_info = [{"pollId": 1234, "startDate": date(2026, 4, 1), "endDate": date(2026, 4, 3)}]
+
+    with patch("ad_voting_metrics.sky_dao.get_session") as mock_session:
+        mock_session.return_value.get.return_value = _mock_poll_response([])
+        result = sky_dao.get_vote_poll_ids(poll_info, df, df_sky, current_datetime=_CLOSED_POLL_NOW)
+
+    assert result.loc[0, "1234"] == "Not Started"
+
+
+def test_get_vote_poll_ids_mutates_df_in_place():
+    """Documented contract: the same df object is returned, mutated in place."""
+    df = pd.DataFrame([
+        {"Delegate Name": "Alice", "Delegate Contract": "0xaaa", "Start Date": "2024-01-01"},
+    ])
+    df_sky = _df_sky_for_window([("0xaaa", date(2026, 4, 1), 1000.0)])
+    poll_info = [{"pollId": 1234, "startDate": date(2026, 4, 1), "endDate": date(2026, 4, 3)}]
+
+    with patch("ad_voting_metrics.sky_dao.get_session") as mock_session:
+        mock_session.return_value.get.return_value = _mock_poll_response([])
+        result = sky_dao.get_vote_poll_ids(poll_info, df, df_sky, current_datetime=_CLOSED_POLL_NOW)
+
+    assert result is df
+
+
+def test_get_vote_poll_ids_empty_poll_info_leaves_df_unchanged():
+    """No polls → df has no new columns added."""
+    df = pd.DataFrame([
+        {"Delegate Name": "Alice", "Delegate Contract": "0xaaa", "Start Date": "2024-01-01"},
+    ])
+    df_sky = _df_sky_for_window([])
+    original_columns = list(df.columns)
+
+    with patch("ad_voting_metrics.sky_dao.get_session"):
+        result = sky_dao.get_vote_poll_ids([], df, df_sky, current_datetime=_CLOSED_POLL_NOW)
+
+    assert list(result.columns) == original_columns
+
+
+def test_get_vote_poll_ids_multiple_delegates_per_poll():
+    """Each delegate row gets its own per-poll status."""
+    df = pd.DataFrame([
+        {"Delegate Name": "Alice", "Delegate Contract": "0xaaa", "Start Date": "2024-01-01"},
+        {"Delegate Name": "Bob", "Delegate Contract": "0xbbb", "Start Date": "2024-01-01"},
+    ])
+    df_sky = _df_sky_for_window([
+        ("0xaaa", date(2026, 4, 1), 1000.0),
+        ("0xaaa", date(2026, 4, 2), 1000.0),
+        ("0xaaa", date(2026, 4, 3), 1000.0),
+        ("0xbbb", date(2026, 4, 1), 500.0),
+        ("0xbbb", date(2026, 4, 2), 500.0),
+        ("0xbbb", date(2026, 4, 3), 500.0),
+    ])
+    poll_info = [{"pollId": 1234, "startDate": date(2026, 4, 1), "endDate": date(2026, 4, 3)}]
+
+    with patch("ad_voting_metrics.sky_dao.get_session") as mock_session:
+        # Alice voted, Bob didn't
+        mock_session.return_value.get.return_value = _mock_poll_response(["0xaaa"])
+        result = sky_dao.get_vote_poll_ids(poll_info, df, df_sky, current_datetime=_CLOSED_POLL_NOW)
+
+    assert result.loc[0, "1234"] == "Yes"
+    assert result.loc[1, "1234"] == "No"
+
+
+# ---------------------------------------------------------------------------
+# get_vote_executive_ids — characterization tests
+# ---------------------------------------------------------------------------
+
+
+def _mock_executive_supporters_response(supporters_by_spell: dict[str, list[str]]) -> MagicMock:
+    """Return a mock for the executive/supporters endpoint.
+
+    supporters_by_spell maps spell_address -> list of supporter addresses.
+    """
+    response = MagicMock()
+    response.json.return_value = {
+        spell_addr: [{"address": s} for s in supporters] for spell_addr, supporters in supporters_by_spell.items()
+    }
+    response.raise_for_status.return_value = None
+    return response
+
+
+def test_get_vote_executive_ids_adds_column_per_spell():
+    """Each spell in spell_info gets its own column on df, keyed by spell address."""
+    df = pd.DataFrame([
+        {"Delegate Name": "Alice", "Delegate Contract": "0xaaa", "Start Date": "2024-01-01"},
+    ])
+    df_sky = _df_sky_for_window([("0xaaa", date(2026, 4, 5), 1000.0)])
+    spell_info = [
+        {"address": "0xspell1", "startDate": date(2026, 4, 5)},
+        {"address": "0xspell2", "startDate": date(2026, 4, 5)},
+    ]
+
+    with patch("ad_voting_metrics.sky_dao.get_session") as mock_session:
+        mock_session.return_value.get.return_value = _mock_executive_supporters_response({})
+        result = sky_dao.get_vote_executive_ids(spell_info, df, df_sky)
+
+    assert "0xspell1" in result.columns
+    assert "0xspell2" in result.columns
+
+
+def test_get_vote_executive_ids_supporter_with_sky_returns_yes():
+    """Delegate in supporters + non-zero SKY on startDate → 'Yes'."""
+    df = pd.DataFrame([
+        {"Delegate Name": "Alice", "Delegate Contract": "0xaaa", "Start Date": "2024-01-01"},
+    ])
+    df_sky = _df_sky_for_window([("0xaaa", date(2026, 4, 5), 1000.0)])
+    spell_info = [{"address": "0xspell1", "startDate": date(2026, 4, 5)}]
+
+    with patch("ad_voting_metrics.sky_dao.get_session") as mock_session:
+        mock_session.return_value.get.return_value = _mock_executive_supporters_response(
+            {"0xspell1": ["0xaaa"]},
+        )
+        result = sky_dao.get_vote_executive_ids(spell_info, df, df_sky)
+
+    assert result.loc[0, "0xspell1"] == "Yes"
+
+
+def test_get_vote_executive_ids_not_supporter_with_sky_returns_pending():
+    """Delegate NOT in supporters + non-zero SKY on startDate → 'Pending verification'."""
+    df = pd.DataFrame([
+        {"Delegate Name": "Alice", "Delegate Contract": "0xaaa", "Start Date": "2024-01-01"},
+    ])
+    df_sky = _df_sky_for_window([("0xaaa", date(2026, 4, 5), 1000.0)])
+    spell_info = [{"address": "0xspell1", "startDate": date(2026, 4, 5)}]
+
+    with patch("ad_voting_metrics.sky_dao.get_session") as mock_session:
+        mock_session.return_value.get.return_value = _mock_executive_supporters_response(
+            {"0xspell1": []},  # no supporters
+        )
+        result = sky_dao.get_vote_executive_ids(spell_info, df, df_sky)
+
+    assert result.loc[0, "0xspell1"] == "Pending verification"
+
+
+def test_get_vote_executive_ids_zero_sky_returns_no_delegated_sky():
+    """SKY balance is 0 on startDate → 'No Delegated SKY'."""
+    df = pd.DataFrame([
+        {"Delegate Name": "Alice", "Delegate Contract": "0xaaa", "Start Date": "2024-01-01"},
+    ])
+    df_sky = _df_sky_for_window([("0xaaa", date(2026, 4, 5), 0.0)])
+    spell_info = [{"address": "0xspell1", "startDate": date(2026, 4, 5)}]
+
+    with patch("ad_voting_metrics.sky_dao.get_session") as mock_session:
+        mock_session.return_value.get.return_value = _mock_executive_supporters_response(
+            {"0xspell1": ["0xaaa"]},  # delegate IS a supporter, but no SKY
+        )
+        result = sky_dao.get_vote_executive_ids(spell_info, df, df_sky)
+
+    assert result.loc[0, "0xspell1"] == "No Delegated SKY"
+
+
+def test_get_vote_executive_ids_not_started_if_spell_started_before_delegate():
+    """spell startDate < delegate Start Date → 'Not Started' (overrides everything)."""
+    df = pd.DataFrame([
+        {"Delegate Name": "Alice", "Delegate Contract": "0xaaa", "Start Date": "2026-05-01"},
+    ])
+    df_sky = _df_sky_for_window([("0xaaa", date(2026, 4, 5), 1000.0)])
+    spell_info = [{"address": "0xspell1", "startDate": date(2026, 4, 5)}]
+
+    with patch("ad_voting_metrics.sky_dao.get_session") as mock_session:
+        mock_session.return_value.get.return_value = _mock_executive_supporters_response(
+            {"0xspell1": ["0xaaa"]},
+        )
+        result = sky_dao.get_vote_executive_ids(spell_info, df, df_sky)
+
+    assert result.loc[0, "0xspell1"] == "Not Started"
+
+
+def test_get_vote_executive_ids_spell_not_in_supporters_response_no_sky_match_keeps_bool():
+    """LATENT: if spell_address not in response data AND no df_sky row matches start_date,
+    `voted` stays as the False boolean and becomes a cell value.
+
+    This pins the current behavior so the refactor doesn't unintentionally
+    change it. The cell will hold the bool False (not the string "False");
+    callers downstream see a bool. This is almost certainly a latent bug
+    but we're not fixing it in the refactor.
+    """
+    df = pd.DataFrame([
+        {"Delegate Name": "Alice", "Delegate Contract": "0xaaa", "Start Date": "2024-01-01"},
+    ])
+    # df_sky has NO row for 0xaaa on the spell's startDate
+    df_sky = _df_sky_for_window([("0xaaa", date(2026, 4, 1), 1000.0)])  # different date
+    spell_info = [{"address": "0xspell1", "startDate": date(2026, 4, 5)}]
+
+    with patch("ad_voting_metrics.sky_dao.get_session") as mock_session:
+        # Empty response: spell_address NOT in data
+        mock_session.return_value.get.return_value = _mock_executive_supporters_response({})
+        result = sky_dao.get_vote_executive_ids(spell_info, df, df_sky)
+
+    # Pandas wraps the bool as numpy False_; equality to False holds.
+    assert result.loc[0, "0xspell1"] == False  # noqa: E712
+
+
+def test_get_vote_executive_ids_supporter_address_matching_case_insensitive():
+    """Supporter address case shouldn't matter; df contract is compared lowercased."""
+    df = pd.DataFrame([
+        {"Delegate Name": "Alice", "Delegate Contract": "0xAAA", "Start Date": "2024-01-01"},
+    ])
+    df_sky = _df_sky_for_window([("0xaaa", date(2026, 4, 5), 1000.0)])
+    spell_info = [{"address": "0xspell1", "startDate": date(2026, 4, 5)}]
+
+    with patch("ad_voting_metrics.sky_dao.get_session") as mock_session:
+        mock_session.return_value.get.return_value = _mock_executive_supporters_response(
+            {"0xspell1": ["0xaaa"]},  # supporter lowercase, df contract uppercase
+        )
+        result = sky_dao.get_vote_executive_ids(spell_info, df, df_sky)
+
+    assert result.loc[0, "0xspell1"] == "Yes"
+
+
+def test_get_vote_executive_ids_mutates_df_in_place():
+    """The same df object is returned, mutated in place."""
+    df = pd.DataFrame([
+        {"Delegate Name": "Alice", "Delegate Contract": "0xaaa", "Start Date": "2024-01-01"},
+    ])
+    df_sky = _df_sky_for_window([("0xaaa", date(2026, 4, 5), 1000.0)])
+    spell_info = [{"address": "0xspell1", "startDate": date(2026, 4, 5)}]
+
+    with patch("ad_voting_metrics.sky_dao.get_session") as mock_session:
+        mock_session.return_value.get.return_value = _mock_executive_supporters_response({})
+        result = sky_dao.get_vote_executive_ids(spell_info, df, df_sky)
+
+    assert result is df
+
+
+def test_get_vote_executive_ids_empty_spell_info_leaves_df_unchanged():
+    """No spells → df has no new columns added (but the HTTP call still happens)."""
+    df = pd.DataFrame([
+        {"Delegate Name": "Alice", "Delegate Contract": "0xaaa", "Start Date": "2024-01-01"},
+    ])
+    df_sky = _df_sky_for_window([])
+    original_columns = list(df.columns)
+
+    with patch("ad_voting_metrics.sky_dao.get_session") as mock_session:
+        mock_session.return_value.get.return_value = _mock_executive_supporters_response({})
+        result = sky_dao.get_vote_executive_ids([], df, df_sky)
+
+    assert list(result.columns) == original_columns
