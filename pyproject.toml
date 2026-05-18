@@ -37,6 +37,12 @@ where = ["src"]
 [tool.setuptools.package-data]
 ad_voting_metrics = ["py.typed"]
 
+[tool.pyright]
+include = ["src", "tests"]
+pythonVersion = "3.11"
+typeCheckingMode = "standard"
+reportMissingTypeStubs = false
+
 [tool.ruff]
 # Exclude a variety of commonly ignored directories.
 exclude = [
