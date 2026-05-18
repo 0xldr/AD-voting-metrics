@@ -153,9 +153,7 @@ def _open_required_tab(
 ) -> gspread.Worksheet:
     """Open the named tab or raise RuntimeError with an operator-friendly message.
 
-    `instructions` is appended after the standard "Workbook is missing
-    the '<title>' tab." prefix; pass something the operator can act on,
-    typically a hint about which command populates the tab.
+    The raised message is "Workbook is missing the '<title>' tab. <instructions>"
 
     Returns:
         The worksheet.
@@ -794,7 +792,7 @@ def _level_label(level: int | None) -> str:
 
 
 def _format_pct(pct: float | None) -> str | float:
-    """Format a fractional pct as a value Sheets can render as a percent.
+    """Format a fractional pct for the Compensation tab.
 
     Returns:
         The float unchanged for numberic values, or "No Data" for None.
@@ -808,18 +806,16 @@ def write_compensation_tab(
     workbook: gspread.Spreadsheet,
     period_comp: "PeriodCompensation",
 ) -> gspread.Worksheet:
-    """Write the per-period Compensation tab for a finalize run.
+    """Write the per-period Compensation tab. Re-runs overwrite.
 
-    Tab is named "{Month Year} Compensation" (e.g. "April 2026 Compensation").
-    Re-runs overwrite - operator edits to the script-owned cells are lost.
+    Tab name: "{Month Year} Compensation".
 
     Layout:
-      - Rows 1-5: period metadata block (Year, Month, Period Start/End,
-        Days in Month).
+      - Rows 1-5: period metadata (Year, Month, Period Start/End, Days)
       - Rows 1-3 cols D-E: L1/L2/L3 USDS reference values from config.
       - Rows 1-3 cols G-H: counts of delegates at each level.
       - Row 7: Total Final Amount label + sum formula.
-      - Row 8: Slot Days Check label + GOOD/NOT GOOD status.
+      - Row 8: Slot Days Check GOOD/NOT GOOD status.
       - Row 9: column headers (14 columns A-N).
       - Rows 10+: one row per delegate, alphabetical.
 
@@ -966,17 +962,17 @@ def _enumerate_months(start: date, end: date) -> list[MonthPeriod]:
 def _parse_poll_history_tab(
     worksheet: gspread.Worksheet,
 ) -> tuple[list[str], list[tuple[str, list[str]]]]:
-    """Open the named tab or raise RuntimeError with an operator-friendly message.
+    """Validate the shared poll-history tab shape and return delegate cols + data rows.
 
-    `instructions` is appended after the standard "Workbook is missing
-    the '<title>' tab." prefix; pass something the operator can act on,
-    typically a hint about which command populates the tab.
+    Tab layout: Poll Id | Start Date | End Date | Title | <Delegate 1> | ...
+
+    Empty / header-only / no-delegate-column tabs and blank-poll-id rows
+    are dropped.
 
     Returns:
-        The worksheet.
-
-    Raises:
-        RuntimeError: if the tab doesn't exist.
+        (delegate_columns, validated_rows). Each validated_rows entry
+        is (poll_id_str, raw_row_cells); use _cell() to index per-
+        delegate cells at `n_metadata + offset`.
     """
     rows = worksheet.get_all_values()
     if len(rows) < 2:
@@ -1002,7 +998,11 @@ def _parse_poll_history_tab(
 
 
 def _cell(row: list[str], col_idx: int) -> str:
-    """Return row[col_idx] or empty string if the row is too short."""
+    """Return row[col_idx] or empty string if the row is too short.
+
+    gspread returns short rows rather than padding with empties when
+    operators leave trailing cells blank.
+    """
     return row[col_idx] if col_idx < len(row) else ""
 
 
@@ -1011,9 +1011,6 @@ def read_daily_data(
     period: MonthPeriod,
 ) -> dict[date, dict[str, int]]:
     """Read the workbook-wide Daily Data tab; return ranks for every day in `period`.
-
-    Filters rows to dates inside the period and pivots into a nested
-    dict keyed by date and delegate name.
 
     Returns:
         {day: {delegate_name: rank}} for every day in `period` that
@@ -1128,19 +1125,14 @@ def read_participation_for_window(
 def read_communication_master(
     workbook: gspread.Spreadsheet,
 ) -> dict[str, dict[str, str]]:
-    """Aggregate per-delegate poll history across all months in [window_start, window_end].
+    """Read the workbook-wide Communication Master tab.
 
-    Walks each month touching the window. For each, looks for a tab
-    named "Participation Raw Data <Month Year>". Missing tabs are
-    silently skipped (zero-poll months produce no tab). Filters polls
-    by start date within the window bounds.
+    Keyed by delegate then poll_id for fast lookup at the join site
+    (finalize iterates participation entries and needs the communication
+    status per (delegate, poll) pair).
 
     Returns:
-        {delegate_name: [(poll_start_date, participation_status), ...]}
-        aggregated across all available monthly tabs in the window.
-
-    Raises:
-        RuntimeError: if the Communication Master is absent.
+        {delegate_name: {poll_id_str: communication_status}}.
     """
     worksheet = _open_required_tab(
         workbook,

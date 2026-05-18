@@ -334,23 +334,12 @@ def _window_start_for_period(period: MonthPeriod) -> date:
 def _run_finalize(args: argparse.Namespace) -> None:
     """Read workbook tabs, compute eligibility and compensation, write the Compensation tab.
 
-    Composes:
-      - read_daily_data: per-day delegate ranks
-      - read_participation_for_window: 6-month poll history
-      - read_communication_master: communication status per (delegate, poll)
-      - read_config: L1/L2/L3 USDS amounts and TOTAL_SLOTS
-      - build_roster_for_period: active delegates from YAML
-      - compute_daily_eligibility: per-day slot assignment
-      - compute_period_compensation: pro-rata + modifier
-      - write_compensation_tab: per-period output tab
-
-    Each external IO step has its own failure path. Compute-step failures
-    (ValueError from eligibility/compensation) surface to the operator;
-    they indicate a tie at the L3 cutoff or other actionable conditions.
+    Each external IO step has its own try/except -> SystemExit path.
+    Compute-step ValueErrors (tie at L3 cutoff, validation failures)
+    surface the same way for operator action.
 
     Raises:
-        SystemExit: on any unrecoverable error (missing tabs, auth
-            failure, tie at cutoff, etc.).
+        SystemExit: on any unrecoverable error.
     """
     period = args.month
     window_start = _window_start_for_period(period)
@@ -502,10 +491,12 @@ def _run_finalize(args: argparse.Namespace) -> None:
         raise SystemExit(1) from e
     logger.info("Compensation tab written for %s", period)
 
-    # 12. Reconciliation log. Reuse the fetch-shaped build_entry; finalize
-    # doesn't hit Dune or the API, so the dune/api fields are placeholders
-    # — operators reading the log can distinguish runs by the command and
-    # by checking which output files are present.
+    # 12. Reconciliation log. Reuse the fetch-shaped build_entry. Finalize
+    # doesn't hit Dune or the API (so dune/api fields are placeholders) and
+    # writes to a workbook tab rather than to a file - we record the tab
+    # title in output_files so operators reading the log can tell finalize
+    # runs apart from fetch runs at a glance.
+    compensation_tab_title = sheets._compensation_tab_title(period)
     entry = build_entry(
         period=period,
         yaml_path=YAML_PATH,
@@ -516,7 +507,7 @@ def _run_finalize(args: argparse.Namespace) -> None:
         dune_cache_max_age_hours=None,
         api_delegate_count=roster_result.api_delegate_count,
         api_fetch_succeeded=roster_result.api_fetch_succeeded,
-        output_files=[],
+        output_files=[Path(f"workbook:{compensation_tab_title}")],
     )
     write_entry(RECONCILIATION_LOG_PATH, period, entry)
 
