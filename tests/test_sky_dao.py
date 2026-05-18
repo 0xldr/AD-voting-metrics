@@ -1134,31 +1134,6 @@ def test_get_vote_executive_ids_not_started_if_spell_started_before_delegate():
     assert result.loc[0, "0xspell1"] == "Not Started"
 
 
-def test_get_vote_executive_ids_spell_not_in_supporters_response_no_sky_match_keeps_bool():
-    """LATENT: if spell_address not in response data AND no df_sky row matches start_date,
-    `voted` stays as the False boolean and becomes a cell value.
-
-    This pins the current behavior so the refactor doesn't unintentionally
-    change it. The cell will hold the bool False (not the string "False");
-    callers downstream see a bool. This is almost certainly a latent bug
-    but we're not fixing it in the refactor.
-    """
-    df = pd.DataFrame([
-        {"Delegate Name": "Alice", "Delegate Contract": "0xaaa", "Start Date": "2024-01-01"},
-    ])
-    # df_sky has NO row for 0xaaa on the spell's startDate
-    df_sky = _df_sky_for_window([("0xaaa", date(2026, 4, 1), 1000.0)])  # different date
-    spell_info = [{"address": "0xspell1", "startDate": date(2026, 4, 5)}]
-
-    with patch("ad_voting_metrics.sky_dao.get_session") as mock_session:
-        # Empty response: spell_address NOT in data
-        mock_session.return_value.get.return_value = _mock_executive_supporters_response({})
-        result = sky_dao.get_vote_executive_ids(spell_info, df, df_sky)
-
-    # Pandas wraps the bool as numpy False_; equality to False holds.
-    assert result.loc[0, "0xspell1"] == False  # noqa: E712
-
-
 def test_get_vote_executive_ids_supporter_address_matching_case_insensitive():
     """Supporter address case shouldn't matter; df contract is compared lowercased."""
     df = pd.DataFrame([

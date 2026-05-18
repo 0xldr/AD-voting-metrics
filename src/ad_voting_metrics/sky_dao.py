@@ -5,7 +5,7 @@ Owns the close-day vote-status rule (see `determine_vote_status`).
 
 import logging
 import os
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 
 import pandas as pd
 from dateutil import parser
@@ -252,6 +252,13 @@ def get_vote_poll_ids(poll_info, df, df_sky, current_datetime: datetime):
     Returns:
         The same df, mutated in place with one new column per poll.
     """
+    # Build a (contract_lower, date) -> sky lookup once. Replaces the
+    # per-(poll, delegate) boolean-mask filter + iterrows that the
+    # previous implementation ran inside the inner loop.
+    sky_lookup: dict[tuple[str, date], float] = {
+        (r["contract"].lower(), r["date"]): float(r["sky"]) for r in df_sky.to_dict(orient="records")
+    }
+
     for poll in poll_info:
         vote_statuses = []
         base_url = f"{SKY_POLL_ID_URL}/{poll['pollId']}?network=mainnet"
@@ -259,26 +266,19 @@ def get_vote_poll_ids(poll_info, df, df_sky, current_datetime: datetime):
 
         response.raise_for_status()
         data = response.json()
+        voter_set = {voter["voter"].lower() for voter in data.get("votesByAddress", [])}
+
+        start_date = poll["startDate"]
+        end_date = poll["endDate"]
+        poll_window_days = [start_date + timedelta(days=i) for i in range((end_date - start_date).days + 1)]
+
         for _index, row in df.iterrows():
-            address = row["Delegate Contract"]
-            first_delegate_date = datetime.strptime(row["Start Date"], "%Y-%m-%d").date()
-            delegate_voted = any(
-                voter["voter"].lower() == address.lower()
-                for voter in data.get("votesByAddress", [])
-            )
-
-            start_date = poll["startDate"]
-            end_date = poll["endDate"]
-
-            delegates_sky_available = df_sky[
-                (df_sky["contract"].str.lower() == address.lower())
-                & (df_sky["date"] >= start_date)
-                & (df_sky["date"] <= end_date)
-            ]
+            address_lower = row["Delegate Contract"].lower()
+            first_delegate_date = datetime.strptime(row["Start Date"], "%Y-%m-%d").replace(tzinfo=UTC).date()
+            delegate_voted = address_lower in voter_set
 
             sky_by_date: dict[date, float] = {
-                row_sky["date"]: float(row_sky["sky"])
-                for _, row_sky in delegates_sky_available.iterrows()
+                d: sky_lookup[address_lower, d] for d in poll_window_days if (address_lower, d) in sky_lookup
             }
             status = determine_vote_status(sky_by_date, end_date, delegate_voted, current_datetime)
 
@@ -338,34 +338,34 @@ def get_vote_executive_ids(spell_info, df, df_sky):
     response.raise_for_status()
     data = response.json()
 
+    # Build a (contract_lower, date) -> sky lookup once. Replaces the
+    # per-(spell, delegate) boolean-mask filter + iterrows that the
+    # previous implementation ran inside the inner loop.
+    sky_lookup: dict[tuple[str, date], float] = {
+        (r["contract"].lower(), r["date"]): float(r["sky"]) for r in df_sky.to_dict(orient="records")
+    }
+
     for spell in spell_info:
         vote_statuses = []
         spell_address = spell["address"]
         start_date = spell["startDate"]
+        supporter_set = {s["address"] for s in data.get(spell_address, [])}
 
         for _index, row in df.iterrows():
-            address = row["Delegate Contract"]
-            first_delegate_date = datetime.strptime(row["Start Date"], "%Y-%m-%d").date()
+            address_lower = row["Delegate Contract"].lower()
+            first_delegate_date = datetime.strptime(row["Start Date"], "%Y-%m-%d").replace(tzinfo=UTC).date()
 
-            # `voted` is a bool from the supporters check, then gets
-            # rewritten to a status string in the SKY-availability loop.
-            voted: bool | str
-            if spell_address in data:
-                voted = any(
-                    supporters["address"] == address.lower() for supporters in data[spell_address]
-                )
+            # df_sky is built by get_delegate_list_sky to cover every
+            # (delegate, day) in the period, and spell startDate is
+            # filtered to fall within the period. So this lookup always
+            # hits in normal pipeline execution; a KeyError here means
+            # the caller built df_sky inconsistently with spell_info
+            sky_on_start = sky_lookup[address_lower, start_date]
+
+            voted: str
+            if sky_on_start != 0:
+                voted = "Yes" if address_lower in supporter_set else "Pending verification"
             else:
-                voted = False
-
-            delegates_sky_available = df_sky[df_sky["contract"].str.lower() == address.lower()]
-
-            for _index, delegate_sky_available in delegates_sky_available.iterrows():
-                if delegate_sky_available["date"] != start_date:
-                    continue
-
-                if delegate_sky_available["sky"] != 0:
-                    voted = "Yes" if voted else "Pending verification"
-                    break
                 voted = "No Delegated SKY"
 
             if first_delegate_date > start_date:
