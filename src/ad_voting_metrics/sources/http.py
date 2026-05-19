@@ -16,6 +16,9 @@ from urllib3.util.retry import Retry
 # will wait forever on a hung connection.
 HTTP_TIMEOUT = (5, 30)
 
+# Default request headers for external JSON APIs (vote.sky.money, etc.).
+HEADERS = {"User-Agent": "Mozilla/5.0", "Accept": "application/json"}
+
 # Transiet HTTP statuses worth retrying. 429 (rate limit) and 5xx.
 _RETRY_STATUSES = (429, 500, 502, 503, 504)
 
