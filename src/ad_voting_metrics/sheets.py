@@ -9,6 +9,7 @@ a one-time setup step in the Google Sheets sharing dialog.
 import calendar
 import os
 from collections import Counter
+from collections.abc import Sequence
 from datetime import date, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -212,6 +213,69 @@ def _read_daily_data_existing(
     return existing
 
 
+def _extract_daily_data_rows(
+    df_ranking: pd.DataFrame,
+) -> tuple[dict[tuple[str, str], tuple[float, int]], Counter[str]]:
+    """Project df_ranking into (date, delegate) -> (sky, rank), plus per-date counts.
+
+    Returns:
+        Tuple of (new_rows, new_counts_by_date).
+    """
+    subset = df_ranking[list(DAILY_DATA_COLUMNS)].copy()
+    subset["Date"] = subset["Date"].apply(_coerce_date)
+
+    new_rows: dict[tuple[str, str], tuple[float, int]] = {}
+    new_counts_by_date: Counter[str] = Counter()
+    for _, row in subset.iterrows():
+        date_str = str(row["Date"])
+        delegate = str(row["Delegate"])
+        new_rows[date_str, delegate] = (float(row["Total Delegation"]), int(row["Rank"]))
+        new_counts_by_date[date_str] += 1
+    return new_rows, new_counts_by_date
+
+
+def _check_daily_data_drift(
+    existing: dict[tuple[str, str], tuple[float, int]],
+    new_counts_by_date: Counter[str],
+    period: MonthPeriod,
+) -> None:
+    """Validate that no shared date's delegate-row count changed between runs.
+
+    Raises:
+        ValueError: if the existing tab's row count for a shared date
+            disagrees with the current fetch's row count.
+    """
+    existing_counts_by_date: Counter[str] = Counter(date_str for (date_str, _delegate) in existing)
+    for date_str, new_count in new_counts_by_date.items():
+        if date_str in existing_counts_by_date:
+            existing_count = existing_counts_by_date[date_str]
+            if existing_count != new_count:
+                msg = (
+                    f"Roster drift detected for date {date_str}: existing Daily Data has {existing_count} delegate "
+                    f"rows, current fetch for {period} has {new_count}. The active-delegate count for that date "
+                    f"changed between fetches. Reconcile manually (roster YAML) vs Communication Master / Daily Data) "
+                    f"before re-running."
+                )
+                raise ValueError(msg)
+
+
+def _merge_daily_data_rows(
+    existing: dict[tuple[str, str], tuple[float, int]],
+    new_rows: dict[tuple[str, str], tuple[float, int]],
+    dates_in_new: set[str],
+) -> dict[tuple[str, str], tuple[float, int]]:
+    """Preserve existing rows for dates not in the current fetch; overwrite the rest.
+
+    Returns:
+        The merged (date, delegate) -> (sky, rank) mapping.
+    """
+    merged: dict[tuple[str, str], tuple[float, int]] = {
+        key: value for key, value in existing.items() if key[0] not in dates_in_new
+    }
+    merged.update(new_rows)
+    return merged
+
+
 def write_daily_data(
     workbook: gspread.Spreadsheet,
     period: MonthPeriod,
@@ -251,18 +315,7 @@ def write_daily_data(
         msg = f"df_ranking is missing required columns: {missing}. Has: {list(df_ranking.columns)}"
         raise ValueError(msg)
 
-    subset = df_ranking[list(DAILY_DATA_COLUMNS)].copy()
-    subset["Date"] = subset["Date"].apply(_coerce_date)
-
-    new_rows: dict[tuple[str, str], tuple[float, int]] = {}
-    new_counts_by_date: Counter[str] = Counter()
-    for _, row in subset.iterrows():
-        date_str = str(row["Date"])
-        delegate = str(row["Delegate"])
-        sky = float(row["Total Delegation"])
-        rank = int(row["Rank"])
-        new_rows[date_str, delegate] = (sky, rank)
-        new_counts_by_date[date_str] += 1
+    new_rows, new_counts_by_date = _extract_daily_data_rows(df_ranking)
 
     # Size generously; clear-and-rewrite at the end sets the actual cell count.
     worksheet = get_or_create_tab(
@@ -273,49 +326,19 @@ def write_daily_data(
     )
 
     existing = _read_daily_data_existing(worksheet)
+    _check_daily_data_drift(existing, new_counts_by_date, period)
+    merged = _merge_daily_data_rows(existing, new_rows, set(new_counts_by_date.keys()))
 
-    existing_counts_by_date: Counter[str] = Counter(date_str for (date_str, _delegate) in existing)
-
-    for date_str, new_count in new_counts_by_date.items():
-        if date_str in existing_counts_by_date:
-            existing_count = existing_counts_by_date[date_str]
-            if existing_count != new_count:
-                msg_0 = (
-                    f"Roster drift detected for date {date_str}: existing Daily Data has {existing_count} delegate "
-                    f"rows, current fetch for {period} has {new_count}. The active-delegate count for that date "
-                    f"changed between fetches. Reconcile manually (roster YAML) vs Communication Master / Daily Data) "
-                    f"before re-running."
-                )
-                raise ValueError(msg_0)
-    # Merge: preserve existing dates not in the current fetch; overwrite
-    # the rest with new values.
-    dates_in_new = set(new_counts_by_date.keys())
-    merged: dict[tuple[str, str], tuple[float, int]] = {}
-    for key, value in existing.items():
-        date_str, _delegate = key
-        if date_str not in dates_in_new:
-            merged[key] = value
-    merged.update(new_rows)
-
-    sorted_keys = sorted(
-        merged.keys(),
-        key=lambda k: (k[0], merged[k][1]),  # (date_str, rank)
-    )
-
+    sorted_keys = sorted(merged.keys(), key=lambda k: (k[0], merged[k][1]))
     header: list[object] = list(DAILY_DATA_COLUMNS)
-    rows: list[list[object]] = []
-    for key in sorted_keys:
-        date_str, delegate = key
-        sky, rank = merged[key]
-        rows.append([date_str, delegate, sky, rank])
+    rows: list[list[object]] = [
+        [date_str, delegate, *merged[date_str, delegate]] for date_str, delegate in sorted_keys
+    ]
     values: list[list[object]] = [header, *rows]
 
     clear_tab(worksheet)
-
     end_cell = rowcol_to_a1(len(values), len(header))
-    range_name = f"A1:{end_cell}"
-    worksheet.update(values=values, range_name=range_name)
-
+    worksheet.update(values=values, range_name=f"A1:{end_cell}")
     return worksheet
 
 
@@ -662,27 +685,67 @@ def write_communication_master(
     )
 
     existing_header, existing_rows = _read_communication_master_existing(worksheet)
+    header = _resolve_comm_master_header(existing_header, delegate_names)
+    merged_rows = _build_comm_master_merged_rows(
+        df=df,
+        header=header,
+        existing_rows=existing_rows,
+        poll_columns=poll_columns,
+        poll_and_spell_info=(poll_info, spell_info),
+    )
 
+    sorted_items = _sort_comm_rows_by_start_date(merged_rows)
+    rows: list[list[object]] = [list(row) for _, row in sorted_items]
+    values: list[list[object]] = [list(header), *rows]
+
+    clear_tab(worksheet)
+    end_cell = rowcol_to_a1(len(values), len(header))
+    worksheet.update(values=values, range_name=f"A1:{end_cell}")
+    return worksheet
+
+
+def _resolve_comm_master_header(existing_header: list[str], delegate_names: list[str]) -> list[str]:
+    """Return the header to use, defaulting from delegate_names if the tab is empty.
+
+    Returns:
+        The header list (a fresh copy when reusing existing_header).
+
+    Raises:
+        ValueError: if a delegate in delegate_names has no column in a
+            non-empty existing header.
+    """
     if not existing_header:
-        header: list[str] = [*PARTICIPATION_METADATA_COLUMNS, *delegate_names]
-    else:
-        header = list(existing_header)
-        missing = [n for n in delegate_names if n not in set(existing_header)]
-        if missing:
-            msg = (
-                f"Communication Master is missing column(s) for delegate(s): "
-                f"{missing}. Add a column header with the exact delegate name "
-                f"for each missing delegate to the Communication Master tab, "
-                f"then re-run. (Columns can't be auto-added - operators control "
-                f"column placement and naming.)"
-            )
-            raise ValueError(
-                msg,
-            )
+        return [*PARTICIPATION_METADATA_COLUMNS, *delegate_names]
 
+    missing = [n for n in delegate_names if n not in set(existing_header)]
+    if missing:
+        msg = (
+            f"Communication Master is missing column(s) for delegate(s): "
+            f"{missing}. Add a column header with the exact delegate name "
+            f"for each missing delegate to the Communication Master tab, "
+            f"then re-run. (Columns can't be auto-added - operators control "
+            f"column placement and naming.)"
+        )
+        raise ValueError(msg)
+    return list(existing_header)
+
+
+def _build_comm_master_merged_rows(
+    *,
+    df: pd.DataFrame,
+    header: list[str],
+    existing_rows: dict[str, list[str]],
+    poll_columns: Sequence[object],
+    poll_and_spell_info: tuple[list[dict], list[dict]],
+) -> dict[str, list[str]]:
+    """Merge existing rows with newly fetched poll/spell rows for the current header.
+
+    Returns:
+        Mapping of poll_id to the merged row, padded to header length.
+    """
+    poll_info, spell_info = poll_and_spell_info
     n_metadata = len(PARTICIPATION_METADATA_COLUMNS)
     delegate_col_index: dict[str, int] = {col: i for i, col in enumerate(header) if i >= n_metadata}
-
     df_by_delegate: dict[str, pd.Series] = {str(row["Delegate Name"]): row for _, row in df.iterrows()}
     current_roster = set(df_by_delegate.keys())
 
@@ -695,7 +758,6 @@ def write_communication_master(
     for poll_id in poll_columns:
         poll_id_str = str(poll_id)
         metadata = _lookup_poll_or_spell(poll_id_str, poll_info, spell_info)
-
         start_date_iso = _coerce_date(metadata.get("startDate")) if metadata else ""
         end_date_iso = _coerce_date(metadata.get("endDate")) if metadata else ""
         title = str(metadata.get("title", "")) if metadata else ""
@@ -707,18 +769,7 @@ def write_communication_master(
             defaults=defaults,
             existing_row=merged_rows.get(poll_id_str),
         )
-
-    sorted_items = _sort_comm_rows_by_start_date(merged_rows)
-    rows: list[list[object]] = [list(row) for _, row in sorted_items]
-    values: list[list[object]] = [list(header), *rows]
-
-    clear_tab(worksheet)
-
-    end_cell = rowcol_to_a1(len(values), len(header))
-    range_name = f"A1:{end_cell}"
-    worksheet.update(values=values, range_name=range_name)
-
-    return worksheet
+    return merged_rows
 
 
 # ---------------------------------------------------------------------------
@@ -835,6 +886,72 @@ def _format_pct(pct: float | None) -> str | float:
     return pct
 
 
+def _build_compensation_header_block(
+    period_comp: "PeriodCompensation",
+    n_data_rows: int,
+) -> list[list[object]]:
+    """Build rows 1-8 of the Compensation tab: metadata, totals, slot-days check.
+
+    Returns:
+        Eight rows; each row is shorter than the data row width and is
+        padded by the caller before writing.
+    """
+    period = period_comp.period
+    config = period_comp.config
+    rows_in = period_comp.per_delegate
+    n_l1 = sum(1 for r in rows_in if r.level_at_period_end == 1)
+    n_l2 = sum(1 for r in rows_in if r.level_at_period_end == 2)  # noqa: PLR2004
+    n_l3 = sum(1 for r in rows_in if r.level_at_period_end == 3)  # noqa: PLR2004
+    last_data_row = 9 + n_data_rows
+    sum_formula = f"=SUM(H10:H{max(last_data_row, 10)})"
+    return [
+        ["Year", period.year, "", "Level 1 USDS", config.l1_usds, "", "Number of Level 1", n_l1],
+        ["Month", calendar.month_name[period.month], "", "Level 2 USDS", config.l2_usds, "", "Number of Level 2", n_l2],
+        [
+            "Period Start",
+            _coerce_date(period.start),
+            "",
+            "Level 3 USDS",
+            config.l3_usds,
+            "",
+            "Number of Level 3",
+            n_l3,
+        ],
+        ["Period End", _coerce_date(period.end), "", "", "", "", "", ""],
+        ["Days in Month", period_comp.days_in_period, "", "", "", "", "", ""],
+        ["", "", "", "", "", "", "", ""],
+        ["Total Final Amount", sum_formula, "", "", "", "", "", ""],
+        ["Slot Days Check", period_comp.validation.get("slot_days_check", ""), "", "", "", "", "", ""],
+    ]
+
+
+def _build_compensation_data_rows(period_comp: "PeriodCompensation") -> list[list[object]]:
+    """Build one row per delegate for the Compensation tab body.
+
+    Returns:
+        One row per delegate, in the order from `period_comp.per_delegate`.
+    """
+    return [
+        [
+            r.name,
+            _format_pct(r.participation_pct),
+            _format_pct(r.communication_pct),
+            r.metrics_modifier,
+            _level_label(r.level_at_period_end),
+            r.days_as_l1 + r.days_as_l2 + r.days_as_l3,
+            r.entitlement_pre_modifier,
+            r.final_amount,
+            r.rank_at_period_end if r.rank_at_period_end is not None else "",
+            r.buffer_carry_in,
+            r.buffer_added,
+            r.payment_amount,
+            r.buffer_post_payment,
+            r.notes,
+        ]
+        for r in period_comp.per_delegate
+    ]
+
+
 def write_compensation_tab(
     workbook: gspread.Spreadsheet,
     period_comp: "PeriodCompensation",
@@ -855,93 +972,9 @@ def write_compensation_tab(
     Returns:
         The worksheet that was written.
     """
-    rows_in = period_comp.per_delegate
-
-    # Count delegates at each level (based on level_at_period_end).
-    n_l1 = sum(1 for r in rows_in if r.level_at_period_end == 1)
-    n_l2 = sum(1 for r in rows_in if r.level_at_period_end == 2)  # noqa: PLR2004
-    n_l3 = sum(1 for r in rows_in if r.level_at_period_end == 3)  # noqa: PLR2004
-
-    period = period_comp.period
-    config = period_comp.config
-
-    n_data_rows = len(rows_in)
-    last_data_row = 9 + n_data_rows  # row 9 = header, rows 10..(9+n) = data
-    sum_formula = f"=SUM(H10:H{max(last_data_row, 10)})"
-
-    # Build header block as full rows so we can write it with one update
-    # Rows are 1-indexed in Sheets; we'll pad to row 9 for the headers
-    header_block: list[list[object]] = [
-        # Row 1
-        ["Year", period.year, "", "Level 1 USDS", config.l1_usds, "", "Number of Level 1", n_l1],
-        # Row 2
-        [
-            "Month",
-            calendar.month_name[period.month],
-            "",
-            "Level 2 USDS",
-            config.l2_usds,
-            "",
-            "Number of Level 2",
-            n_l2,
-        ],
-        # Row 3
-        [
-            "Period Start",
-            _coerce_date(period.start),
-            "",
-            "Level 3 USDS",
-            config.l3_usds,
-            "",
-            "Number of Level 3",
-            n_l3,
-        ],
-        # Row 4
-        ["Period End", _coerce_date(period.end), "", "", "", "", "", ""],
-        # Row 5
-        ["Days in Month", period_comp.days_in_period, "", "", "", "", "", ""],
-        # Row 6 (blank)
-        ["", "", "", "", "", "", "", ""],
-        # Row 7
-        ["Total Final Amount", sum_formula, "", "", "", "", "", ""],
-        # Row 8
-        [
-            "Slot Days Check",
-            period_comp.validation.get("slot_days_check", ""),
-            "",
-            "",
-            "",
-            "",
-            "",
-            "",
-        ],
-    ]
-
-    # Row 9: column headers (full 14-column row).
+    data_rows = _build_compensation_data_rows(period_comp)
+    header_block = _build_compensation_header_block(period_comp, len(data_rows))
     header_row: list[object] = list(COMPENSATION_COLUMNS)
-
-    # Data rows (10+).
-    data_rows: list[list[object]] = []
-    for r in rows_in:
-        days_total = r.days_as_l1 + r.days_as_l2 + r.days_as_l3
-        data_rows.append([
-            r.name,
-            _format_pct(r.participation_pct),
-            _format_pct(r.communication_pct),
-            r.metrics_modifier,
-            _level_label(r.level_at_period_end),
-            days_total,
-            r.entitlement_pre_modifier,
-            r.final_amount,
-            r.rank_at_period_end if r.rank_at_period_end is not None else "",
-            r.buffer_carry_in,
-            r.buffer_added,
-            r.payment_amount,
-            r.buffer_post_payment,
-            r.notes,
-        ])
-
-    # Combine: pad header block to 14 columns, then header_row, then data.
     n_cols = len(COMPENSATION_COLUMNS)
 
     def _pad(row: list[object]) -> list[object]:
@@ -955,16 +988,14 @@ def write_compensation_tab(
 
     worksheet = get_or_create_tab(
         workbook,
-        compensation_tab_title(period),
+        compensation_tab_title(period_comp.period),
         rows=max(len(all_values) + 50, 100),
         cols=n_cols,
     )
 
     clear_tab(worksheet)
-
     end_cell = rowcol_to_a1(len(all_values), n_cols)
     worksheet.update(values=all_values, range_name=f"A1:{end_cell}")
-
     return worksheet
 
 
