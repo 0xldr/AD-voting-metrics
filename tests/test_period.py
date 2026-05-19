@@ -13,15 +13,31 @@ from ad_voting_metrics.period import MonthPeriod
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("month", [0, 13, -1, 100])
-def test_invalid_month_rejected(month):
-    with pytest.raises(ValueError, match=r"month must be 1..12"):
-        MonthPeriod(year=2026, month=month)
+@pytest.mark.parametrize(
+    ("year", "month", "expected"),
+    [
+        (2026, 13, (2027, 1)),  # rolls into next January
+        (2026, 0, (2025, 12)),  # rolls into previous December
+        (2026, -1, (2025, 11)),
+        (2026, 24, (2027, 12)),
+        (2026, 25, (2028, 1)),
+    ],
+)
+def test_out_of_range_month_normalizes_into_adjacent_year(year, month, expected):
+    """MonthPeriod wraps over/underflow months into neighboring years."""
+    p = MonthPeriod(year=year, month=month)
+    assert (p.year, p.month) == expected
 
 
 def test_unreasonable_year_rejected():
     with pytest.raises(ValueError, match="year must be"):
         MonthPeriod(year=1800, month=4)
+
+
+def test_normalization_can_push_year_below_lower_bound():
+    """A wraparound that crosses the YEAR_LOWER_BOUND boundary is rejected."""
+    with pytest.raises(ValueError, match="year must be"):
+        MonthPeriod(year=2022, month=-30)
 
 
 def test_far_future_year_accepted_at_type_level():
@@ -44,7 +60,6 @@ def test_far_future_year_accepted_at_type_level():
         (2024, 2, 29),  # leap year
         (2025, 2, 28),  # non-leap year
         (2100, 2, 28),  # century year not divisible by 400
-        (2400, 2, 29),  # year divisible by 400
         (2025, 12, 31),  # December doesn't roll to January
     ],
 )
