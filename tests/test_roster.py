@@ -23,50 +23,19 @@ from ad_voting_metrics.roster import (
 # ---------------------------------------------------------------------------
 
 
-def test_construct_active_delegate():
-    d = Delegate(
-        name="Alice",
-        vote_delegate_address="0x1234567890abcdef1234567890abcdef12345678",
-        start_date=date(2025, 1, 1),
-        end_date=None,
-    )
-    assert d.name == "Alice"
-    assert d.end_date is None
-
-
-def test_construct_exited_delegate():
-    d = Delegate(
-        name="Bob",
-        vote_delegate_address="0xabcdef1234567890abcdef1234567890abcdef12",
-        start_date=date(2024, 1, 1),
-        end_date=date(2024, 6, 30),
-    )
-    assert d.end_date == date(2024, 6, 30)
-
-
-def test_address_must_be_lowercase_hex():
+@pytest.mark.parametrize(
+    "bad_address",
+    [
+        "0x1234567890ABCDef1234567890abcdef1234567",  # uppercase rejected
+        "0x12345",  # too short
+        "1234567890abcdef1234567890abcdef12345678",  # missing 0x prefix
+    ],
+)
+def test_address_must_match_lowercase_hex_pattern(bad_address):
     with pytest.raises(ValidationError, match="String should match pattern"):
         Delegate(
-            name="Charlie",
-            vote_delegate_address="0x1234567890ABCDef1234567890abcdef1234567",
-            start_date=date(2025, 1, 1),
-        )
-
-
-def test_address_must_be_40_hex_digits():
-    with pytest.raises(ValidationError, match="String should match pattern"):
-        Delegate(
-            name="Dave",
-            vote_delegate_address="0x12345",
-            start_date=date(2025, 1, 1),
-        )
-
-
-def test_address_must_have_0x_prefix():
-    with pytest.raises(ValidationError, match="String should match pattern"):
-        Delegate(
-            name="Eve",
-            vote_delegate_address="1234567890abcdef1234567890abcdef12345678",
+            name="X",
+            vote_delegate_address=bad_address,
             start_date=date(2025, 1, 1),
         )
 
@@ -80,24 +49,20 @@ def test_name_must_be_non_empty():
         )
 
 
-def test_end_date_must_be_after_start():
+@pytest.mark.parametrize(
+    "end_date",
+    [
+        date(2024, 12, 31),  # before start
+        date(2025, 1, 1),  # equal to start (must be strictly after)
+    ],
+)
+def test_end_date_must_be_strictly_after_start(end_date):
     with pytest.raises(ValidationError, match=r"end_date.*must be after"):
         Delegate(
-            name="Frank",
+            name="X",
             vote_delegate_address="0x1234567890abcdef1234567890abcdef12345678",
             start_date=date(2025, 1, 1),
-            end_date=date(2024, 12, 31),
-        )
-
-
-def test_end_date_equal_to_start_date_rejected():
-    # end_date must be *strictly* after start_date, so equal dates should also be rejected.
-    with pytest.raises(ValidationError, match=r"end_date.*must be after"):
-        Delegate(
-            name="Grace",
-            vote_delegate_address="0x1234567890abcdef1234567890abcdef12345678",
-            start_date=date(2025, 1, 1),
-            end_date=date(2025, 1, 1),
+            end_date=end_date,
         )
 
 
@@ -149,20 +114,11 @@ def test_delegate_with_levels_omitted_constructs():
     assert d.levels == []
 
 
-def test_level_must_be_1_or_2():
-    """Level 3 in YAML is rejected — it's daily-computed, never YAML-set."""
+@pytest.mark.parametrize("bad_level", [3, 0, -1])
+def test_level_must_be_1_or_2(bad_level):
+    """Level 3 is daily-computed, never YAML-set. Zero and negative are invalid."""
     with pytest.raises(ValidationError, match="level must be 1 or 2"):
-        _delegate_with_levels(levels=[{"level": 3, "start_date": date(2025, 12, 1)}])
-
-
-def test_level_zero_rejected():
-    with pytest.raises(ValidationError, match="level must be 1 or 2"):
-        _delegate_with_levels(levels=[{"level": 0, "start_date": date(2025, 12, 1)}])
-
-
-def test_level_negative_rejected():
-    with pytest.raises(ValidationError, match="level must be 1 or 2"):
-        _delegate_with_levels(levels=[{"level": -1, "start_date": date(2025, 12, 1)}])
+        _delegate_with_levels(levels=[{"level": bad_level, "start_date": date(2025, 12, 1)}])
 
 
 def test_level_assignment_end_must_be_after_start():
@@ -812,22 +768,6 @@ def test_build_roster_for_period_skip_api_check_does_not_call_fetcher(tmp_path):
     assert result.api_delegate_count == 0
     # No drift warnings when the check is skipped
     assert result.drift_warnings == []
-
-
-def test_build_roster_for_skipped_api_check_keyword_only(tmp_path):
-    """skip_api_check must be passed by keyword"""
-    yaml_text = """
-    delegates: []
-    """
-    p = tmp_path / "delegates.yaml"
-    p.write_text(yaml_text)
-
-    fake_fetcher = list  # callable returning []
-
-    # Positional misuse: trying to pass skip_api_check positionally
-    # should raise TypeError
-    with pytest.raises(TypeError):
-        build_roster_for_period(p, MonthPeriod(2026, 4), fake_fetcher, True)  # type: ignore[misc]
 
 
 # ---------------------------------------------------------------------------

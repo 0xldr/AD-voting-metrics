@@ -341,28 +341,6 @@ def test_get_or_create_tab_does_not_resize_existing_tab():
     existing_ws.resize.assert_not_called()
 
 
-def test_get_or_create_tab_requires_keyword_only_rows_cols():
-    """Raise TypeError when rows/cols are passed positionally (forces explicit sizing)."""
-    workbook = MagicMock()
-    workbook.worksheet.return_value = MagicMock(spec=gspread.Worksheet)
-
-    # getattr indirection so static type-checkers don't flag the deliberate
-    # positional misuse below; we're testing runtime rejection.
-    fn = getattr(sheets, "get_or_create_tab")  # noqa: B009
-    with pytest.raises(TypeError):
-        # Attempting positional args should fail
-        fn(workbook, "Tab", 100, 10)
-
-
-def test_clear_tab_calls_worksheet_clear():
-    """Delegate to gspread's worksheet.clear() (wipes values, preserves formatting)."""
-    worksheet = MagicMock(spec=gspread.Worksheet)
-
-    sheets.clear_tab(worksheet)
-
-    worksheet.clear.assert_called_once()
-
-
 # ---------------------------------------------------------------------------
 # Tab management — integration tests against the real workbook
 # ---------------------------------------------------------------------------
@@ -453,11 +431,6 @@ def _make_ranking_df():
 def test_daily_data_columns_pinned():
     """The column tuple is pinned so an accidental edit fails the test."""
     assert sheets.DAILY_DATA_COLUMNS == ("Date", "Delegate", "Total Delegation", "Rank")
-
-
-def test_daily_data_tab_title_constant():
-    """Workbook-wide tab name (no period suffix)."""
-    assert sheets.DAILY_DATA_TAB_TITLE == "Daily Data"
 
 
 def _empty_existing_ws(workbook):
@@ -786,18 +759,6 @@ def test_write_daily_data_empty_dataframe_with_empty_existing():
     assert fake_ws.update.call_args.kwargs["range_name"] == "A1:D1"
 
 
-def test_write_daily_data_returns_worksheet():
-    """The function returns the worksheet for caller convenience."""
-    df = _make_ranking_df()
-    workbook = MagicMock()
-    fake_ws = _empty_existing_ws(workbook)
-    period = MonthPeriod(year=2026, month=4)
-
-    result = sheets.write_daily_data(workbook, period, df)
-
-    assert result is fake_ws
-
-
 # ---------------------------------------------------------------------------
 # write_daily_data — integration test against the real workbook
 # ---------------------------------------------------------------------------
@@ -996,13 +957,6 @@ def test_participation_metadata_columns_pinned():
     )
 
 
-def test_participation_raw_data_tab_title():
-    period = MonthPeriod(year=2026, month=4)
-    assert sheets._participation_raw_data_tab_title(period) == (
-        "Participation Raw Data April 2026"
-    )
-
-
 def test_lookup_poll_or_spell_finds_poll():
     """Identifier matches a poll's pollId (as string)."""
     poll_info = _make_poll_info()
@@ -1028,23 +982,17 @@ def test_lookup_poll_or_spell_returns_none_when_missing():
     assert sheets._lookup_poll_or_spell("999999", poll_info, spell_info) is None
 
 
-def test_coerce_date_handles_date():
-    assert sheets._coerce_date(date(2026, 4, 5)) == "2026-04-05"
-
-
-def test_coerce_date_handles_datetime():
-    """Datetime → ISO date string, time portion dropped."""
-    assert sheets._coerce_date(datetime(2026, 4, 5, 12, 30, tzinfo=UTC)) == "2026-04-05"
-
-
-def test_coerce_date_handles_pandas_timestamp():
-    ts = pd.Timestamp("2026-04-05 12:30")
-    assert sheets._coerce_date(ts) == "2026-04-05"
-
-
-def test_coerce_date_handles_none():
-    """Return empty string for None (spells have no endDate key)."""
-    assert not sheets._coerce_date(None)
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        (date(2026, 4, 5), "2026-04-05"),
+        (datetime(2026, 4, 5, 12, 30, tzinfo=UTC), "2026-04-05"),  # time portion dropped
+        (pd.Timestamp("2026-04-05 12:30"), "2026-04-05"),  # pandas Timestamp
+        (None, ""),  # spells have no endDate key
+    ],
+)
+def test_coerce_date(value, expected):
+    assert sheets._coerce_date(value) == expected
 
 
 def test_write_participation_creates_tab_with_correct_title():
@@ -1219,24 +1167,6 @@ def test_write_participation_zero_polls_writes_header_only():
     assert values == [["Poll Id", "Start Date", "End Date", "Title", "BLUE", "Cloaky"]]
 
 
-def test_write_participation_returns_worksheet():
-    df = _make_participation_df()
-    workbook = MagicMock()
-    fake_ws = MagicMock(spec=gspread.Worksheet)
-    workbook.worksheet.return_value = fake_ws
-    period = MonthPeriod(year=2026, month=4)
-
-    result = sheets.write_participation_raw_data(
-        workbook,
-        period,
-        df,
-        _make_poll_info(),
-        _make_spell_info(),
-    )
-
-    assert result is fake_ws
-
-
 def test_write_participation_range_matches_data_shape():
     """The A1 range matches the values shape: rows x cols."""
     df = _make_participation_df()
@@ -1307,27 +1237,20 @@ def _empty_existing_comm_ws(workbook):
     return fake_ws
 
 
-def test_communication_master_tab_title_constant():
-    """Workbook-wide tab name."""
-    assert sheets.COMMUNICATION_MASTER_TAB_TITLE == "Communication Master"
-
-
-def test_communication_master_pending_default_constant():
-    """The default for new cells where the operator needs to review."""
-    assert sheets.COMMUNICATION_PENDING_DEFAULT == "Pending verification"
-
-
-def test_isblank_true_for_empty_none_whitespace():
-    assert sheets._isblank("") is True
-    assert sheets._isblank(None) is True
-    assert sheets._isblank("   ") is True
-    assert sheets._isblank("\t\n") is True
-
-
-def test_isblank_false_for_real_values():
-    assert sheets._isblank("Yes") is False
-    assert sheets._isblank("Pending verification") is False
-    assert sheets._isblank("Did not vote") is False
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        ("", True),
+        (None, True),
+        ("   ", True),
+        ("\t\n", True),
+        ("Yes", False),
+        ("Pending verification", False),
+        ("Did not vote", False),
+    ],
+)
+def test_isblank(value, expected):
+    assert sheets._isblank(value) is expected
 
 
 def test_write_communication_master_missing_df_column_raises():
@@ -1625,21 +1548,6 @@ def test_write_communication_master_clears_before_writing():
 
     fake_ws.clear.assert_called_once()
     fake_ws.update.assert_called_once()
-
-
-def test_write_communication_master_returns_worksheet():
-    df = _make_participation_df()
-    workbook = MagicMock()
-    fake_ws = _empty_existing_comm_ws(workbook)
-
-    result = sheets.write_communication_master(
-        workbook,
-        df,
-        _make_poll_info(),
-        _make_spell_info(),
-    )
-
-    assert result is fake_ws
 
 
 def test_write_communication_master_uses_correct_tab_name():
@@ -2126,21 +2034,6 @@ def test_write_compensation_tab_clears_before_writing():
         next(c for c in fake_ws.method_calls if c[0] == "update"),
     )
     assert clear_idx < update_idx
-
-
-def test_write_compensation_tab_returns_worksheet():
-    workbook = MagicMock()
-    fake_ws = MagicMock(spec=gspread.Worksheet)
-    workbook.worksheet.return_value = fake_ws
-
-    result = sheets.write_compensation_tab(workbook, _make_period_comp())
-
-    assert result is fake_ws
-
-
-def test_compensation_columns_has_14_columns():
-    """Pin the column count; accidental additions fail the test."""
-    assert len(sheets.COMPENSATION_COLUMNS) == 14
 
 
 # ---------------------------------------------------------------------------

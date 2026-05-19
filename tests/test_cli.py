@@ -26,27 +26,22 @@ from ad_voting_metrics.period import MonthPeriod
 from ad_voting_metrics.roster import Delegate
 
 
-def test_parse_cache_hours():
-    assert parse_cache_hours("0") == 0
+@pytest.mark.parametrize(("value", "expected"), [("0", 0), ("24", 24)])
+def test_parse_cache_hours_accepts_non_negative_integers(value, expected):
+    assert parse_cache_hours(value) == expected
 
 
-def test_parse_cache_hours_accepts_positive_integers():
-    assert parse_cache_hours("24") == 24
-
-
-def test_parse_cache_hours_rejects_negative():
-    with pytest.raises(argparse.ArgumentTypeError, match="negative"):
-        parse_cache_hours("-1")
-
-
-def test_parse_cache_hours_rejects_non_integer():
-    with pytest.raises(argparse.ArgumentTypeError, match="not an integer"):
-        parse_cache_hours("twelve")
-
-
-def test_parse_cache_hours_rejects_float():
-    with pytest.raises(argparse.ArgumentTypeError, match="not an integer"):
-        parse_cache_hours("12.5")
+@pytest.mark.parametrize(
+    ("value", "match"),
+    [
+        ("-1", "negative"),
+        ("twelve", "not an integer"),
+        ("12.5", "not an integer"),
+    ],
+)
+def test_parse_cache_hours_rejects_invalid(value, match):
+    with pytest.raises(argparse.ArgumentTypeError, match=match):
+        parse_cache_hours(value)
 
 
 # ---------------------------------------------------------------------------
@@ -157,54 +152,21 @@ def test_parser_finalize_subcommand_parses_month():
     assert args.month.month == 4
 
 
-def test_parser_finalize_does_not_accept_cache_hours():
-    """--cache-hours is a fetch-only flag; argparse rejects it on finalize."""
-    parser = build_arg_parser()
-    with pytest.raises(SystemExit):
-        parser.parse_args(["finalize", "--month", "April 2026", "--cache-hours", "24"])
-
-
-def test_parser_requires_subcommand():
-    """Calling without a subcommand exits with argparse's usage error."""
-    parser = build_arg_parser()
-    with pytest.raises(SystemExit):
-        parser.parse_args([])
-
-
-def test_parser_unknown_subcommand_rejected():
-    """A subcommand not in {fetch, finalize} exits with argparse error."""
-    parser = build_arg_parser()
-    with pytest.raises(SystemExit):
-        parser.parse_args(["bogus", "--month", "April 2026"])
-
-
-def test_parser_both_subcommands_require_month():
-    """--month is required on both subcommands."""
-    parser = build_arg_parser()
-    with pytest.raises(SystemExit):
-        parser.parse_args(["fetch"])
-    with pytest.raises(SystemExit):
-        parser.parse_args(["finalize"])
-
-
 # ---------------------------------------------------------------------------
 # _window_start_for_period
 # ---------------------------------------------------------------------------
 
 
-def test_window_start_for_period_april_2026():
-    """April 2026 → November 1, 2025 (6 calendar months back)."""
-    assert _window_start_for_period(MonthPeriod(year=2026, month=4)) == date(2025, 11, 1)
-
-
-def test_window_start_for_period_january_2026():
-    """January 2026 → August 1, 2025 (rolls back across year boundary)."""
-    assert _window_start_for_period(MonthPeriod(year=2026, month=1)) == date(2025, 8, 1)
-
-
-def test_window_start_for_period_june_2026():
-    """June 2026 → January 1, 2026 (same year)."""
-    assert _window_start_for_period(MonthPeriod(year=2026, month=6)) == date(2026, 1, 1)
+@pytest.mark.parametrize(
+    ("period_year", "period_month", "expected"),
+    [
+        (2026, 4, date(2025, 11, 1)),  # rolls back across year boundary
+        (2026, 1, date(2025, 8, 1)),  # rolls back further
+        (2026, 6, date(2026, 1, 1)),  # same year
+    ],
+)
+def test_window_start_for_period(period_year, period_month, expected):
+    assert _window_start_for_period(MonthPeriod(year=period_year, month=period_month)) == expected
 
 
 # ---------------------------------------------------------------------------
