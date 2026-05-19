@@ -47,20 +47,16 @@ class LevelAssignment(BaseModel):
     @field_validator("level")
     @classmethod
     def _level_is_1_or_2(cls, v: int) -> int:
-        if v not in (1, 2):
-            raise ValueError(
-                f"level must be 1 or 2 (got {v}); level 3 is computed daily "
-                "and is never set in the YAML."
-            )
+        if v not in {1, 2}:
+            msg = f"level must be 1 or 2 (got {v}); level 3 is computed daily and is never set in the YAML"
+            raise ValueError(msg)
         return v
 
     @model_validator(mode="after")
     def _end_after_start(self) -> "LevelAssignment":
         if self.end_date is not None and self.end_date <= self.start_date:
-            raise ValueError(
-                f"LevelAssignment end_date {self.end_date} must be after "
-                f"start_date {self.start_date}"
-            )
+            msg = f"LevelAssignment end_date {self.end_date} must be after start_date {self.start_date}"
+            raise ValueError(msg)
         return self
 
     def covers(self, d: date) -> bool:
@@ -95,10 +91,8 @@ class Delegate(BaseModel):
     @model_validator(mode="after")
     def _end_date_after_start_date(self) -> "Delegate":
         if self.end_date is not None and self.end_date <= self.start_date:
-            raise ValueError(
-                f"end_date {self.end_date} must be after start_date {self.start_date} "
-                f"for delegate {self.name}"
-            )
+            msg = f"end_date {self.end_date} must be after start_date {self.start_date} for delegate {self.name}"
+            raise ValueError(msg)
         return self
 
     @model_validator(mode="after")
@@ -114,26 +108,24 @@ class Delegate(BaseModel):
         """
         for la in self.levels:
             if la.start_date < self.start_date:
-                raise ValueError(
+                msg = (
                     f"LevelAssignment star_dDate {la.start_date} for delegate "
                     f"{self.name} is before alignment start_date {self.start_date}"
                 )
-            if (
-                la.end_date is not None
-                and self.end_date is not None
-                and la.end_date > self.end_date
-            ):
-                raise ValueError(
+                raise ValueError(msg)
+            if la.end_date is not None and self.end_date is not None and la.end_date > self.end_date:
+                msg_0 = (
                     f"LevelAssignment end_date {la.end_date} for delegate "
                     f"{self.name} is after alignment end_date {self.end_date}"
                 )
+                raise ValueError(msg_0)
             # An open-ended LevelAssignment on an exited delegate is invalid.
             if la.end_date is None and self.end_date is not None:
-                raise ValueError(
-                    f"LevelAssignment for delegate {self.name} has no "
-                    f"end_date but the delegate's alignment ends on "
+                msg_1 = (
+                    f"LevelAssignment for delegate {self.name} has no end_date but the delegate's alignment ends on "
                     f"{self.end_date}; set the LevelAssignment end_date too."
                 )
+                raise ValueError(msg_1)
         return self
 
     @model_validator(mode="after")
@@ -147,23 +139,22 @@ class Delegate(BaseModel):
             ValueError: if two LevelAssignments overlap, or a non-final
                 one lacks an end_date.
         """
-        if len(self.levels) < 2:
+        if len(self.levels) <= 1:
             return self
         sorted_levels = sorted(self.levels, key=lambda la: la.start_date)
         for prev, curr in pairwise(sorted_levels):
             if prev.end_date is None:
-                raise ValueError(
-                    f"LevelAssignment starting {prev.start_date} for delegate "
-                    f"{self.name} has no end_date but is followed by another "
-                    f"LevelAssignment starting {curr.start_date}; set the "
-                    "earlier end_date"
+                msg = (
+                    f"LevelAssignment starting {prev.start_date} for delegate {self.name} has no end_date but is "
+                    f"followed by another LevelAssignment starting {curr.start_date}; set the earlier end_date"
                 )
+                raise ValueError(msg)
             if prev.end_date >= curr.start_date:
-                raise ValueError(
-                    f"LevelAssignments for delegate {self.name} overlap "
-                    f"period ending {prev.end_date} overlaps with period "
-                    f"starting {curr.start_date}."
+                msg_0 = (
+                    f"LevelAssignments for delegate {self.name} overlap period ending {prev.end_date} overlaps with "
+                    f"period starting {curr.start_date}."
                 )
+                raise ValueError(msg_0)
         return self
 
     def is_active_during(self, period_start: date, period_end: date) -> bool:
@@ -200,10 +191,11 @@ class DelegatesConfig(BaseModel):
         seen: dict[str, str] = {}
         for d in self.delegates:
             if d.vote_delegate_address in seen:
-                raise ValueError(
+                msg = (
                     f"Duplicate vote_delegate_address {d.vote_delegate_address} for "
                     f"{d.name} and {seen[d.vote_delegate_address]}"
                 )
+                raise ValueError(msg)
             seen[d.vote_delegate_address] = d.name
         return self
 
@@ -215,15 +207,17 @@ def load_delegates(path: Path) -> DelegatesConfig:
         Parsed and validated DelegatesConfig.
 
     Raises:
-        FileNotFoundError: if the file doesn't exist.
-        ValueError: if the file is empty or YAML null.
-        yaml.YAMLError: if malformed.
-        pydantic.ValidationError: on schema violations.
+        ValueError: if YAML is empty.
+
+    Notes:
+        The function may raise FileNotFoundError, yaml.YAMLError, or
+            pydantic.ValidationError from validation.
     """
-    with Path(path).open() as f:
+    with Path(path).open(encoding="utf-8") as f:
         raw = yaml.safe_load(f)
     if raw is None:
-        raise ValueError(f"{path} is empty or contains only YAML null")
+        msg = f"{path} is empty or contains only YAML null"
+        raise ValueError(msg)
     return DelegatesConfig.model_validate(raw)
 
 
@@ -248,12 +242,8 @@ def merge_with_api(
     """
     warnings: list[str] = []
 
-    yaml_by_address: dict[str, Delegate] = {
-        d.vote_delegate_address.lower(): d for d in yaml_config.delegates
-    }
-    api_by_address: dict[str, dict] = {
-        entry["voteDelegateAddress"].lower(): entry for entry in api_response
-    }
+    yaml_by_address: dict[str, Delegate] = {d.vote_delegate_address.lower(): d for d in yaml_config.delegates}
+    api_by_address: dict[str, dict] = {entry["voteDelegateAddress"].lower(): entry for entry in api_response}
 
     for addr, delegate in yaml_by_address.items():
         in_api = addr in api_by_address
@@ -261,21 +251,21 @@ def merge_with_api(
             warnings.append(
                 f"{delegate.name} ({addr}) is marked active in YAML "
                 f"(end_date=null) but does not appear in the API as currently "
-                f"aligned. Did they exit? Update end_date in delegates.yaml"
+                f"aligned. Did they exit? Update end_date in delegates.yaml",
             )
         elif delegate.end_date is not None and in_api:
             warnings.append(
                 f"{delegate.name} ({addr}) is marked exited in YAML "
                 f"(endDate={delegate.end_date}) but the API still shows them "
-                f"as currently aligned. Date mismatch - verify which is correct."
+                f"as currently aligned. Date mismatch - verify which is correct.",
             )
 
-    for addr in api_by_address:
+    for addr, entry in api_by_address.items():
         if addr not in yaml_by_address:
-            api_name = api_by_address[addr].get("name", "?")
+            api_name = entry.get("name", "?")
             warnings.append(
                 f"{api_name} ({addr}) appears in the API as currently "
-                "aligned but is not in delegates.yaml. Add an entry."
+                "aligned but is not in delegates.yaml. Add an entry.",
             )
 
     return list(yaml_config.delegates), warnings
@@ -327,7 +317,7 @@ def build_roster_for_period(
             api_response = api_fetcher()
             api_fetch_succeeded = True
             _, warnings = merge_with_api(yaml_config, api_response)
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 — api_fetcher is caller-supplied; any failure degrades to YAML-only
             warnings = [
                 (
                     f"API drift check skipped due to fetch failure: {type(e).__name__}: {e}. "

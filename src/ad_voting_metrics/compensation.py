@@ -126,10 +126,8 @@ def compute_period_compensation(
     """
     days_in_period = (period.end - period.start).days + 1
     if len(daily_eligibility) != days_in_period:
-        raise ValueError(
-            f"daily_eligibility has {len(daily_eligibility)} entries but "
-            f"period {period} has {days_in_period} days"
-        )
+        msg = f"daily_eligibility has {len(daily_eligibility)} entries but period {period} has {days_in_period} days"
+        raise ValueError(msg)
 
     # Collect every name that appears on that day, plus per-level day counts.
     day_counts: dict[str, dict[int, int]] = {}
@@ -138,16 +136,15 @@ def compute_period_compensation(
     for i, de in enumerate(daily_eligibility):
         for name, entry in de.per_delegate.items():
             counts = day_counts.setdefault(name, {1: 0, 2: 0, 3: 0})
-            if entry.assigned_level in (1, 2, 3):
+            if entry.assigned_level in {1, 2, 3}:
                 counts[entry.assigned_level] += 1
             if i == last_day_index:
                 end_state[name] = (entry.rank, entry.assigned_level)
 
     missing_metrics = sorted(set(day_counts) - set(final_metrics))
     if missing_metrics:
-        raise ValueError(
-            f"final_metrics is missing entries for active delegates: {missing_metrics}"
-        )
+        msg_0 = f"final_metrics is missing entries for active delegates: {missing_metrics}"
+        raise ValueError(msg_0)
 
     rows: list[DelegateCompensation] = []
     for name in sorted(day_counts):
@@ -190,7 +187,7 @@ def compute_period_compensation(
                 payment_amount=0.0,
                 buffer_post_payment=0.0,
                 notes=notes,
-            )
+            ),
         )
 
     total_slot_days = sum(r.days_as_l1 + r.days_as_l2 + r.days_as_l3 for r in rows)

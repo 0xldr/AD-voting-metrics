@@ -90,7 +90,7 @@ def test_dune_query_id_is_6604139():
 
 
 def _make_indexed_df(rows: list[dict]) -> pd.DataFrame:
-    """Build a DataFrame in the shape get_all_sky_delegated produces.
+    """Return a DataFrame in the shape get_all_sky_delegated produces.
 
     Columns delegation_contract (lowercased), dt (string YYYY-MM-DD),
     running_total_balance, indexed on (delegation_contract, dt).
@@ -103,7 +103,7 @@ def _make_indexed_df(rows: list[dict]) -> pd.DataFrame:
 
 def test_get_sky_delegated_returns_balance_for_known_pair():
     df = _make_indexed_df([
-        {"delegation_contract": "0xabc", "dt": "2026-03-01", "running_total_balance": 1234.5}
+        {"delegation_contract": "0xabc", "dt": "2026-03-01", "running_total_balance": 1234.5},
     ])
     result = sky_dao.get_sky_delegated(df, "0xabc", date(2026, 3, 1))
 
@@ -122,7 +122,7 @@ def test_get_sky_delegated_returns_zero_for_missing_contract():
 
 def test_get_sky_delegated_returns_zero_for_missing_date():
     df = _make_indexed_df([
-        {"delegation_contract": "0xabc", "dt": "2026-03-01", "running_total_balance": 1234.5}
+        {"delegation_contract": "0xabc", "dt": "2026-03-01", "running_total_balance": 1234.5},
     ])
     result = sky_dao.get_sky_delegated(df, "0xabc", date(2026, 4, 1))
 
@@ -131,7 +131,7 @@ def test_get_sky_delegated_returns_zero_for_missing_date():
 
 def test_get_sky_delegated_returns_float():
     df = _make_indexed_df([
-        {"delegation_contract": "0xabc", "dt": "2026-03-01", "running_total_balance": 1000.0}
+        {"delegation_contract": "0xabc", "dt": "2026-03-01", "running_total_balance": 1000.0},
     ])
     result = sky_dao.get_sky_delegated(df, "0xabc", date(2026, 3, 1))
 
@@ -179,7 +179,10 @@ def test_status_no_sky_anywhere_returns_no_delegated_sky():
     sky = _sky_dict(0, 0, 0, 0)
     assert (
         sky_dao.determine_vote_status(
-            sky, _POLL_CLOSE, delegate_voted=False, current_datetime=_AFTER_CLOSE
+            sky,
+            _POLL_CLOSE,
+            delegate_voted=False,
+            current_datetime=_AFTER_CLOSE,
         )
         == "No Delegated SKY"
     )
@@ -189,7 +192,10 @@ def test_empty_sky_dict_returns_no_delegated_sky():
     """Empty sky dict treated as all-zero rather than falling through to a stale value."""
     assert (
         sky_dao.determine_vote_status(
-            {}, _POLL_CLOSE, delegate_voted=False, current_datetime=_AFTER_CLOSE
+            {},
+            _POLL_CLOSE,
+            delegate_voted=False,
+            current_datetime=_AFTER_CLOSE,
         )
         == "No Delegated SKY"
     )
@@ -200,7 +206,10 @@ def test_status_voted_with_sky_returns_yes():
     sky = _sky_dict(1000, 1000, 1000, 1000)
     assert (
         sky_dao.determine_vote_status(
-            sky, _POLL_CLOSE, delegate_voted=True, current_datetime=_AFTER_CLOSE
+            sky,
+            _POLL_CLOSE,
+            delegate_voted=True,
+            current_datetime=_AFTER_CLOSE,
         )
         == "Yes"
     )
@@ -211,7 +220,10 @@ def test_status_did_not_vote_full_window_returns_no():
     sky = _sky_dict(1000, 1000, 1000, 1000)
     assert (
         sky_dao.determine_vote_status(
-            sky, _POLL_CLOSE, delegate_voted=False, current_datetime=_AFTER_CLOSE
+            sky,
+            _POLL_CLOSE,
+            delegate_voted=False,
+            current_datetime=_AFTER_CLOSE,
         )
         == "No"
     )
@@ -222,7 +234,10 @@ def test_status_grace_period_close_day_only_no_vote_returns_no_delegated_sky():
     sky = _sky_dict(0, 0, 0, 1000)
     assert (
         sky_dao.determine_vote_status(
-            sky, _POLL_CLOSE, delegate_voted=False, current_datetime=_AFTER_CLOSE
+            sky,
+            _POLL_CLOSE,
+            delegate_voted=False,
+            current_datetime=_AFTER_CLOSE,
         )
         == "No Delegated SKY"
     )
@@ -233,7 +248,10 @@ def test_status_grace_period_close_day_only_voted_returns_yes():
     sky = _sky_dict(0, 0, 0, 1000)
     assert (
         sky_dao.determine_vote_status(
-            sky, _POLL_CLOSE, delegate_voted=True, current_datetime=_AFTER_CLOSE
+            sky,
+            _POLL_CLOSE,
+            delegate_voted=True,
+            current_datetime=_AFTER_CLOSE,
         )
         == "Yes"
     )
@@ -244,7 +262,10 @@ def test_status_pre_close_day_delegation_still_returns_no():
     sky = _sky_dict(0, 0, 1000, 1000)
     assert (
         sky_dao.determine_vote_status(
-            sky, _POLL_CLOSE, delegate_voted=False, current_datetime=_AFTER_CLOSE
+            sky,
+            _POLL_CLOSE,
+            delegate_voted=False,
+            current_datetime=_AFTER_CLOSE,
         )
         == "No"
     )
@@ -255,7 +276,10 @@ def test_status_mid_window_only_returns_no_delegated_sky():
     sky = _sky_dict(0, 1000, 0, 0)
     assert (
         sky_dao.determine_vote_status(
-            sky, _POLL_CLOSE, delegate_voted=False, current_datetime=_AFTER_CLOSE
+            sky,
+            _POLL_CLOSE,
+            delegate_voted=False,
+            current_datetime=_AFTER_CLOSE,
         )
         == "No Delegated SKY"
     )
@@ -266,7 +290,10 @@ def test_status_voted_but_withdrew_before_close_returns_yes():
     sky = _sky_dict(1000, 1000, 0, 0)
     assert (
         sky_dao.determine_vote_status(
-            sky, _POLL_CLOSE, delegate_voted=True, current_datetime=_AFTER_CLOSE
+            sky,
+            _POLL_CLOSE,
+            delegate_voted=True,
+            current_datetime=_AFTER_CLOSE,
         )
         == "Yes"
     )
@@ -282,7 +309,10 @@ def test_status_grief_vector_blocked():
     sky = _sky_dict(0, 0, 0, 1)
     assert (
         sky_dao.determine_vote_status(
-            sky, _POLL_CLOSE, delegate_voted=False, current_datetime=_AFTER_CLOSE
+            sky,
+            _POLL_CLOSE,
+            delegate_voted=False,
+            current_datetime=_AFTER_CLOSE,
         )
         == "No Delegated SKY"
     )
@@ -296,7 +326,10 @@ def test_status_mid_window_withdrawal_returns_no_delegated_sky():
     sky = _sky_dict(1000, 1000, 0, 0)
     assert (
         sky_dao.determine_vote_status(
-            sky, _POLL_CLOSE, delegate_voted=False, current_datetime=_AFTER_CLOSE
+            sky,
+            _POLL_CLOSE,
+            delegate_voted=False,
+            current_datetime=_AFTER_CLOSE,
         )
         == "No Delegated SKY"
     )
@@ -307,7 +340,10 @@ def test_status_partial_window_date_uses_what_is_present():
     sky = {date(2026, 4, 4): 1000.0}
     assert (
         sky_dao.determine_vote_status(
-            sky, _POLL_CLOSE, delegate_voted=False, current_datetime=_AFTER_CLOSE
+            sky,
+            _POLL_CLOSE,
+            delegate_voted=False,
+            current_datetime=_AFTER_CLOSE,
         )
         == "No Delegated SKY"
     )
@@ -318,7 +354,10 @@ def test_status_partial_window_pre_close_only_returns_no_delegated_sky():
     sky = {date(2026, 4, 2): 1000.0}
     assert (
         sky_dao.determine_vote_status(
-            sky, _POLL_CLOSE, delegate_voted=False, current_datetime=_AFTER_CLOSE
+            sky,
+            _POLL_CLOSE,
+            delegate_voted=False,
+            current_datetime=_AFTER_CLOSE,
         )
         == "No Delegated SKY"
     )
@@ -334,7 +373,10 @@ def test_status_in_progress_poll_voted_returns_yes():
     sky = _sky_dict(1000, 1000, 0, 0)  # data through day 1 only
     assert (
         sky_dao.determine_vote_status(
-            sky, _POLL_CLOSE, delegate_voted=True, current_datetime=_DURING_VOTING
+            sky,
+            _POLL_CLOSE,
+            delegate_voted=True,
+            current_datetime=_DURING_VOTING,
         )
         == "Yes"
     )
@@ -345,7 +387,10 @@ def test_status_in_progress_poll_not_voted_returns_voting_open():
     sky = _sky_dict(1000, 1000, 0, 0)
     assert (
         sky_dao.determine_vote_status(
-            sky, _POLL_CLOSE, delegate_voted=False, current_datetime=_DURING_VOTING
+            sky,
+            _POLL_CLOSE,
+            delegate_voted=False,
+            current_datetime=_DURING_VOTING,
         )
         == "Voting Open"
     )
@@ -356,7 +401,10 @@ def test_status_in_progress_with_no_sky_still_returns_voting_open():
     sky = _sky_dict(0, 0, 0, 0)
     assert (
         sky_dao.determine_vote_status(
-            sky, _POLL_CLOSE, delegate_voted=False, current_datetime=_DURING_VOTING
+            sky,
+            _POLL_CLOSE,
+            delegate_voted=False,
+            current_datetime=_DURING_VOTING,
         )
         == "Voting Open"
     )
@@ -367,7 +415,10 @@ def test_status_in_progress_voted_with_no_sky_returns_yes():
     sky = _sky_dict(0, 0, 0, 0)
     assert (
         sky_dao.determine_vote_status(
-            sky, _POLL_CLOSE, delegate_voted=True, current_datetime=_DURING_VOTING
+            sky,
+            _POLL_CLOSE,
+            delegate_voted=True,
+            current_datetime=_DURING_VOTING,
         )
         == "Yes"
     )
@@ -379,7 +430,10 @@ def test_status_close_day_before_1600_utc_treated_as_open():
     current = datetime(2026, 4, 4, 15, 0, tzinfo=UTC)
     assert (
         sky_dao.determine_vote_status(
-            sky, _POLL_CLOSE, delegate_voted=False, current_datetime=current
+            sky,
+            _POLL_CLOSE,
+            delegate_voted=False,
+            current_datetime=current,
         )
         == "Voting Open"
     )
@@ -391,7 +445,10 @@ def test_status_close_day_at_exactly_1600_utc_treated_as_closed():
     current = datetime(2026, 4, 4, 16, 0, tzinfo=UTC)
     assert (
         sky_dao.determine_vote_status(
-            sky, _POLL_CLOSE, delegate_voted=False, current_datetime=current
+            sky,
+            _POLL_CLOSE,
+            delegate_voted=False,
+            current_datetime=current,
         )
         == "No"
     )
@@ -403,7 +460,10 @@ def test_status_close_day_after_1600_utc_treated_as_closed():
     current = datetime(2026, 4, 4, 17, 0, tzinfo=UTC)
     assert (
         sky_dao.determine_vote_status(
-            sky, _POLL_CLOSE, delegate_voted=False, current_datetime=current
+            sky,
+            _POLL_CLOSE,
+            delegate_voted=False,
+            current_datetime=current,
         )
         == "No"
     )

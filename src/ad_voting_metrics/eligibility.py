@@ -116,13 +116,13 @@ def compute_daily_eligibility(
 
     missing_ranks = [n for n in active_names if n not in daily_ranks]
     if missing_ranks:
-        raise ValueError(f"daily_ranks is missing for active delegates on {day}: {missing_ranks}")
+        msg = f"daily_ranks is missing for active delegates on {day}: {missing_ranks}"
+        raise ValueError(msg)
 
     missing_metrics = [n for n in active_names if n not in metrics_input]
     if missing_metrics:
-        raise ValueError(
-            f"metrics_input is missing entries for active delegates on {day}: {missing_metrics}"
-        )
+        msg = f"metrics_input is missing entries for active delegates on {day}: {missing_metrics}"
+        raise ValueError(msg)
 
     # First pass: compute metrics + eligibility + provisional level (L1/L2 only)
     per_delegate_partial: dict[str, _PartialResult] = {}
@@ -141,12 +141,7 @@ def compute_daily_eligibility(
             window_start=window_start,
             window_end=window_end,
         )
-        eligible = (
-            p is not None
-            and p >= ELIGIBILITY_THRESHOLD
-            and c is not None
-            and c >= ELIGIBILITY_THRESHOLD
-        )
+        eligible = p is not None and p >= ELIGIBILITY_THRESHOLD and c is not None and c >= ELIGIBILITY_THRESHOLD
         per_delegate_partial[delegate.name] = _PartialResult(
             rank=daily_ranks[delegate.name],
             participation_pct=p,
@@ -157,16 +152,12 @@ def compute_daily_eligibility(
 
     # L3 slot capacity: total minus L1/L2 governance assignments
     l1_count = sum(1 for r in per_delegate_partial.values() if r.yaml_level == 1)
-    l2_count = sum(1 for r in per_delegate_partial.values() if r.yaml_level == 2)
+    l2_count = sum(1 for r in per_delegate_partial.values() if r.yaml_level == 2)  # noqa: PLR2004
     l3_slots_available = max(TOTAL_SLOTS - l1_count - l2_count, 0)
 
     # L3 candidates: active, eligible, no YAML-assigned level. Sort by rank asc
     l3_candidates = sorted(
-        (
-            (name, r)
-            for name, r in per_delegate_partial.items()
-            if r.yaml_level is None and r.eligible
-        ),
+        ((name, r) for name, r in per_delegate_partial.items() if r.yaml_level is None and r.eligible),
         key=lambda item: item[1].rank,
     )
 
@@ -178,11 +169,12 @@ def compute_daily_eligibility(
         first_out_rank = l3_candidates[l3_slots_available][1].rank
         if last_in_rank == first_out_rank:
             tied = [name for name, r in l3_candidates if r.rank == last_in_rank]
-            raise ValueError(
+            msg = (
                 f"L3 slot cutoff tie on {day}: rank {last_in_rank} is "
                 f"shared by {len(tied)} delegates ({tied}) competing for "
                 f"the last L3 slot. Resolve manually before finalizing."
             )
+            raise ValueError(msg)
 
     l3_assigned_names = {name for name, _ in l3_candidates[:l3_slots_available]}
 

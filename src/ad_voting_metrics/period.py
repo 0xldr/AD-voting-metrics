@@ -8,7 +8,12 @@ two date arguments get swapped.
 
 import calendar
 from dataclasses import dataclass
-from datetime import date
+from datetime import UTC, date, datetime
+
+from dateutil import parser as dateparser
+
+YEAR_LOWER_BOUND = 2022
+MONTHS_IN_YEAR = 12
 
 
 @dataclass(frozen=True)
@@ -22,17 +27,19 @@ class MonthPeriod:
     year: int
     month: int
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         """Validate month is 1..12 and year is >=2022.
 
         Raises:
             ValueError: if month is out of range or year is before 2022.
         """
-        if not 1 <= self.month <= 12:
-            raise ValueError(f"month must be 1..12, got {self.month}")
+        if not 1 <= self.month <= MONTHS_IN_YEAR:
+            msg = f"month must be 1..12, got {self.month}"
+            raise ValueError(msg)
         # No upper bound on year — the CLI rejects future months elsewhere.
-        if self.year < 2022:
-            raise ValueError(f"year must be >= 2022, got {self.year}")
+        if self.year < YEAR_LOWER_BOUND:
+            msg_0 = f"year must be >= 2022, got {self.year}"
+            raise ValueError(msg_0)
 
     @property
     def start(self) -> date:
@@ -70,18 +77,14 @@ class MonthPeriod:
         """
         # Lazy-imported to keep dateutil off the import path for callers
         # that construct MonthPeriod directly from year/month.
-        from datetime import datetime
-
-        from dateutil import parser as dateparser
 
         # Fixed sentinel default so dateutil doesn't fill the day from
         # today's date - "April 2026" on May 5 would otherwise be April 5.
-        sentinel = datetime(2000, 1, 1)
+        sentinel = datetime(2000, 1, 1, tzinfo=UTC)
         try:
             parsed = dateparser.parse(value, default=sentinel)
         except (ValueError, TypeError, OverflowError) as e:
-            raise ValueError(
-                f"could not parse {value!r} as a month. Try formats like 'April 2026' or '2026-04'."
-            ) from e
+            msg = f"could not parse {value!r} as a month. Try formats like 'April 2026' or '2026-04'."
+            raise ValueError(msg) from e
 
         return cls(year=parsed.year, month=parsed.month)

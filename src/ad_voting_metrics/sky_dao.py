@@ -52,8 +52,7 @@ def get_all_sky_delegated(cache_max_age_hours: int | None = None) -> pd.DataFram
     api_key = os.environ.get("DUNE_API_KEY")
     if not api_key:
         raise RuntimeError(
-            "DUNE_API_KEY environment variable is not set. "
-            "Add it to your .env file (see .env.example)."
+            "DUNE_API_KEY environment variable is not set. Add it to your .env file (see .env.example).",
         )
 
     dune = DuneClient(api_key=api_key)
@@ -98,7 +97,9 @@ def get_sky_delegated(data: pd.DataFrame, contract_address: str, dt: date) -> fl
         return 0
 
 
-def get_delegate_list_sky(df, period: MonthPeriod, cache_max_age_hours: int | None = None):
+def get_delegate_list_sky(
+    df: pd.DataFrame, period: MonthPeriod, cache_max_age_hours: int | None = None
+) -> tuple[list, list]:
     """Build per-day SKY-delegation rows for each delegate across the period.
 
     Missing daily rows from Dune are filled with zero.
@@ -133,7 +134,7 @@ def get_delegate_list_sky(df, period: MonthPeriod, cache_max_age_hours: int | No
     return delegate_list_sky, delegate_list_rank
 
 
-def get_poll_ids(period: MonthPeriod):
+def get_poll_ids(period: MonthPeriod) -> list[dict]:
     """Fetch polls from vote.sky.money that started within the period.
 
     Each poll has startDate and endDate normalized to `date` objects.
@@ -145,8 +146,11 @@ def get_poll_ids(period: MonthPeriod):
     page = 0
     all_found = False
     while all_found is False:
-        page = page + 1
-        base_url = f"{SKY_ALL_POLLS_URL}?network=mainnet&pageSize={SKY_POLL_PAGE_SIZE}&page={page}&orderBy=FURTHEST_START&startDate={period.start.isoformat()}"
+        page += 1
+        base_url = (
+            f"{SKY_ALL_POLLS_URL}?network=mainnet&pageSize={SKY_POLL_PAGE_SIZE}&page={page}&orderBy="
+            f"FURTHEST_START&startDate={period.start.isoformat()}"
+        )
         response = get_session().get(base_url, headers=HEADERS, timeout=HTTP_TIMEOUT)
 
         response.raise_for_status()
@@ -179,6 +183,7 @@ def get_poll_ids(period: MonthPeriod):
 def determine_vote_status(
     sky_by_date: dict[date, float],
     poll_end_date: date,
+    *,
     delegate_voted: bool,
     current_datetime: datetime,
 ) -> str:
@@ -240,7 +245,9 @@ def determine_vote_status(
     return "No"
 
 
-def get_vote_poll_ids(poll_info, df, df_sky, current_datetime: datetime):
+def get_vote_poll_ids(
+    poll_info: list[dict], df: pd.DataFrame, df_sky: pd.DataFrame, current_datetime: datetime
+) -> pd.DataFrame:
     """Add one column per poll to df, populated with each delegate's vote status.
 
     For every poll in poll_info, queries vote.sky.money for the voter
@@ -276,7 +283,9 @@ def get_vote_poll_ids(poll_info, df, df_sky, current_datetime: datetime):
             sky_by_date: dict[date, float] = {
                 d: sky_lookup[address, d] for d in poll_window_days if (address, d) in sky_lookup
             }
-            status = determine_vote_status(sky_by_date, end_date, delegate_voted, current_datetime)
+            status = determine_vote_status(
+                sky_by_date, end_date, delegate_voted=delegate_voted, current_datetime=current_datetime
+            )
 
             if first_delegate_date > end_date:
                 status = "Not Started"
@@ -288,7 +297,7 @@ def get_vote_poll_ids(poll_info, df, df_sky, current_datetime: datetime):
     return df
 
 
-def get_executive_ids(period: MonthPeriod):
+def get_executive_ids(period: MonthPeriod) -> list[dict]:
     """Fetch executive spells from vote.sky.money that occurred within the period.
 
     Returns:
@@ -318,12 +327,12 @@ def get_executive_ids(period: MonthPeriod):
                     "title": execute["title"],
                 })
 
-        start = start + limit
+        start += limit
 
     return spell_info
 
 
-def get_vote_executive_ids(spell_info, df, df_sky):
+def get_vote_executive_ids(spell_info: list[dict], df: pd.DataFrame, df_sky: pd.DataFrame) -> pd.DataFrame:
     """Add one column per spell to df, populated with each delegate's vote status.
 
     Returns:

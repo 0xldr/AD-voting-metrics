@@ -156,14 +156,10 @@ def participation_pct_for_window(
         ValueError: if the two sequences have different lengths.
     """
     if len(poll_starts) != len(statuses):
-        raise ValueError(
-            f"poll_starts and statuses must be the same length "
-            f"got {len(poll_starts)} and {len(statuses)}"
-        )
+        msg = f"poll_starts and statuses must be the same length got {len(poll_starts)} and {len(statuses)}"
+        raise ValueError(msg)
     in_window_statuses = [
-        s
-        for ps, s in zip(poll_starts, statuses, strict=True)
-        if is_in_window(ps, window_start, window_end)
+        s for ps, s in zip(poll_starts, statuses, strict=True) if is_in_window(ps, window_start, window_end)
     ]
     return participation_pct(in_window_statuses)
 
@@ -191,11 +187,12 @@ def apply_participation_cross_reference(
         ValueError: if the two sequences have different lengths.
     """
     if len(participation_statuses) != len(communication_statuses):
-        raise ValueError(
+        msg = (
             f"participation_statuses and communication_statuses must be the "
             f"same length (got {len(participation_statuses)}) and "
             f"{len(communication_statuses)}"
         )
+        raise ValueError(msg)
     result = []
     for p, c in zip(participation_statuses, communication_statuses, strict=True):
         if p in NOT_PARTICIPATED:
@@ -226,9 +223,6 @@ def communication_pct(
     Returns:
         Communication percentage in [0.0, 1.0], or None for an empty
         denominator.
-
-    Raises:
-        ValueError: if the two sequences have different lengths.
     """
     effective = apply_participation_cross_reference(participation_statuses, communication_statuses)
     return participation_pct(effective)
@@ -253,14 +247,13 @@ def communication_pct_for_window(
     """
     n = len(poll_starts)
     if len(participation_statuses) != n or len(communication_statuses) != n:
-        raise ValueError(
+        msg = (
             f"poll_starts, participation_statuses, and communication_statuses "
             f"must all be the same length (got {n}, "
             f"{len(participation_statuses)}, {len(communication_statuses)})"
         )
-    in_window_indices = [
-        i for i, ps in enumerate(poll_starts) if is_in_window(ps, window_start, window_end)
-    ]
+        raise ValueError(msg)
+    in_window_indices = [i for i, ps in enumerate(poll_starts) if is_in_window(ps, window_start, window_end)]
     p_filtered = [participation_statuses[i] for i in in_window_indices]
     c_filtered = [communication_statuses[i] for i in in_window_indices]
     return communication_pct(p_filtered, c_filtered)

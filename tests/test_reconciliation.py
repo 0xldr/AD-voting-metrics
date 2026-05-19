@@ -20,7 +20,7 @@ from ad_voting_metrics.roster import Delegate, DelegatesConfig
 
 
 def _make_yaml_config(active: int = 1, exited: int = 0) -> DelegatesConfig:
-    """Construct a DelegatesConfig with the given counts of active/exited delegates."""
+    """Return a DelegatesConfig with the given counts of active/exited delegates."""
     active_delegates = [
         Delegate(
             name=f"Active{i}",
@@ -47,7 +47,7 @@ def _sample_period() -> MonthPeriod:
 
 
 def _make_entry(**overrides: object) -> ReconciliationEntry:
-    """Build a complete ReconciliationEntry with sensible defaults.
+    """Return a complete ReconciliationEntry with sensible defaults.
 
     Tests of write_entry don't care about most fields — they're
     exercising filename construction, JSON encoding, or soft-fail
@@ -77,7 +77,7 @@ def _make_entry(**overrides: object) -> ReconciliationEntry:
         "dune_cache_max_age_hours": None,
         "output_files": [],
     }
-    cast(Any, base).update(overrides)
+    cast("Any", base).update(overrides)
     return base
 
 
@@ -306,9 +306,11 @@ def test_write_entry_distinct_filenames_for_same_period_different_timestamps(tmp
     path1 = write_entry(tmp_path, period, entry1)
     path2 = write_entry(tmp_path, period, entry2)
 
-    assert path1 is not None and path2 is not None
+    assert path1 is not None
+    assert path2 is not None
     assert path1 != path2
-    assert path1.exists() and path2.exists()
+    assert path1.exists()
+    assert path2.exists()
 
 
 def test_write_entry_soft_fails_on_io_error(caplog, monkeypatch):

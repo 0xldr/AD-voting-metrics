@@ -44,13 +44,13 @@ def _delegate(
     end_date: date | None = None,
     levels: list[LevelAssignment] | None = None,
 ) -> Delegate:
-    """Build a Delegate with sensible defaults.
+    """Return a Delegate with sensible defaults.
 
     The vote_delegate_address is derived from a SHA-1 of the name so
     it's deterministic across runs and always matches the
     `^0x[0-9a-f]{40}$` pattern.
     """
-    address_hex = hashlib.sha1(name.encode()).hexdigest()
+    address_hex = hashlib.sha1(name.encode(), usedforsecurity=False).hexdigest()
     return Delegate(
         name=name,
         vote_delegate_address=f"0x{address_hex}",
@@ -67,7 +67,7 @@ def _metrics(
     comm_yeses: int | None = None,
     comm_nos: int | None = None,
 ) -> DelegateMetricsInput:
-    """Build a DelegateMetricsInput with N Yes + M No participation entries.
+    """Return a DelegateMetricsInput with N Yes + M No participation entries.
 
     All poll starts are placed inside the window so they all count. If
     comm_* is omitted, communication mirrors participation perfectly
@@ -415,10 +415,7 @@ def test_two_l1_and_one_l2_yields_three_l3_slots():
 
 
 def test_six_l1_yields_zero_l3_slots():
-    delegates = [
-        _delegate(f"L1{i}", levels=[LevelAssignment(level=1, start_date=date(2024, 1, 1))])
-        for i in range(6)
-    ]
+    delegates = [_delegate(f"L1{i}", levels=[LevelAssignment(level=1, start_date=date(2024, 1, 1))]) for i in range(6)]
     delegates.append(_delegate("Cand"))
     ranks = {d.name: i + 1 for i, d in enumerate(delegates)}
     metrics = {d.name: _metrics(yeses=10) for d in delegates}
@@ -436,10 +433,7 @@ def test_six_l1_yields_zero_l3_slots():
 
 def test_over_assigned_governance_yields_zero_l3_slots_no_error():
     """Operator over-assigns L1/L2 → l3_slots clamps to 0, no error."""
-    delegates = [
-        _delegate(f"L1{i}", levels=[LevelAssignment(level=1, start_date=date(2024, 1, 1))])
-        for i in range(7)
-    ]
+    delegates = [_delegate(f"L1{i}", levels=[LevelAssignment(level=1, start_date=date(2024, 1, 1))]) for i in range(7)]
     ranks = {d.name: i + 1 for i, d in enumerate(delegates)}
     metrics = {d.name: _metrics(yeses=10) for d in delegates}
     result = compute_daily_eligibility(
@@ -550,10 +544,7 @@ def test_tie_excluded_from_consideration_no_error():
 
 def test_zero_l3_slots_no_tie_check_runs():
     """When 0 L3 slots, candidate ties don't matter — no error."""
-    delegates = [
-        _delegate(f"L1{i}", levels=[LevelAssignment(level=1, start_date=date(2024, 1, 1))])
-        for i in range(6)
-    ]
+    delegates = [_delegate(f"L1{i}", levels=[LevelAssignment(level=1, start_date=date(2024, 1, 1))]) for i in range(6)]
     delegates.extend([_delegate("CandA"), _delegate("CandB")])
     ranks = {d.name: i + 1 for i, d in enumerate(delegates)}
     ranks["CandA"] = 7
