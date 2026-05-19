@@ -281,17 +281,17 @@ def _build_sky_and_ranking_frames(
     Returns:
         Tuple of (df_sky, df_ranking) sorted for downstream writers.
     """
-    delegate_list_sky, delegate_list_rank = sky.get_delegate_list_sky(
-        df,
-        period,
-        cache_max_age_hours=cache_hours,
-    )
-    df_sky = pd.DataFrame(delegate_list_sky).sort_values(
+    daily = sky.get_delegate_list_sky(df, period, cache_max_age_hours=cache_hours)
+
+    df_sky = daily[["contract", "date", "sky"]].sort_values(
         by=["date", "sky", "contract"],
         ascending=False,
     )
 
-    df_ranking = pd.DataFrame(delegate_list_rank)
+    df_ranking = daily[["name", "date", "sky"]].rename(
+        columns={"name": "Delegate", "date": "Date", "sky": "Total Delegation"},
+    )
+    df_ranking["Total Delegation"] = df_ranking["Total Delegation"].round(2)
     df_ranking["Rank"] = (
         df_ranking.groupby("Date")["Total Delegation"].rank(method="first", ascending=False).astype(int)
     )

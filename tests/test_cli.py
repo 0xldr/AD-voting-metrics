@@ -419,16 +419,11 @@ def test_run_finalize_logs_drift_warnings():
 def test_build_sky_and_ranking_frames_sorts_sky_and_ranks_delegates():
     """df_sky sorted by (date, sky, contract) desc; df_ranking has Rank per date."""
     period = MonthPeriod(year=2026, month=4)
-    delegate_list_sky = [
-        {"contract": "0xa", "date": date(2026, 4, 1), "sky": 100.0},
-        {"contract": "0xb", "date": date(2026, 4, 1), "sky": 300.0},
-        {"contract": "0xc", "date": date(2026, 4, 1), "sky": 200.0},
-    ]
-    delegate_list_rank = [
-        {"Delegate": "alpha", "Total Delegation": 100.0, "Date": date(2026, 4, 1)},
-        {"Delegate": "beta", "Total Delegation": 300.0, "Date": date(2026, 4, 1)},
-        {"Delegate": "gamma", "Total Delegation": 200.0, "Date": date(2026, 4, 1)},
-    ]
+    canned = pd.DataFrame([
+        {"contract": "0xa", "name": "alpha", "date": date(2026, 4, 1), "sky": 100.0},
+        {"contract": "0xb", "name": "beta", "date": date(2026, 4, 1), "sky": 300.0},
+        {"contract": "0xc", "name": "gamma", "date": date(2026, 4, 1), "sky": 200.0},
+    ])
     df_input = pd.DataFrame({
         "Delegate Name": ["alpha", "beta", "gamma"],
         "Delegate Contract": ["0xa", "0xb", "0xc"],
@@ -437,7 +432,7 @@ def test_build_sky_and_ranking_frames_sorts_sky_and_ranks_delegates():
 
     with patch(
         "ad_voting_metrics.cli.sky.get_delegate_list_sky",
-        return_value=(delegate_list_sky, delegate_list_rank),
+        return_value=canned,
     ) as dune_mock:
         df_sky, df_ranking = _build_sky_and_ranking_frames(df_input, period, cache_hours=24)
 
@@ -576,14 +571,12 @@ def _make_fetch_args(
     )
 
 
-def _canned_dune_outputs(period: MonthPeriod, contract: str, name: str) -> tuple[list, list]:
-    """Return (delegate_list_sky, delegate_list_rank) covering one delegate for every day in period."""
+def _canned_dune_outputs(period: MonthPeriod, contract: str, name: str) -> pd.DataFrame:
+    """Return a sky_protocol-shaped DataFrame covering one delegate for every day in period."""
     days = list(pd.date_range(period.start, period.end, freq="D").date)
-    delegate_list_sky = [{"contract": contract, "date": d, "sky": 100.0} for d in days]
-    delegate_list_rank = [
-        {"Delegate": name, "Total Delegation": 100.0, "Date": d} for d in days
-    ]
-    return delegate_list_sky, delegate_list_rank
+    return pd.DataFrame([
+        {"contract": contract, "name": name, "date": d, "sky": 100.0} for d in days
+    ])
 
 
 def test_run_fetch_writes_csvs_and_workbook_tabs(tmp_path, monkeypatch):
