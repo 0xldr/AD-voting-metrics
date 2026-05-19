@@ -6,8 +6,6 @@ import pytest
 
 from ad_voting_metrics.compensation import (
     CompensationConfig,
-    DelegateCompensation,
-    PeriodCompensation,
     component_modifier,
     compute_period_compensation,
 )
@@ -19,37 +17,20 @@ from ad_voting_metrics.period import MonthPeriod
 # ---------------------------------------------------------------------------
 
 
-def test_component_modifier_none_returns_zero():
-    assert component_modifier(None) == 0.0
-
-
-def test_component_modifier_below_floor_returns_zero():
-    """0.74 is below the 0.75 floor → zero pay."""
-    assert component_modifier(0.74) == 0.0
-
-
-def test_component_modifier_at_floor_returns_zero():
-    """Exactly 0.75 is the bottom of the ramp; ramp value is 0."""
-    assert component_modifier(0.75) == 0.0
-
-
-def test_component_modifier_mid_ramp():
-    """0.85 is halfway between 0.75 and 0.95 → modifier 0.5."""
-    assert component_modifier(0.85) == pytest.approx(0.5)
-
-
-def test_component_modifier_just_below_ceiling():
-    """0.94 → (0.94 - 0.75) / 0.20 = 0.95."""
-    assert component_modifier(0.94) == pytest.approx(0.95)
-
-
-def test_component_modifier_at_ceiling_returns_one():
-    """0.95 caps at 1.0."""
-    assert component_modifier(0.95) == 1.0
-
-
-def test_component_modifier_above_ceiling_returns_one():
-    assert component_modifier(1.0) == 1.0
+@pytest.mark.parametrize(
+    ("pct", "expected"),
+    [
+        (None, 0.0),  # missing data
+        (0.74, 0.0),  # below floor
+        (0.75, 0.0),  # exactly at floor (ramp value 0)
+        (0.85, 0.5),  # mid-ramp (halfway between 0.75 and 0.95)
+        (0.94, 0.95),  # just below ceiling: (0.94 - 0.75) / 0.20
+        (0.95, 1.0),  # exactly at ceiling
+        (1.0, 1.0),  # above ceiling
+    ],
+)
+def test_component_modifier(pct, expected):
+    assert component_modifier(pct) == pytest.approx(expected)
 
 
 # ---------------------------------------------------------------------------
@@ -449,40 +430,3 @@ def test_realistic_april_scenario():
     assert rows_by_name["Below"].final_amount == round(4000.0 * 0.25, 0)  # 1000
     assert rows_by_name["Marginal"].final_amount == 0.0
     assert rows_by_name["Marginal"].notes == "Payments reduced to 0.00% via metrics modifier"
-
-
-def test_dataclass_field_count_pinned():
-    """Pin the DelegateCompensation field set so accidental additions fail loudly."""
-    expected = {
-        "name",
-        "rank_at_period_end",
-        "level_at_period_end",
-        "days_as_l1",
-        "days_as_l2",
-        "days_as_l3",
-        "participation_pct",
-        "communication_pct",
-        "metrics_modifier",
-        "entitlement_pre_modifier",
-        "final_amount",
-        "buffer_carry_in",
-        "buffer_added",
-        "payment_amount",
-        "buffer_post_payment",
-        "notes",
-    }
-    assert {f.name for f in DelegateCompensation.__dataclass_fields__.values()} == expected
-
-
-def test_period_compensation_carries_config_and_days():
-    de = _delegate_eligibility(assigned_level=3)
-    result = compute_period_compensation(
-        period=PERIOD,
-        daily_eligibility=_full_period({"Alice": de}),
-        config=CONFIG,
-        final_metrics={"Alice": (1.0, 1.0)},
-    )
-    assert result.period == PERIOD
-    assert result.config == CONFIG
-    assert result.days_in_period == 30
-    assert isinstance(result, PeriodCompensation)

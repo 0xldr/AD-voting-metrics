@@ -132,20 +132,17 @@ def test_participation_pct_only_exited_returns_none():
 # ---------------------------------------------------------------------------
 
 
-def test_participation_pct_all_yes_is_one():
-    assert participation_pct(["Yes", "Yes", "Yes"]) == 1.0
-
-
-def test_participation_pct_all_no_is_zero():
-    assert participation_pct(["No", "No", "No"]) == 0.0
-
-
-def test_participation_pct_half_and_half():
-    assert participation_pct(["Yes", "No"]) == 0.5
-
-
-def test_participation_pct_three_quarters():
-    assert participation_pct(["Yes", "Yes", "Yes", "No"]) == 0.75
+@pytest.mark.parametrize(
+    ("statuses", "expected"),
+    [
+        (["Yes", "Yes", "Yes"], 1.0),
+        (["No", "No", "No"], 0.0),
+        (["Yes", "No"], 0.5),
+        (["Yes", "Yes", "Yes", "No"], 0.75),
+    ],
+)
+def test_participation_pct_happy_path(statuses, expected):
+    assert participation_pct(statuses) == expected
 
 
 def test_participation_pct_empty_returns_none():
@@ -341,30 +338,20 @@ def test_cross_ref_mismatched_lengths_raises():
 # ---------------------------------------------------------------------------
 
 
-def test_communication_pct_all_yes_yes_is_one():
-    """Both participated and communicated on every poll."""
+@pytest.mark.parametrize(
+    ("participation_statuses", "communication_statuses", "expected"),
+    [
+        (["Yes", "Yes", "Yes"], ["Yes", "Yes", "Yes"], 1.0),  # all communicated
+        (["Yes", "Yes", "Yes"], ["No", "No", "No"], 0.0),  # participated, never communicated
+        (["Yes", "Yes"], ["Yes", "No"], 0.5),  # half communicated
+    ],
+)
+def test_communication_pct_happy_path(participation_statuses, communication_statuses, expected):
     pct = communication_pct(
-        participation_statuses=["Yes", "Yes", "Yes"],
-        communication_statuses=["Yes", "Yes", "Yes"],
+        participation_statuses=participation_statuses,
+        communication_statuses=communication_statuses,
     )
-    assert pct == 1.0
-
-
-def test_communication_pct_all_yes_no_is_zero():
-    """Participated everywhere, didn't communicate anywhere."""
-    pct = communication_pct(
-        participation_statuses=["Yes", "Yes", "Yes"],
-        communication_statuses=["No", "No", "No"],
-    )
-    assert pct == 0.0
-
-
-def test_communication_pct_half_communicated():
-    pct = communication_pct(
-        participation_statuses=["Yes", "Yes"],
-        communication_statuses=["Yes", "No"],
-    )
-    assert pct == 0.5
+    assert pct == expected
 
 
 def test_communication_pct_did_not_vote_polls_are_discounted():
