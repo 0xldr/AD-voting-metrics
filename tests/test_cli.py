@@ -4,17 +4,26 @@ import argparse
 from datetime import date
 from unittest.mock import MagicMock, patch
 
+import gspread
+import pandas as pd
 import pytest
 
+from ad_voting_metrics import cli
 from ad_voting_metrics.cli import (
+    _build_sky_and_ranking_frames,
+    _run_fetch,
     _run_finalize,
     _window_start_for_period,
+    _write_fetch_csvs,
+    _write_fetch_workbook_tabs,
     build_arg_parser,
     check_period_has_ended,
+    main,
     parse_cache_hours,
 )
 from ad_voting_metrics.compensation import CompensationConfig, PeriodCompensation
 from ad_voting_metrics.period import MonthPeriod
+from ad_voting_metrics.roster import Delegate
 
 
 def test_parse_cache_hours():
@@ -406,3 +415,332 @@ def test_run_finalize_eligibility_tie_at_cutoff_exits():
         )
         with pytest.raises(SystemExit):
             _run_finalize(_make_finalize_args(period))
+
+
+def test_run_finalize_logs_drift_warnings():
+    """Drift warnings from the roster are emitted via logger.warning."""
+    workbook = MagicMock()
+    config = CompensationConfig(l1_usds=33333.0, l2_usds=14583.0, l3_usds=4000.0, total_slots=6)
+    period = MonthPeriod(year=2026, month=4)
+
+    with (
+        patch("ad_voting_metrics.cli.sheets.get_workbook", return_value=workbook),
+        patch("ad_voting_metrics.cli.sheets.read_config", return_value=config),
+        patch("ad_voting_metrics.cli.build_roster_for_period") as mock_roster,
+        patch(
+            "ad_voting_metrics.cli.sheets.read_daily_data",
+            return_value={date(2026, 4, d): {} for d in range(1, 31)},
+        ),
+        patch("ad_voting_metrics.cli.sheets.read_participation_for_window", return_value={}),
+        patch("ad_voting_metrics.cli.sheets.read_communication_master", return_value={}),
+        patch("ad_voting_metrics.cli.sheets.write_compensation_tab"),
+        patch("ad_voting_metrics.cli.write_entry"),
+        patch.object(cli.logger, "warning") as warning_mock,
+    ):
+        mock_roster.return_value = MagicMock(
+            active_delegates=[],
+            drift_warnings=["YAML/API drift: delegate X missing from API"],
+            yaml_config=MagicMock(delegates=[]),
+            api_delegate_count=0,
+            api_fetch_succeeded=True,
+        )
+        _run_finalize(_make_finalize_args(period))
+
+    warning_mock.assert_any_call("YAML/API drift: delegate X missing from API")
+
+
+# ---------------------------------------------------------------------------
+# _build_sky_and_ranking_frames — pure Dune-output transform
+# ---------------------------------------------------------------------------
+
+
+def test_build_sky_and_ranking_frames_sorts_sky_and_ranks_delegates():
+    """df_sky sorted by (date, sky, contract) desc; df_ranking has Rank per date."""
+    period = MonthPeriod(year=2026, month=4)
+    delegate_list_sky = [
+        {"contract": "0xa", "date": date(2026, 4, 1), "sky": 100.0},
+        {"contract": "0xb", "date": date(2026, 4, 1), "sky": 300.0},
+        {"contract": "0xc", "date": date(2026, 4, 1), "sky": 200.0},
+    ]
+    delegate_list_rank = [
+        {"Delegate": "alpha", "Total Delegation": 100.0, "Rank": 1, "Date": date(2026, 4, 1)},
+        {"Delegate": "beta", "Total Delegation": 300.0, "Rank": 1, "Date": date(2026, 4, 1)},
+        {"Delegate": "gamma", "Total Delegation": 200.0, "Rank": 1, "Date": date(2026, 4, 1)},
+    ]
+    df_input = pd.DataFrame({
+        "Delegate Name": ["alpha", "beta", "gamma"],
+        "Delegate Contract": ["0xa", "0xb", "0xc"],
+        "Start Date": ["2024-01-01"] * 3,
+    })
+
+    with patch(
+        "ad_voting_metrics.cli.sky.get_delegate_list_sky",
+        return_value=(delegate_list_sky, delegate_list_rank),
+    ) as dune_mock:
+        df_sky, df_ranking = _build_sky_and_ranking_frames(df_input, period, cache_hours=24)
+
+    dune_mock.assert_called_once_with(df_input, period, cache_max_age_hours=24)
+
+    # df_sky: highest sky first (300), then 200, then 100.
+    assert df_sky.iloc[0]["sky"] == 300.0
+    assert df_sky.iloc[-1]["sky"] == 100.0
+
+    # df_ranking: ranks computed from Total Delegation desc per Date.
+    ranks_by_delegate = df_ranking.set_index("Delegate")["Rank"].to_dict()
+    assert ranks_by_delegate == {"beta": 1, "gamma": 2, "alpha": 3}
+
+
+# ---------------------------------------------------------------------------
+# _write_fetch_csvs — file IO to OUTPUT_DIR
+# ---------------------------------------------------------------------------
+
+
+def test_write_fetch_csvs_writes_both_files_and_returns_paths(tmp_path, monkeypatch):
+    """Writes sky.csv and vote_participation.csv to OUTPUT_DIR; returns both paths in order."""
+    monkeypatch.setattr(cli, "OUTPUT_DIR", tmp_path)
+
+    df_sky = pd.DataFrame([{"contract": "0xa", "date": date(2026, 4, 1), "sky": 100.0}])
+    df = pd.DataFrame({
+        "Delegate Name": ["alpha"],
+        "Delegate Contract": ["0xa"],
+        "Start Date": ["2024-01-01"],
+        "101": ["Yes"],
+    })
+    poll_info = [{"pollId": 101, "startDate": date(2026, 4, 1), "endDate": date(2026, 4, 3), "title": "Test"}]
+    spell_info: list[dict] = []
+
+    result = _write_fetch_csvs(df, df_sky, poll_info, spell_info)
+
+    assert [p.name for p in result] == ["sky.csv", "vote_participation.csv"]
+    assert all(p.exists() for p in result)
+    assert (tmp_path / "sky.csv").read_text().splitlines()[0] == "contract,date,sky"
+
+
+# ---------------------------------------------------------------------------
+# _write_fetch_workbook_tabs — sheets writer orchestration
+# ---------------------------------------------------------------------------
+
+
+def test_write_fetch_workbook_tabs_calls_three_writers_on_success():
+    """All three tab writers are invoked when get_workbook succeeds."""
+    period = MonthPeriod(year=2026, month=4)
+    workbook = MagicMock()
+
+    with (
+        patch("ad_voting_metrics.cli.sheets.get_workbook", return_value=workbook),
+        patch("ad_voting_metrics.cli.sheets.write_participation_raw_data") as p_mock,
+        patch("ad_voting_metrics.cli.sheets.write_communication_master") as c_mock,
+        patch("ad_voting_metrics.cli.sheets.write_daily_data") as d_mock,
+    ):
+        _write_fetch_workbook_tabs(period, pd.DataFrame(), pd.DataFrame(), [], [])
+
+    p_mock.assert_called_once()
+    c_mock.assert_called_once()
+    d_mock.assert_called_once()
+
+
+def test_write_fetch_workbook_tabs_skips_tabs_when_workbook_open_fails():
+    """If get_workbook raises RuntimeError, no tab writer runs and no exception propagates."""
+    period = MonthPeriod(year=2026, month=4)
+
+    with (
+        patch("ad_voting_metrics.cli.sheets.get_workbook", side_effect=RuntimeError("auth")),
+        patch("ad_voting_metrics.cli.sheets.write_participation_raw_data") as p_mock,
+        patch("ad_voting_metrics.cli.sheets.write_communication_master") as c_mock,
+        patch("ad_voting_metrics.cli.sheets.write_daily_data") as d_mock,
+    ):
+        _write_fetch_workbook_tabs(period, pd.DataFrame(), pd.DataFrame(), [], [])
+
+    p_mock.assert_not_called()
+    c_mock.assert_not_called()
+    d_mock.assert_not_called()
+
+
+def test_write_fetch_workbook_tabs_continues_after_value_error():
+    """A ValueError from one writer is logged; remaining writers still run."""
+    period = MonthPeriod(year=2026, month=4)
+    workbook = MagicMock()
+
+    with (
+        patch("ad_voting_metrics.cli.sheets.get_workbook", return_value=workbook),
+        patch(
+            "ad_voting_metrics.cli.sheets.write_participation_raw_data",
+            side_effect=ValueError("bad df"),
+        ),
+        patch("ad_voting_metrics.cli.sheets.write_communication_master") as c_mock,
+        patch("ad_voting_metrics.cli.sheets.write_daily_data") as d_mock,
+    ):
+        _write_fetch_workbook_tabs(period, pd.DataFrame(), pd.DataFrame(), [], [])
+
+    c_mock.assert_called_once()
+    d_mock.assert_called_once()
+
+
+def test_write_fetch_workbook_tabs_continues_after_gspread_api_error():
+    """A gspread APIError from a writer is logged; remaining writers still run."""
+    period = MonthPeriod(year=2026, month=4)
+    workbook = MagicMock()
+    # APIError's constructor takes a response; mimic the bits the formatter touches.
+    api_error = gspread.exceptions.APIError(MagicMock(status_code=500, json=dict))
+
+    with (
+        patch("ad_voting_metrics.cli.sheets.get_workbook", return_value=workbook),
+        patch(
+            "ad_voting_metrics.cli.sheets.write_participation_raw_data",
+            side_effect=api_error,
+        ),
+        patch("ad_voting_metrics.cli.sheets.write_communication_master") as c_mock,
+        patch("ad_voting_metrics.cli.sheets.write_daily_data") as d_mock,
+    ):
+        _write_fetch_workbook_tabs(period, pd.DataFrame(), pd.DataFrame(), [], [])
+
+    c_mock.assert_called_once()
+    d_mock.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# _run_fetch — end-to-end orchestration with everything mocked
+# ---------------------------------------------------------------------------
+
+
+def _make_fetch_args(
+    month: MonthPeriod | None = None,
+    cache_hours: int | None = None,
+) -> argparse.Namespace:
+    return argparse.Namespace(
+        command="fetch",
+        month=month or MonthPeriod(year=2026, month=4),
+        cache_hours=cache_hours,
+    )
+
+
+def _canned_dune_outputs(period: MonthPeriod, contract: str, name: str) -> tuple[list, list]:
+    """Return (delegate_list_sky, delegate_list_rank) covering one delegate for every day in period."""
+    days = list(pd.date_range(period.start, period.end, freq="D").date)
+    delegate_list_sky = [{"contract": contract, "date": d, "sky": 100.0} for d in days]
+    delegate_list_rank = [
+        {"Delegate": name, "Total Delegation": 100.0, "Rank": 1, "Date": d} for d in days
+    ]
+    return delegate_list_sky, delegate_list_rank
+
+
+def test_run_fetch_writes_csvs_and_workbook_tabs(tmp_path, monkeypatch):
+    """End-to-end fetch with all externals mocked → CSVs + 3 workbook tabs written."""
+    monkeypatch.setattr(cli, "OUTPUT_DIR", tmp_path)
+    monkeypatch.setattr(cli, "RECONCILIATION_LOG_PATH", tmp_path / "rec")
+
+    period = MonthPeriod(year=2026, month=4)
+    contract = "0x" + "a" * 40
+    delegates = [
+        Delegate(name="alpha", vote_delegate_address=contract, start_date=date(2024, 1, 1)),
+    ]
+    canned = _canned_dune_outputs(period, contract, "alpha")
+
+    with (
+        patch("ad_voting_metrics.cli.build_roster_for_period") as mock_roster,
+        patch("ad_voting_metrics.cli.sky.get_delegate_list_sky", return_value=canned),
+        patch("ad_voting_metrics.cli.sky.get_poll_ids", return_value=[]),
+        patch("ad_voting_metrics.cli.sky.get_executive_ids", return_value=[]),
+        patch(
+            "ad_voting_metrics.cli.sky.get_vote_poll_ids",
+            side_effect=lambda _poll_info, df, _df_sky, current_datetime: df,  # noqa: ARG005
+        ),
+        patch(
+            "ad_voting_metrics.cli.sky.get_vote_executive_ids",
+            side_effect=lambda _spell_info, df, _df_sky: df,
+        ),
+        patch("ad_voting_metrics.cli.sheets.get_workbook", return_value=MagicMock()),
+        patch("ad_voting_metrics.cli.sheets.write_participation_raw_data") as p_mock,
+        patch("ad_voting_metrics.cli.sheets.write_communication_master") as c_mock,
+        patch("ad_voting_metrics.cli.sheets.write_daily_data") as d_mock,
+        patch("ad_voting_metrics.cli.write_entry") as entry_mock,
+    ):
+        mock_roster.return_value = MagicMock(
+            active_delegates=delegates,
+            drift_warnings=[],
+            yaml_config=MagicMock(delegates=delegates),
+            api_delegate_count=1,
+            api_fetch_succeeded=True,
+        )
+        _run_fetch(_make_fetch_args(period, cache_hours=24))
+
+    assert (tmp_path / "sky.csv").exists()
+    assert (tmp_path / "vote_participation.csv").exists()
+    p_mock.assert_called_once()
+    c_mock.assert_called_once()
+    d_mock.assert_called_once()
+    entry_mock.assert_called_once()
+
+
+def test_run_fetch_logs_drift_warnings(tmp_path, monkeypatch):
+    """Drift warnings on the roster surface through logger.warning."""
+    monkeypatch.setattr(cli, "OUTPUT_DIR", tmp_path)
+    monkeypatch.setattr(cli, "RECONCILIATION_LOG_PATH", tmp_path / "rec")
+
+    period = MonthPeriod(year=2026, month=4)
+    contract = "0x" + "b" * 40
+    delegates = [
+        Delegate(name="beta", vote_delegate_address=contract, start_date=date(2024, 1, 1)),
+    ]
+    canned = _canned_dune_outputs(period, contract, "beta")
+
+    with (
+        patch("ad_voting_metrics.cli.build_roster_for_period") as mock_roster,
+        patch("ad_voting_metrics.cli.sky.get_delegate_list_sky", return_value=canned),
+        patch("ad_voting_metrics.cli.sky.get_poll_ids", return_value=[]),
+        patch("ad_voting_metrics.cli.sky.get_executive_ids", return_value=[]),
+        patch(
+            "ad_voting_metrics.cli.sky.get_vote_poll_ids",
+            side_effect=lambda _poll_info, df, _df_sky, current_datetime: df,  # noqa: ARG005
+        ),
+        patch(
+            "ad_voting_metrics.cli.sky.get_vote_executive_ids",
+            side_effect=lambda _spell_info, df, _df_sky: df,
+        ),
+        patch("ad_voting_metrics.cli.sheets.get_workbook", side_effect=RuntimeError("no workbook")),
+        patch("ad_voting_metrics.cli.write_entry"),
+        patch.object(cli.logger, "warning") as warning_mock,
+    ):
+        mock_roster.return_value = MagicMock(
+            active_delegates=delegates,
+            drift_warnings=["YAML lists Z but API doesn't"],
+            yaml_config=MagicMock(delegates=delegates),
+            api_delegate_count=1,
+            api_fetch_succeeded=True,
+        )
+        _run_fetch(_make_fetch_args(period))
+
+    warning_mock.assert_any_call("YAML lists Z but API doesn't")
+
+
+# ---------------------------------------------------------------------------
+# main() — argparse + dispatch
+# ---------------------------------------------------------------------------
+
+
+def test_main_dispatches_fetch_subcommand(monkeypatch):
+    """main(['fetch', '--month', ...]) routes to _run_fetch."""
+    monkeypatch.setattr("ad_voting_metrics.cli.check_period_has_ended", lambda *_, **__: None)
+
+    with (
+        patch("ad_voting_metrics.cli._run_fetch") as fetch_mock,
+        patch("ad_voting_metrics.cli._run_finalize") as finalize_mock,
+    ):
+        main(["fetch", "--month", "2026-04"])
+
+    fetch_mock.assert_called_once()
+    finalize_mock.assert_not_called()
+
+
+def test_main_dispatches_finalize_subcommand(monkeypatch):
+    """main(['finalize', '--month', ...]) routes to _run_finalize."""
+    monkeypatch.setattr("ad_voting_metrics.cli.check_period_has_ended", lambda *_, **__: None)
+
+    with (
+        patch("ad_voting_metrics.cli._run_fetch") as fetch_mock,
+        patch("ad_voting_metrics.cli._run_finalize") as finalize_mock,
+    ):
+        main(["finalize", "--month", "2026-04"])
+
+    finalize_mock.assert_called_once()
+    fetch_mock.assert_not_called()
