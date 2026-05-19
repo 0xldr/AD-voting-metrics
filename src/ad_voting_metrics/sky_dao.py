@@ -3,9 +3,10 @@
 Owns the close-day vote-status rule (see `determine_vote_status`).
 """
 
+import itertools
 import logging
 import os
-from datetime import UTC, date, datetime, timedelta
+from datetime import UTC, date, datetime, time, timedelta
 
 import pandas as pd
 from dune_client.client import DuneClient
@@ -73,28 +74,9 @@ def get_all_sky_delegated(cache_max_age_hours: int | None = None) -> pd.DataFram
     logger.info("Dune query returns %d rows", len(df))
 
     df["delegation_contract"] = df["delegation_contract"].str.lower()
-    df["dt"] = df["dt"].astype(str)
+    df["dt"] = pd.to_datetime(df["dt"]).dt.date
+    df["running_total_balance"] = pd.to_numeric(df["running_total_balance"], errors="coerce").fillna(0.0)
     return df.set_index(["delegation_contract", "dt"])
-
-
-def get_sky_delegated(data: pd.DataFrame, contract_address: str, dt: date) -> float:
-    """Return the running total SKY balance for a (delegate, date) pair, or 0 if absent."""
-    key = (contract_address, dt.strftime("%Y-%m-%d"))
-    try:
-        value = data.loc[key, "running_total_balance"]
-    except KeyError:
-        return 0
-
-    try:
-        return float(value)  # type: ignore[arg-type]
-    except (TypeError, ValueError):
-        logger.warning(
-            "Non-numeric running_total_balance for %s on %s: %r",
-            contract_address,
-            dt,
-            value,
-        )
-        return 0
 
 
 def get_delegate_list_sky(
@@ -112,25 +94,32 @@ def get_delegate_list_sky(
     all_sky_delegated = get_all_sky_delegated(cache_max_age_hours=cache_max_age_hours)
 
     days = list(pd.date_range(period.start, period.end, freq="D").date)
+    contracts = df["Delegate Contract"].tolist()
+    names_by_contract = {
+        contract: name.strip().lower()
+        for contract, name in zip(df["Delegate Contract"], df["Delegate Name"], strict=True)
+    }
 
-    delegate_list_sky = []
-    delegate_list_rank = []
-    for _index, row in df.iterrows():
-        delegate_name = row["Delegate Name"].strip().lower()
-        delegate_contract = row["Delegate Contract"]
-        for current_date in days:
-            sky_delegated = get_sky_delegated(all_sky_delegated, delegate_contract, current_date)
-            delegate_list_sky.append(
-                {"contract": delegate_contract, "sky": sky_delegated, "date": current_date},
-            )
-            delegate_list_rank.append(
-                {
-                    "Delegate": delegate_name,
-                    "Total Delegation": round(sky_delegated, 2),
-                    "Rank": 1,
-                    "Date": current_date,
-                },
-            )
+    target = pd.MultiIndex.from_product([contracts, days], names=["delegation_contract", "dt"])
+    filled = (
+        all_sky_delegated["running_total_balance"]
+        .reindex(target, fill_value=0.0)
+        .astype(float)
+        .reset_index()
+    )
+
+    delegate_list_sky: list[dict] = []
+    delegate_list_rank: list[dict] = []
+    for record in filled.to_dict(orient="records"):
+        contract = record["delegation_contract"]
+        day = record["dt"]
+        sky = float(record["running_total_balance"])
+        delegate_list_sky.append({"contract": contract, "sky": sky, "date": day})
+        delegate_list_rank.append({
+            "Delegate": names_by_contract[contract],
+            "Total Delegation": round(sky, 2),
+            "Date": day,
+        })
     return delegate_list_sky, delegate_list_rank
 
 
@@ -142,40 +131,37 @@ def get_poll_ids(period: MonthPeriod) -> list[dict]:
     Returns:
         List of poll dicts, filtered to those starting within the period.
     """
-    poll_info = []
-    page = 0
-    all_found = False
-    while all_found is False:
-        page += 1
-        base_url = (
-            f"{SKY_ALL_POLLS_URL}?network=mainnet&pageSize={SKY_POLL_PAGE_SIZE}&page={page}&orderBy="
-            f"FURTHEST_START&startDate={period.start.isoformat()}"
+    poll_info: list[dict] = []
+    for page in itertools.count(1):
+        params: dict[str, str | int] = {
+            "network": "mainnet",
+            "pageSize": SKY_POLL_PAGE_SIZE,
+            "page": page,
+            "orderBy": "FURTHEST_START",
+            "startDate": period.start.isoformat(),
+        }
+        response = get_session().get(
+            SKY_ALL_POLLS_URL,
+            params=params,
+            headers=HEADERS,
+            timeout=HTTP_TIMEOUT,
         )
-        response = get_session().get(base_url, headers=HEADERS, timeout=HTTP_TIMEOUT)
-
         response.raise_for_status()
         data = response.json()
-        pagination_info = data.get("paginationInfo", [])
         polls = data.get("polls", [])
-
-        if not pagination_info:
-            break
-        if not polls:
+        pagination = data.get("paginationInfo") or {}
+        if not polls or not pagination:
             break
 
         for poll in polls:
             start_date_poll = datetime.fromisoformat(poll["startDate"]).date()
-
             if period.start <= start_date_poll <= period.end:
                 poll["startDate"] = start_date_poll
                 poll["endDate"] = datetime.fromisoformat(poll["endDate"]).date()
                 poll_info.append(poll)
 
-        if pagination_info["numPages"] == 1:
-            all_found = True
-
-        if pagination_info["numPages"] == page:
-            all_found = True
+        if page >= pagination.get("numPages", page):
+            break
 
     return poll_info
 
@@ -220,15 +206,7 @@ def determine_vote_status(
     Returns:
         One of "Yes", "No", "No Delegated SKY", or "Voting Open".
     """
-    poll_close_at = datetime(
-        poll_end_date.year,
-        poll_end_date.month,
-        poll_end_date.day,
-        16,
-        0,
-        0,
-        tzinfo=UTC,
-    )
+    poll_close_at = datetime.combine(poll_end_date, time(16, tzinfo=UTC))
 
     if current_datetime < poll_close_at:
         return "Yes" if delegate_voted else "Voting Open"
@@ -277,7 +255,7 @@ def get_vote_poll_ids(
 
         for _index, row in df.iterrows():
             address = row["Delegate Contract"]
-            first_delegate_date = datetime.strptime(row["Start Date"], "%Y-%m-%d").replace(tzinfo=UTC).date()
+            first_delegate_date = date.fromisoformat(row["Start Date"])
             delegate_voted = address in voter_set
 
             sky_by_date: dict[date, float] = {
@@ -355,9 +333,9 @@ def get_vote_executive_ids(spell_info: list[dict], df: pd.DataFrame, df_sky: pd.
 
         for _index, row in df.iterrows():
             address = row["Delegate Contract"]
-            first_delegate_date = datetime.strptime(row["Start Date"], "%Y-%m-%d").replace(tzinfo=UTC).date()
+            first_delegate_date = date.fromisoformat(row["Start Date"])
 
-            sky_on_start = sky_lookup[address, start_date]
+            sky_on_start = sky_lookup.get((address, start_date), 0.0)
 
             voted: str
             if sky_on_start != 0:
