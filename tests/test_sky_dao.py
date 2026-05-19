@@ -5,9 +5,24 @@ from unittest.mock import MagicMock, patch
 
 import pandas as pd
 import pytest
+import responses
 
 from ad_voting_metrics import sky_dao
 from ad_voting_metrics.period import MonthPeriod
+from ad_voting_metrics.sources import http as http_module
+
+
+@pytest.fixture(autouse=True)
+def _reset_session():
+    """Clear the cached requests.Session before and after every test in this module.
+
+    Auto-applied: the requests adapter caches connections, and the `responses`
+    library swaps the adapter in `@responses.activate`. A stale Session can
+    bind a test to the previous run's mock state.
+    """
+    http_module.get_session.cache_clear()
+    yield
+    http_module.get_session.cache_clear()
 
 # ---------------------------------------------------------------------------
 # get_all_sky_delegated — dune-client integration and DataFrame return shape
@@ -1018,3 +1033,217 @@ def test_get_vote_executive_ids_empty_spell_info_leaves_df_unchanged():
         result = sky_dao.get_vote_executive_ids([], df, df_sky)
 
     assert list(result.columns) == original_columns
+
+
+# ---------------------------------------------------------------------------
+# get_poll_ids — pagination and date filtering against vote.sky.money
+# ---------------------------------------------------------------------------
+
+
+def _poll_dict(poll_id: int, start_iso: str, end_iso: str, title: str = "Test poll") -> dict:
+    """Return an API-shaped poll dict with ISO startDate/endDate strings."""
+    return {
+        "pollId": poll_id,
+        "startDate": start_iso,
+        "endDate": end_iso,
+        "title": title,
+    }
+
+
+@responses.activate
+def test_get_poll_ids_single_page_filters_to_period():
+    """Polls outside the period are filtered; in-period polls have date-typed fields."""
+    period = MonthPeriod(year=2025, month=4)
+    responses.add(
+        responses.GET,
+        sky_dao.SKY_ALL_POLLS_URL,
+        json={
+            "paginationInfo": {"numPages": 1},
+            "polls": [
+                _poll_dict(101, "2025-04-05T00:00:00Z", "2025-04-08T16:00:00Z", "In window"),
+                _poll_dict(102, "2025-03-30T00:00:00Z", "2025-04-02T16:00:00Z", "Before window"),
+                _poll_dict(103, "2025-05-02T00:00:00Z", "2025-05-05T16:00:00Z", "After window"),
+            ],
+        },
+        status=200,
+    )
+
+    result = sky_dao.get_poll_ids(period)
+
+    assert len(result) == 1
+    poll = result[0]
+    assert poll["pollId"] == 101
+    assert poll["title"] == "In window"
+    assert poll["startDate"] == date(2025, 4, 5)
+    assert poll["endDate"] == date(2025, 4, 8)
+
+
+@responses.activate
+def test_get_poll_ids_paginates_until_numpages_reached():
+    """Loop advances `page` until paginationInfo.numPages equals the current page."""
+    period = MonthPeriod(year=2025, month=4)
+    responses.add(
+        responses.GET,
+        sky_dao.SKY_ALL_POLLS_URL,
+        json={
+            "paginationInfo": {"numPages": 2},
+            "polls": [_poll_dict(201, "2025-04-02T00:00:00Z", "2025-04-05T16:00:00Z", "Page-1 poll")],
+        },
+        status=200,
+    )
+    responses.add(
+        responses.GET,
+        sky_dao.SKY_ALL_POLLS_URL,
+        json={
+            "paginationInfo": {"numPages": 2},
+            "polls": [_poll_dict(202, "2025-04-20T00:00:00Z", "2025-04-23T16:00:00Z", "Page-2 poll")],
+        },
+        status=200,
+    )
+
+    result = sky_dao.get_poll_ids(period)
+
+    assert [p["pollId"] for p in result] == [201, 202]
+    assert len(responses.calls) == 2
+    url_1, url_2 = responses.calls[0].request.url, responses.calls[1].request.url
+    assert url_1 is not None
+    assert url_2 is not None
+    assert "page=1" in url_1
+    assert "page=2" in url_2
+
+
+@responses.activate
+def test_get_poll_ids_stops_on_empty_pagination_info():
+    """Empty paginationInfo terminates the loop without raising."""
+    period = MonthPeriod(year=2025, month=4)
+    responses.add(
+        responses.GET,
+        sky_dao.SKY_ALL_POLLS_URL,
+        json={
+            "paginationInfo": [],
+            "polls": [_poll_dict(301, "2025-04-02T00:00:00Z", "2025-04-05T16:00:00Z")],
+        },
+        status=200,
+    )
+
+    result = sky_dao.get_poll_ids(period)
+
+    assert result == []
+    assert len(responses.calls) == 1
+
+
+@responses.activate
+def test_get_poll_ids_stops_on_empty_polls_list():
+    """Empty polls list terminates the loop without raising."""
+    period = MonthPeriod(year=2025, month=4)
+    responses.add(
+        responses.GET,
+        sky_dao.SKY_ALL_POLLS_URL,
+        json={"paginationInfo": {"numPages": 5}, "polls": []},
+        status=200,
+    )
+
+    result = sky_dao.get_poll_ids(period)
+
+    assert result == []
+    assert len(responses.calls) == 1
+
+
+@responses.activate
+def test_get_poll_ids_request_url_includes_period_start():
+    """The startDate query parameter is the period's first day in ISO form."""
+    period = MonthPeriod(year=2025, month=4)
+    responses.add(
+        responses.GET,
+        sky_dao.SKY_ALL_POLLS_URL,
+        json={"paginationInfo": {"numPages": 1}, "polls": []},
+        status=200,
+    )
+
+    sky_dao.get_poll_ids(period)
+
+    url = responses.calls[0].request.url
+    assert url is not None
+    assert "startDate=2025-04-01" in url
+    assert "network=mainnet" in url
+    assert f"pageSize={sky_dao.SKY_POLL_PAGE_SIZE}" in url
+
+
+# ---------------------------------------------------------------------------
+# get_executive_ids — pagination and date filtering against vote.sky.money
+# ---------------------------------------------------------------------------
+
+
+def _executive_dict(address: str, date_iso: str, title: str = "Test spell") -> dict:
+    """Return an API-shaped executive dict."""
+    return {"address": address, "date": date_iso, "title": title}
+
+
+@responses.activate
+def test_get_executive_ids_filters_to_period_and_lowercases_address():
+    """Spells outside the period are dropped; address is lowercased; date typed."""
+    period = MonthPeriod(year=2025, month=4)
+    responses.add(
+        responses.GET,
+        sky_dao.SKY_EXECUTIVE_URL,
+        json=[
+            _executive_dict("0xAAAA000000000000000000000000000000000001", "2025-04-10T00:00:00Z", "In window"),
+            _executive_dict("0xBBBB000000000000000000000000000000000002", "2025-02-10T00:00:00Z", "Before"),
+            _executive_dict("0xCCCC000000000000000000000000000000000003", "2025-06-10T00:00:00Z", "After"),
+        ],
+        status=200,
+    )
+    # Second page empty → terminates loop.
+    responses.add(responses.GET, sky_dao.SKY_EXECUTIVE_URL, json=[], status=200)
+
+    result = sky_dao.get_executive_ids(period)
+
+    assert len(result) == 1
+    spell = result[0]
+    assert spell["address"] == "0xaaaa000000000000000000000000000000000001"
+    assert spell["startDate"] == date(2025, 4, 10)
+    assert spell["title"] == "In window"
+
+
+@responses.activate
+def test_get_executive_ids_advances_start_until_empty():
+    """The `start` query advances by SKY_EXECUTIVES_PAGE_SIZE until the API returns []."""
+    period = MonthPeriod(year=2025, month=4)
+    responses.add(
+        responses.GET,
+        sky_dao.SKY_EXECUTIVE_URL,
+        json=[_executive_dict("0xspell0000000000000000000000000000000001", "2025-04-05T00:00:00Z")],
+        status=200,
+    )
+    responses.add(
+        responses.GET,
+        sky_dao.SKY_EXECUTIVE_URL,
+        json=[_executive_dict("0xspell0000000000000000000000000000000002", "2025-04-22T00:00:00Z")],
+        status=200,
+    )
+    responses.add(responses.GET, sky_dao.SKY_EXECUTIVE_URL, json=[], status=200)
+
+    result = sky_dao.get_executive_ids(period)
+
+    assert len(result) == 2
+    assert len(responses.calls) == 3
+    page_size = sky_dao.SKY_EXECUTIVES_PAGE_SIZE
+    url_0, url_1, url_2 = (c.request.url for c in responses.calls)
+    assert url_0 is not None
+    assert url_1 is not None
+    assert url_2 is not None
+    assert "start=0" in url_0
+    assert f"start={page_size}" in url_1
+    assert f"start={page_size * 2}" in url_2
+
+
+@responses.activate
+def test_get_executive_ids_empty_first_page_returns_empty():
+    """An empty first-page response terminates immediately and returns []."""
+    period = MonthPeriod(year=2025, month=4)
+    responses.add(responses.GET, sky_dao.SKY_EXECUTIVE_URL, json=[], status=200)
+
+    result = sky_dao.get_executive_ids(period)
+
+    assert result == []
+    assert len(responses.calls) == 1
