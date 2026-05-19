@@ -18,6 +18,7 @@ import gspread
 import pandas as pd
 from google.oauth2.service_account import Credentials
 from gspread.utils import rowcol_to_a1
+from pydantic import BaseModel
 
 from .compensation import CompensationConfig
 from .metrics import DISCOUNTED, NOT_PARTICIPATED, PARTICIPATED
@@ -41,7 +42,7 @@ def get_workbook(
     """Open the configured workbook using the service account credentials.
 
     If service_account_file or workbook_id is None, reads from the matching
-    env var (GOOGLE_SERVICE_ACCOUNT_FILE / SHEETS WORKBOOK_ID). Pass explicit
+    env var (GOOGLE_SERVICE_ACCOUNT_FILE / SHEETS_WORKBOOK_ID). Pass explicit
     values for testing.
 
     Returns:
@@ -80,8 +81,8 @@ def get_workbook(
         )
         raise RuntimeError(msg)
     if not sa_path.is_file():
-        msg_0 = f"Service account file path {sa_path} exists but is not a file."
-        raise RuntimeError(msg_0)
+        msg = f"Service account file path {sa_path} exists but is not a file."
+        raise RuntimeError(msg)
 
     try:
         credentials = Credentials.from_service_account_file(
@@ -91,7 +92,10 @@ def get_workbook(
     except ValueError as e:
         # google-auth raises ValueError for malformed JSON or wrong key type
         # (e.g., user credentials when service-account expected).
-        msg = f"Service account file at {sa_path} could not be parsed as a service-account JSON key. Original key: {e}"
+        msg = (
+            f"Service account file at {sa_path} could not be parsed as a service-account JSON key. "
+            f"Original error: {e}"
+        )
         raise RuntimeError(msg) from e
 
     client = gspread.authorize(credentials)
@@ -102,12 +106,12 @@ def get_workbook(
         # Usually a 403 because the workbook isn't shared with the service
         # account. Surface the email so the operator can fix it.
         sa_email = credentials.service_account_email
-        msg_1 = (
+        msg = (
             f"Could not open workbook {workbook_id!r}. Most likely the workbook isn't shared with the service account "
             f"email {sa_email}, or the workbook ID is wrong. Share the workbook with that email as Editor in Google "
             f"Sheets, then re-run. Original error: {e}"
         )
-        raise RuntimeError(msg_1) from e
+        raise RuntimeError(msg) from e
 
 
 def list_tab_names(workbook: gspread.Spreadsheet) -> list[str]:
@@ -223,13 +227,11 @@ def _extract_daily_data_rows(
     subset = df_ranking[list(DAILY_DATA_COLUMNS)].copy()
     subset["Date"] = subset["Date"].apply(_coerce_date)
 
-    new_rows: dict[tuple[str, str], tuple[float, int]] = {}
-    new_counts_by_date: Counter[str] = Counter()
-    for _, row in subset.iterrows():
-        date_str = str(row["Date"])
-        delegate = str(row["Delegate"])
-        new_rows[date_str, delegate] = (float(row["Total Delegation"]), int(row["Rank"]))
-        new_counts_by_date[date_str] += 1
+    new_rows: dict[tuple[str, str], tuple[float, int]] = {
+        (str(r["Date"]), str(r["Delegate"])): (float(r["Total Delegation"]), int(r["Rank"]))
+        for r in subset.to_dict(orient="records")
+    }
+    new_counts_by_date: Counter[str] = Counter(date_str for date_str, _ in new_rows)
     return new_rows, new_counts_by_date
 
 
@@ -555,7 +557,7 @@ def _apply_cross_reference_rule(participation: str) -> str:
 def _compute_delegate_defaults(
     poll_id: object,
     delegate_col_index: dict[str, int],
-    df_by_delegate: dict[str, pd.Series],
+    df_by_delegate: dict[str, dict],
     current_roster: set[str],
 ) -> dict[int, str]:
     """Return {col_idx: default cell value} for in-roster delegate columns.
@@ -690,7 +692,8 @@ def write_communication_master(
         header=header,
         existing_rows=existing_rows,
         poll_columns=poll_columns,
-        poll_and_spell_info=(poll_info, spell_info),
+        poll_info=poll_info,
+        spell_info=spell_info,
     )
 
     sorted_items = _sort_comm_rows_by_start_date(merged_rows)
@@ -729,23 +732,25 @@ def _resolve_comm_master_header(existing_header: list[str], delegate_names: list
     return list(existing_header)
 
 
-def _build_comm_master_merged_rows(
+def _build_comm_master_merged_rows(  # noqa: PLR0913 — internal helper, all keyword-only
     *,
     df: pd.DataFrame,
     header: list[str],
     existing_rows: dict[str, list[str]],
     poll_columns: Sequence[object],
-    poll_and_spell_info: tuple[list[dict], list[dict]],
+    poll_info: list[dict],
+    spell_info: list[dict],
 ) -> dict[str, list[str]]:
     """Merge existing rows with newly fetched poll/spell rows for the current header.
 
     Returns:
         Mapping of poll_id to the merged row, padded to header length.
     """
-    poll_info, spell_info = poll_and_spell_info
     n_metadata = len(PARTICIPATION_METADATA_COLUMNS)
     delegate_col_index: dict[str, int] = {col: i for i, col in enumerate(header) if i >= n_metadata}
-    df_by_delegate: dict[str, pd.Series] = {str(row["Delegate Name"]): row for _, row in df.iterrows()}
+    df_by_delegate: dict[str, dict] = {
+        str(r["Delegate Name"]): r for r in df.to_dict(orient="records")
+    }
     current_roster = set(df_by_delegate.keys())
 
     # Seed with existing rows, padding to current header length so an
@@ -878,7 +883,7 @@ def _format_pct(pct: float | None) -> str | float:
     """Format a fractional pct for the Compensation tab.
 
     Returns:
-        The float unchanged for numberic values, or "No Data" for None.
+        The float unchanged for numeric values, or "No Data" for None.
     """
     if pct is None:
         return "No Data"
@@ -898,9 +903,8 @@ def _build_compensation_header_block(
     period = period_comp.period
     config = period_comp.config
     rows_in = period_comp.per_delegate
-    n_l1 = sum(1 for r in rows_in if r.level_at_period_end == 1)
-    n_l2 = sum(1 for r in rows_in if r.level_at_period_end == 2)  # noqa: PLR2004
-    n_l3 = sum(1 for r in rows_in if r.level_at_period_end == 3)  # noqa: PLR2004
+    level_counts = Counter(r.level_at_period_end for r in rows_in)
+    n_l1, n_l2, n_l3 = level_counts.get(1, 0), level_counts.get(2, 0), level_counts.get(3, 0)
     last_data_row = 9 + n_data_rows
     sum_formula = f"=SUM(H10:H{max(last_data_row, 10)})"
     return [
@@ -1017,10 +1021,34 @@ def _enumerate_months(start: date, end: date) -> list[MonthPeriod]:
     ]
 
 
+class PollHistoryRow(BaseModel):
+    """One row of a Participation Raw Data or Communication Master tab.
+
+    statuses_by_delegate carries a cell for every delegate column in the
+    tab header (in column order); cell contents may be the empty string
+    for operator-left-blank cells. start_date and end_date are None when
+    unparseable or blank.
+    """
+
+    poll_id: str
+    start_date: date | None = None
+    end_date: date | None = None
+    title: str = ""
+    statuses_by_delegate: dict[str, str]
+
+
+def _try_parse_iso_date(value: str) -> date | None:
+    """Return the parsed date or None on empty/invalid input."""
+    try:
+        return date.fromisoformat(value)
+    except ValueError:
+        return None
+
+
 def _parse_poll_history_tab(
     worksheet: gspread.Worksheet,
-) -> tuple[list[str], list[tuple[str, list[str]]]]:
-    """Validate the shared poll-history tab shape and return delegate cols + data rows.
+) -> tuple[list[str], list[PollHistoryRow]]:
+    """Validate the shared poll-history tab shape and return delegate cols + rows.
 
     Tab layout: Poll Id | Start Date | End Date | Title | <Delegate 1> | ...
 
@@ -1028,31 +1056,39 @@ def _parse_poll_history_tab(
     are dropped.
 
     Returns:
-        (delegate_columns, validated_rows). Each validated_rows entry
-        is (poll_id_str, raw_row_cells); use _cell() to index per-
-        delegate cells at `n_metadata + offset`.
+        (delegate_names_in_column_order, parsed_rows).
     """
-    rows = worksheet.get_all_values()
-    if len(rows) <= 1:
+    raw_rows = worksheet.get_all_values()
+    if len(raw_rows) <= 1:
         return [], []
 
-    header = rows[0]
+    header = raw_rows[0]
     n_metadata = len(PARTICIPATION_METADATA_COLUMNS)
     if len(header) <= n_metadata:
         return [], []
 
-    delegate_columns = header[n_metadata:]
+    delegate_names = header[n_metadata:]
 
-    validated: list[tuple[str, list[str]]] = []
-    for row in rows[1:]:
+    parsed: list[PollHistoryRow] = []
+    for row in raw_rows[1:]:
         if not row:
             continue
-        poll_id = row[0].strip() if len(row) > 0 else ""
+        poll_id = row[0].strip()
         if not poll_id:
             continue
-        validated.append((poll_id, row))
+        parsed.append(
+            PollHistoryRow(
+                poll_id=poll_id,
+                start_date=_try_parse_iso_date(_cell(row, 1)),
+                end_date=_try_parse_iso_date(_cell(row, 2)),
+                title=_cell(row, 3),
+                statuses_by_delegate={
+                    name: _cell(row, n_metadata + offset) for offset, name in enumerate(delegate_names)
+                },
+            ),
+        )
 
-    return delegate_columns, validated
+    return delegate_names, parsed
 
 
 def _cell(row: list[str], col_idx: int) -> str:
@@ -1122,25 +1158,16 @@ def _read_poll_history_from_tab(
         {delegate_name: [(poll_id, poll_start_date, participation_status), ...]}
         in row order.
     """
-    delegate_columns, validated_rows = _parse_poll_history_tab(worksheet)
-    if not delegate_columns:
+    delegate_names, parsed_rows = _parse_poll_history_tab(worksheet)
+    if not delegate_names:
         return {}
 
-    n_metadata = len(PARTICIPATION_METADATA_COLUMNS)
-
-    result: dict[str, list[tuple[str, date, str]]] = {name: [] for name in delegate_columns}
-
-    for poll_id, row in validated_rows:
-        start_str = _cell(row, 1)
-        try:
-            poll_start = date.fromisoformat(start_str)
-        except ValueError:
+    result: dict[str, list[tuple[str, date, str]]] = {name: [] for name in delegate_names}
+    for row in parsed_rows:
+        if row.start_date is None:
             continue
-
-        for offset, name in enumerate(delegate_columns):
-            status = _cell(row, n_metadata + offset)
-            result[name].append((poll_id, poll_start, status))
-
+        for name in delegate_names:
+            result[name].append((row.poll_id, row.start_date, row.statuses_by_delegate[name]))
     return result
 
 
@@ -1198,16 +1225,13 @@ def read_communication_master(
         "Run `fetch` first to populate it.",
     )
 
-    delegate_columns, validated_rows = _parse_poll_history_tab(worksheet)
-    if not delegate_columns:
+    delegate_names, parsed_rows = _parse_poll_history_tab(worksheet)
+    if not delegate_names:
         return {}
 
-    n_metadata = len(PARTICIPATION_METADATA_COLUMNS)
-
-    result: dict[str, dict[str, str]] = {name: {} for name in delegate_columns}
-
-    for poll_id, row in validated_rows:
-        for offset, name in enumerate(delegate_columns):
-            result[name][poll_id] = _cell(row, n_metadata + offset)
+    result: dict[str, dict[str, str]] = {name: {} for name in delegate_names}
+    for row in parsed_rows:
+        for name in delegate_names:
+            result[name][row.poll_id] = row.statuses_by_delegate[name]
 
     return result
