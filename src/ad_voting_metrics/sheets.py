@@ -565,7 +565,8 @@ def _build_comm_row_for_poll(
             if _isblank(row[i]):
                 row[i] = current_val
         for col_idx, default_val in defaults.items():
-            row[col_idx] = default_val
+            if _isblank(row[col_idx]):
+                row[col_idx] = default_val
         return row
 
     row = [""] * header_len
