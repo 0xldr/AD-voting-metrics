@@ -52,12 +52,12 @@ def test_get_all_sky_delegated_calls_run_query_dataframe(monkeypatch):
     assert "query" in call_kwargs
     assert call_kwargs["query"].query_id == sky_dao.DUNE_SKY_QUERY_ID
 
-    # Result is indexed on (contract, dt), with contract lowercased
+    # Result is indexed on (contract, dt), with contract lowercased and dt as date.
     assert isinstance(result, pd.DataFrame)
     assert result.index.names == ["delegation_contract", "dt"]
     # The 0xABC contract from input was lowercased
-    assert ("0xabc", "2026-03-01") in result.index
-    assert ("0xdef", "2026-03-01") in result.index
+    assert ("0xabc", date(2026, 3, 1)) in result.index
+    assert ("0xdef", date(2026, 3, 1)) in result.index
 
 
 def test_get_all_sky_delegated_uses_cache_when_cache_hours_set(monkeypatch):
@@ -83,7 +83,7 @@ def test_get_all_sky_delegated_uses_cache_when_cache_hours_set(monkeypatch):
 
     assert isinstance(result, pd.DataFrame)
     assert result.index.names == ["delegation_contract", "dt"]
-    assert ("0xabc", "2026-03-01") in result.index
+    assert ("0xabc", date(2026, 3, 1)) in result.index
 
 
 def test_get_all_sky_delegated_raises_when_api_key_missing(monkeypatch):
@@ -97,51 +97,6 @@ def test_get_all_sky_delegated_raises_when_api_key_missing(monkeypatch):
 def test_dune_query_id_is_6604139():
     """Pin the query ID - bumping it requires a deliberate edit."""
     assert sky_dao.DUNE_SKY_QUERY_ID == 6604139
-
-
-# ---------------------------------------------------------------------------
-# get_sky_delegated — indexed lookups against the dataframe
-# ---------------------------------------------------------------------------
-
-
-def _make_indexed_df(rows: list[dict]) -> pd.DataFrame:
-    """Return a DataFrame in the shape get_all_sky_delegated produces.
-
-    Columns delegation_contract (lowercased), dt (string YYYY-MM-DD),
-    running_total_balance, indexed on (delegation_contract, dt).
-    """
-    df = pd.DataFrame(rows)
-    df["delegation_contract"] = df["delegation_contract"].str.lower()
-    df["dt"] = df["dt"].astype(str)
-    return df.set_index(["delegation_contract", "dt"])
-
-
-def test_get_sky_delegated_returns_balance_for_known_pair():
-    df = _make_indexed_df([
-        {"delegation_contract": "0xabc", "dt": "2026-03-01", "running_total_balance": 1234.5},
-    ])
-    result = sky_dao.get_sky_delegated(df, "0xabc", date(2026, 3, 1))
-
-    assert result == 1234.5
-
-
-def test_get_sky_delegated_returns_zero_for_missing_contract():
-    df = _make_indexed_df([
-        {"delegation_contract": "0xabc", "dt": "2026-03-01", "running_total_balance": 1234.5},
-    ])
-
-    result = sky_dao.get_sky_delegated(df, "0xnope", date(2026, 3, 1))
-
-    assert result == 0
-
-
-def test_get_sky_delegated_returns_zero_for_missing_date():
-    df = _make_indexed_df([
-        {"delegation_contract": "0xabc", "dt": "2026-03-01", "running_total_balance": 1234.5},
-    ])
-    result = sky_dao.get_sky_delegated(df, "0xabc", date(2026, 4, 1))
-
-    assert result == 0
 
 
 # ---------------------------------------------------------------------------
@@ -465,11 +420,11 @@ def _all_sky_df(rows: list[tuple[str, str, float]]) -> pd.DataFrame:
 
     rows is a list of (contract, dt_iso, running_total_balance) tuples.
     The returned DataFrame is indexed on (delegation_contract, dt) with
-    contract lowercased — matching get_all_sky_delegated.
+    contract lowercased and dt as datetime.date — matching get_all_sky_delegated.
     """
     df = pd.DataFrame(rows, columns=["delegation_contract", "dt", "running_total_balance"])
     df["delegation_contract"] = df["delegation_contract"].str.lower()
-    df["dt"] = df["dt"].astype(str)
+    df["dt"] = pd.to_datetime(df["dt"]).dt.date
     return df.set_index(["delegation_contract", "dt"])
 
 

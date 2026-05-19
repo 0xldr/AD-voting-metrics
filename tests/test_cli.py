@@ -425,9 +425,9 @@ def test_build_sky_and_ranking_frames_sorts_sky_and_ranks_delegates():
         {"contract": "0xc", "date": date(2026, 4, 1), "sky": 200.0},
     ]
     delegate_list_rank = [
-        {"Delegate": "alpha", "Total Delegation": 100.0, "Rank": 1, "Date": date(2026, 4, 1)},
-        {"Delegate": "beta", "Total Delegation": 300.0, "Rank": 1, "Date": date(2026, 4, 1)},
-        {"Delegate": "gamma", "Total Delegation": 200.0, "Rank": 1, "Date": date(2026, 4, 1)},
+        {"Delegate": "alpha", "Total Delegation": 100.0, "Date": date(2026, 4, 1)},
+        {"Delegate": "beta", "Total Delegation": 300.0, "Date": date(2026, 4, 1)},
+        {"Delegate": "gamma", "Total Delegation": 200.0, "Date": date(2026, 4, 1)},
     ]
     df_input = pd.DataFrame({
         "Delegate Name": ["alpha", "beta", "gamma"],
@@ -581,7 +581,7 @@ def _canned_dune_outputs(period: MonthPeriod, contract: str, name: str) -> tuple
     days = list(pd.date_range(period.start, period.end, freq="D").date)
     delegate_list_sky = [{"contract": contract, "date": d, "sky": 100.0} for d in days]
     delegate_list_rank = [
-        {"Delegate": name, "Total Delegation": 100.0, "Rank": 1, "Date": d} for d in days
+        {"Delegate": name, "Total Delegation": 100.0, "Date": d} for d in days
     ]
     return delegate_list_sky, delegate_list_rank
 
