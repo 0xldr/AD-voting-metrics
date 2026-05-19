@@ -951,9 +951,7 @@ def test_build_participation_values_spell_has_empty_end_date():
     # Spell row (third data row) should have empty End Date.
     spell_row = values[3]
     assert spell_row[0] == "0xspell001"
-    assert (
-        spell_row[2] == ""
-    )  # End Date — exact empty-string check; cell type is object  # noqa: PLC1901
+    assert spell_row[2] == "", "End Date — exact empty-string check; cell type is object"  # noqa: PLC1901
 
 
 def test_build_participation_values_unknown_column_has_blank_metadata():

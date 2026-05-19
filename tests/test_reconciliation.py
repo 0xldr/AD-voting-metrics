@@ -12,7 +12,7 @@ from typing import Any, cast
 
 from ad_voting_metrics.period import MonthPeriod
 from ad_voting_metrics.reconciliation import ReconciliationEntry, build_entry, write_entry
-from ad_voting_metrics.roster import Delegate, DelegatesConfig
+from ad_voting_metrics.roster import Delegate, DelegatesConfig, RosterResult
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -44,6 +44,29 @@ def _make_yaml_config(active: int = 1, exited: int = 0) -> DelegatesConfig:
 
 def _sample_period() -> MonthPeriod:
     return MonthPeriod(2026, 4)
+
+
+def _make_roster_result(
+    yaml_config: DelegatesConfig | None = None,
+    *,
+    active_delegates: list[Delegate] | None = None,
+    drift_warnings: list[str] | None = None,
+    api_delegate_count: int = 0,
+    api_fetch_succeeded: bool = True,
+) -> RosterResult:
+    """Build a RosterResult for build_entry tests.
+
+    Returns:
+        A RosterResult populated from the args / defaults.
+    """
+    cfg = yaml_config if yaml_config is not None else _make_yaml_config()
+    return RosterResult(
+        active_delegates=active_delegates if active_delegates is not None else [],
+        drift_warnings=drift_warnings if drift_warnings is not None else [],
+        yaml_config=cfg,
+        api_delegate_count=api_delegate_count,
+        api_fetch_succeeded=api_fetch_succeeded,
+    )
 
 
 def _make_entry(**overrides: object) -> ReconciliationEntry:
@@ -95,13 +118,12 @@ def test_build_entry_minimal():
     entry = build_entry(
         period=period,
         yaml_path=Path("/tmp/delegates.yaml"),
-        yaml_config=yaml_config,
-        active_delegates=active_delegates,
-        drift_warnings=[],
-        dune_query_id=6604139,
-        dune_cache_max_age_hours=None,
-        api_delegate_count=2,
-        api_fetch_succeeded=True,
+        roster=_make_roster_result(
+            yaml_config,
+            active_delegates=active_delegates,
+            api_delegate_count=2,
+        ),
+        dune=(6604139, None),
         output_files=[Path("/tmp/output.csv")],
     )
 
@@ -126,13 +148,8 @@ def test_build_entry_records_fresh_execution_when_cache_hours_is_none():
     entry = build_entry(
         period=_sample_period(),
         yaml_path=Path("/tmp/delegates.yaml"),
-        yaml_config=_make_yaml_config(),
-        active_delegates=[],
-        drift_warnings=[],
-        dune_query_id=6604139,
-        dune_cache_max_age_hours=None,
-        api_delegate_count=0,
-        api_fetch_succeeded=True,
+        roster=_make_roster_result(),
+        dune=(6604139, None),
         output_files=[],
     )
 
@@ -145,13 +162,8 @@ def test_build_entry_records_cached_execution_when_cache_hours_is_set():
     entry = build_entry(
         period=_sample_period(),
         yaml_path=Path("/tmp/delegates.yaml"),
-        yaml_config=_make_yaml_config(),
-        active_delegates=[],
-        drift_warnings=[],
-        dune_query_id=6604139,
-        dune_cache_max_age_hours=24,
-        api_delegate_count=0,
-        api_fetch_succeeded=True,
+        roster=_make_roster_result(),
+        dune=(6604139, 24),
         output_files=[],
     )
 
@@ -163,13 +175,10 @@ def test_build_entry_preserves_drift_warnings():
     entry = build_entry(
         period=_sample_period(),
         yaml_path=Path("/tmp/delegates.yaml"),
-        yaml_config=_make_yaml_config(),
-        active_delegates=[],
-        drift_warnings=["Cloaky vanished from API", "Mystery delegate appeared"],
-        dune_query_id=6604139,
-        dune_cache_max_age_hours=None,
-        api_delegate_count=0,
-        api_fetch_succeeded=True,
+        roster=_make_roster_result(
+            drift_warnings=["Cloaky vanished from API", "Mystery delegate appeared"],
+        ),
+        dune=(6604139, None),
         output_files=[],
     )
 
@@ -183,13 +192,11 @@ def test_build_entry_records_api_failure():
     entry = build_entry(
         period=_sample_period(),
         yaml_path=Path("/tmp/delegates.yaml"),
-        yaml_config=_make_yaml_config(),
-        active_delegates=[],
-        drift_warnings=["API drift check skipped..."],
-        dune_query_id=6604139,
-        dune_cache_max_age_hours=None,
-        api_delegate_count=0,
-        api_fetch_succeeded=False,
+        roster=_make_roster_result(
+            drift_warnings=["API drift check skipped..."],
+            api_fetch_succeeded=False,
+        ),
+        dune=(6604139, None),
         output_files=[],
     )
 
@@ -202,13 +209,8 @@ def test_build_entry_includes_all_output_files():
     entry = build_entry(
         period=_sample_period(),
         yaml_path=Path("/tmp/delegates.yaml"),
-        yaml_config=_make_yaml_config(),
-        active_delegates=[],
-        drift_warnings=[],
-        dune_query_id=6604139,
-        dune_cache_max_age_hours=None,
-        api_delegate_count=0,
-        api_fetch_succeeded=True,
+        roster=_make_roster_result(),
+        dune=(6604139, None),
         output_files=files,
     )
 
@@ -220,13 +222,8 @@ def test_build_entry_run_timestamp_is_iso_with_tz():
     entry = build_entry(
         period=_sample_period(),
         yaml_path=Path("/tmp/delegates.yaml"),
-        yaml_config=_make_yaml_config(),
-        active_delegates=[],
-        drift_warnings=[],
-        dune_query_id=6604139,
-        dune_cache_max_age_hours=None,
-        api_delegate_count=0,
-        api_fetch_succeeded=True,
+        roster=_make_roster_result(),
+        dune=(6604139, None),
         output_files=[],
     )
 
@@ -236,16 +233,17 @@ def test_build_entry_run_timestamp_is_iso_with_tz():
 
 def test_build_entry_is_json_serializable():
     """The entry must serialize to JSON without custom encoders."""
+    yaml_cfg = _make_yaml_config(active=2, exited=1)
     entry = build_entry(
         period=_sample_period(),
         yaml_path=Path("/tmp/delegates.yaml"),
-        yaml_config=_make_yaml_config(active=2, exited=1),
-        active_delegates=_make_yaml_config(active=2).delegates,
-        drift_warnings=["w1", "w2"],
-        dune_query_id=6604139,
-        dune_cache_max_age_hours=None,
-        api_delegate_count=2,
-        api_fetch_succeeded=True,
+        roster=_make_roster_result(
+            yaml_cfg,
+            active_delegates=_make_yaml_config(active=2).delegates,
+            drift_warnings=["w1", "w2"],
+            api_delegate_count=2,
+        ),
+        dune=(6604139, None),
         output_files=[Path("/o/a.csv")],
     )
 
