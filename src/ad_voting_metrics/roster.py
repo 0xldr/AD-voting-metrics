@@ -337,11 +337,11 @@ def build_roster_for_period(
 
 
 def to_dataframe(delegates: list["Delegate"]) -> pd.DataFrame:
-    """Build the per-delegate Dataframe consumed by sky_dao.
+    """Build the per-delegate Dataframe consumed by sky_protocol.
 
     Columns:'Delegate Name', 'Delegate Contract', 'Start Date'.
-    Start Date is formatted '%Y-%m-%d - sky_dao parses it back with
-    strptime, so the format matters.
+    Start Date is formatted '%Y-%m-%d - sky_protocol parses it back with
+    date.fromisoformat, so the format matters.
 
     Returns:
         Three-column DataFrame, one row per delegate.

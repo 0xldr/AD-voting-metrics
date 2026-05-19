@@ -236,7 +236,7 @@ def test_page_cap_stops_infinite_loop(caplog: pytest.LogCaptureFixture):
 
 
 # ---------------------------------------------------------------------------
-# HTTP error handling: relies on raise_for_status from sky_dao's session
+# HTTP error handling: relies on raise_for_status from the shared session
 # ---------------------------------------------------------------------------
 
 

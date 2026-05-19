@@ -771,12 +771,12 @@ def test_build_roster_for_period_skip_api_check_does_not_call_fetcher(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# to_dataframe — DataFrame shape compatible with sky_dao
+# to_dataframe — DataFrame shape compatible with sky_protocol
 # ---------------------------------------------------------------------------
 
 
 def test_to_dataframe_columns():
-    """sky_dao reads exactly Delegate Name, Delegate Contract, Start Date."""
+    """sky_protocol reads exactly Delegate Name, Delegate Contract, Start Date."""
     delegates = [
         Delegate(
             name="Cloaky",
@@ -789,7 +789,7 @@ def test_to_dataframe_columns():
 
 
 def test_to_dataframe_start_date_is_string():
-    """sky_dao parses Start Date with strptime, so it must be a string in '%Y-%m-%d'."""
+    """sky_protocol parses Start Date with date.fromisoformat, so it must be a string in '%Y-%m-%d'."""
     delegates = [
         Delegate(
             name="X",

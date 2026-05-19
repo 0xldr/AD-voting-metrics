@@ -1,4 +1,4 @@
-"""Tests for sky_dao — focused on the dune-client integration."""
+"""Tests for sky_protocol — focused on the dune-client integration."""
 
 from datetime import UTC, date, datetime
 from unittest.mock import MagicMock, patch
@@ -7,7 +7,7 @@ import pandas as pd
 import pytest
 import responses
 
-from ad_voting_metrics import sky_dao
+from ad_voting_metrics import sky_protocol
 from ad_voting_metrics.period import MonthPeriod
 from ad_voting_metrics.sources import http as http_module
 
@@ -41,8 +41,8 @@ def test_get_all_sky_delegated_calls_run_query_dataframe(monkeypatch):
     fake_client = MagicMock()
     fake_client.run_query_dataframe.return_value = fake_df
 
-    with patch("ad_voting_metrics.sky_dao.DuneClient", return_value=fake_client) as mock_class:
-        result = sky_dao.get_all_sky_delegated()
+    with patch("ad_voting_metrics.sky_protocol.DuneClient", return_value=fake_client) as mock_class:
+        result = sky_protocol.get_all_sky_delegated()
 
     # Client constructed with the api key from env
     mock_class.assert_called_once_with(api_key="fake-key")
@@ -50,7 +50,7 @@ def test_get_all_sky_delegated_calls_run_query_dataframe(monkeypatch):
     fake_client.run_query_dataframe.assert_called_once()
     call_kwargs = fake_client.run_query_dataframe.call_args.kwargs
     assert "query" in call_kwargs
-    assert call_kwargs["query"].query_id == sky_dao.DUNE_SKY_QUERY_ID
+    assert call_kwargs["query"].query_id == sky_protocol.DUNE_SKY_QUERY_ID
 
     # Result is indexed on (contract, dt), with contract lowercased and dt as date.
     assert isinstance(result, pd.DataFrame)
@@ -71,14 +71,14 @@ def test_get_all_sky_delegated_uses_cache_when_cache_hours_set(monkeypatch):
     fake_client = MagicMock()
     fake_client.get_latest_result.return_value = fake_results
 
-    with patch("ad_voting_metrics.sky_dao.DuneClient", return_value=fake_client):
-        result = sky_dao.get_all_sky_delegated(cache_max_age_hours=24)
+    with patch("ad_voting_metrics.sky_protocol.DuneClient", return_value=fake_client):
+        result = sky_protocol.get_all_sky_delegated(cache_max_age_hours=24)
 
     # Cached path
     fake_client.get_latest_result.assert_called_once()
     call_kwargs = fake_client.get_latest_result.call_args.kwargs
     assert call_kwargs["max_age_hours"] == 24
-    assert call_kwargs["query"].query_id == sky_dao.DUNE_SKY_QUERY_ID
+    assert call_kwargs["query"].query_id == sky_protocol.DUNE_SKY_QUERY_ID
     fake_client.run_query_dataframe.assert_not_called()
 
     assert isinstance(result, pd.DataFrame)
@@ -91,12 +91,12 @@ def test_get_all_sky_delegated_raises_when_api_key_missing(monkeypatch):
     monkeypatch.delenv("DUNE_API_KEY", raising=False)
 
     with pytest.raises(RuntimeError, match="DUNE_API_KEY"):
-        sky_dao.get_all_sky_delegated()
+        sky_protocol.get_all_sky_delegated()
 
 
 def test_dune_query_id_is_6604139():
     """Pin the query ID - bumping it requires a deliberate edit."""
-    assert sky_dao.DUNE_SKY_QUERY_ID == 6604139
+    assert sky_protocol.DUNE_SKY_QUERY_ID == 6604139
 
 
 # ---------------------------------------------------------------------------
@@ -119,7 +119,7 @@ def _sky_dict(day0: float, day1: float, day2: float, day3: float) -> dict:
 def test_status_no_sky_anywhere_returns_no_delegated_sky():
     sky = _sky_dict(0, 0, 0, 0)
     assert (
-        sky_dao.determine_vote_status(
+        sky_protocol.determine_vote_status(
             sky,
             _POLL_CLOSE,
             delegate_voted=False,
@@ -132,7 +132,7 @@ def test_status_no_sky_anywhere_returns_no_delegated_sky():
 def test_empty_sky_dict_returns_no_delegated_sky():
     """Empty sky dict treated as all-zero rather than falling through to a stale value."""
     assert (
-        sky_dao.determine_vote_status(
+        sky_protocol.determine_vote_status(
             {},
             _POLL_CLOSE,
             delegate_voted=False,
@@ -146,7 +146,7 @@ def test_status_voted_with_sky_returns_yes():
     """Delegate had SKY and voted."""
     sky = _sky_dict(1000, 1000, 1000, 1000)
     assert (
-        sky_dao.determine_vote_status(
+        sky_protocol.determine_vote_status(
             sky,
             _POLL_CLOSE,
             delegate_voted=True,
@@ -160,7 +160,7 @@ def test_status_did_not_vote_full_window_returns_no():
     """Delegate has SKY throughout and did not vote."""
     sky = _sky_dict(1000, 1000, 1000, 1000)
     assert (
-        sky_dao.determine_vote_status(
+        sky_protocol.determine_vote_status(
             sky,
             _POLL_CLOSE,
             delegate_voted=False,
@@ -174,7 +174,7 @@ def test_status_grace_period_close_day_only_no_vote_returns_no_delegated_sky():
     """Scenario C: zero days 0-2, non-zero only on close day, didn't vote → grace applies."""
     sky = _sky_dict(0, 0, 0, 1000)
     assert (
-        sky_dao.determine_vote_status(
+        sky_protocol.determine_vote_status(
             sky,
             _POLL_CLOSE,
             delegate_voted=False,
@@ -188,7 +188,7 @@ def test_status_grace_period_close_day_only_voted_returns_yes():
     """Scenario D: same as C but they voted anyway — counts as Yes."""
     sky = _sky_dict(0, 0, 0, 1000)
     assert (
-        sky_dao.determine_vote_status(
+        sky_protocol.determine_vote_status(
             sky,
             _POLL_CLOSE,
             delegate_voted=True,
@@ -202,7 +202,7 @@ def test_status_pre_close_day_delegation_still_returns_no():
     """Non-zero on days 2-3, didn't vote → No (both rule conditions met)."""
     sky = _sky_dict(0, 0, 1000, 1000)
     assert (
-        sky_dao.determine_vote_status(
+        sky_protocol.determine_vote_status(
             sky,
             _POLL_CLOSE,
             delegate_voted=False,
@@ -216,7 +216,7 @@ def test_status_mid_window_only_returns_no_delegated_sky():
     """Non-zero on days 2-3, didn't vote → No (both rule conditions met)."""
     sky = _sky_dict(0, 1000, 0, 0)
     assert (
-        sky_dao.determine_vote_status(
+        sky_protocol.determine_vote_status(
             sky,
             _POLL_CLOSE,
             delegate_voted=False,
@@ -230,7 +230,7 @@ def test_status_voted_but_withdrew_before_close_returns_yes():
     """A recorded vote stands even if delegations were pulled before close."""
     sky = _sky_dict(1000, 1000, 0, 0)
     assert (
-        sky_dao.determine_vote_status(
+        sky_protocol.determine_vote_status(
             sky,
             _POLL_CLOSE,
             delegate_voted=True,
@@ -249,7 +249,7 @@ def test_status_grief_vector_blocked():
     """
     sky = _sky_dict(0, 0, 0, 1)
     assert (
-        sky_dao.determine_vote_status(
+        sky_protocol.determine_vote_status(
             sky,
             _POLL_CLOSE,
             delegate_voted=False,
@@ -266,7 +266,7 @@ def test_status_mid_window_withdrawal_returns_no_delegated_sky():
     """
     sky = _sky_dict(1000, 1000, 0, 0)
     assert (
-        sky_dao.determine_vote_status(
+        sky_protocol.determine_vote_status(
             sky,
             _POLL_CLOSE,
             delegate_voted=False,
@@ -280,7 +280,7 @@ def test_status_partial_window_date_uses_what_is_present():
     """Missing days are treated as zero; only day 3 has a row → grace applies."""
     sky = {date(2026, 4, 4): 1000.0}
     assert (
-        sky_dao.determine_vote_status(
+        sky_protocol.determine_vote_status(
             sky,
             _POLL_CLOSE,
             delegate_voted=False,
@@ -294,7 +294,7 @@ def test_status_partial_window_pre_close_only_returns_no_delegated_sky():
     """Day-1 only (close day missing → treated as zero) → No Delegated SKY."""
     sky = {date(2026, 4, 2): 1000.0}
     assert (
-        sky_dao.determine_vote_status(
+        sky_protocol.determine_vote_status(
             sky,
             _POLL_CLOSE,
             delegate_voted=False,
@@ -313,7 +313,7 @@ def test_status_in_progress_poll_voted_returns_yes():
     """Delegate already voted on a poll still open. Counted positively."""
     sky = _sky_dict(1000, 1000, 0, 0)  # data through day 1 only
     assert (
-        sky_dao.determine_vote_status(
+        sky_protocol.determine_vote_status(
             sky,
             _POLL_CLOSE,
             delegate_voted=True,
@@ -327,7 +327,7 @@ def test_status_in_progress_poll_not_voted_returns_voting_open():
     """Open poll, no vote → 'Voting Open' (discounted, not penalised)."""
     sky = _sky_dict(1000, 1000, 0, 0)
     assert (
-        sky_dao.determine_vote_status(
+        sky_protocol.determine_vote_status(
             sky,
             _POLL_CLOSE,
             delegate_voted=False,
@@ -341,7 +341,7 @@ def test_status_in_progress_with_no_sky_still_returns_voting_open():
     """Open poll with no SKY now → still 'Voting Open' (they could still receive a delegation)."""
     sky = _sky_dict(0, 0, 0, 0)
     assert (
-        sky_dao.determine_vote_status(
+        sky_protocol.determine_vote_status(
             sky,
             _POLL_CLOSE,
             delegate_voted=False,
@@ -355,7 +355,7 @@ def test_status_in_progress_voted_with_no_sky_returns_yes():
     """Recorded vote stands even with zero SKY at run time — the API's voted flag is authoritative."""
     sky = _sky_dict(0, 0, 0, 0)
     assert (
-        sky_dao.determine_vote_status(
+        sky_protocol.determine_vote_status(
             sky,
             _POLL_CLOSE,
             delegate_voted=True,
@@ -370,7 +370,7 @@ def test_status_close_day_before_1600_utc_treated_as_open():
     sky = _sky_dict(1000, 1000, 1000, 1000)
     current = datetime(2026, 4, 4, 15, 0, tzinfo=UTC)
     assert (
-        sky_dao.determine_vote_status(
+        sky_protocol.determine_vote_status(
             sky,
             _POLL_CLOSE,
             delegate_voted=False,
@@ -385,7 +385,7 @@ def test_status_close_day_at_exactly_1600_utc_treated_as_closed():
     sky = _sky_dict(1000, 1000, 1000, 1000)
     current = datetime(2026, 4, 4, 16, 0, tzinfo=UTC)
     assert (
-        sky_dao.determine_vote_status(
+        sky_protocol.determine_vote_status(
             sky,
             _POLL_CLOSE,
             delegate_voted=False,
@@ -400,7 +400,7 @@ def test_status_close_day_after_1600_utc_treated_as_closed():
     sky = _sky_dict(1000, 1000, 1000, 1000)
     current = datetime(2026, 4, 4, 17, 0, tzinfo=UTC)
     assert (
-        sky_dao.determine_vote_status(
+        sky_protocol.determine_vote_status(
             sky,
             _POLL_CLOSE,
             delegate_voted=False,
@@ -443,8 +443,8 @@ def test_get_delegate_list_sky_returns_one_row_per_delegate_per_day():
     period_2day.year = 2026
     period_2day.month = 4
 
-    with patch.object(sky_dao, "get_all_sky_delegated", return_value=fake_all_sky):
-        sky_list, rank_list = sky_dao.get_delegate_list_sky(df, period_2day)
+    with patch.object(sky_protocol, "get_all_sky_delegated", return_value=fake_all_sky):
+        sky_list, rank_list = sky_protocol.get_delegate_list_sky(df, period_2day)
 
     # Two rows each: one per (entity, day).
     assert len(sky_list) == 2
@@ -464,8 +464,8 @@ def test_get_delegate_list_sky_fills_missing_dune_days_with_zero():
     period_3day.start = date(2026, 4, 1)
     period_3day.end = date(2026, 4, 3)
 
-    with patch.object(sky_dao, "get_all_sky_delegated", return_value=fake_all_sky):
-        sky_list, _rank_list = sky_dao.get_delegate_list_sky(df, period_3day)
+    with patch.object(sky_protocol, "get_all_sky_delegated", return_value=fake_all_sky):
+        sky_list, _rank_list = sky_protocol.get_delegate_list_sky(df, period_3day)
 
     by_date = {r["date"]: r["sky"] for r in sky_list}
     assert by_date[date(2026, 4, 1)] == 0
@@ -483,8 +483,8 @@ def test_get_delegate_list_sky_rank_list_lowercases_name():
     period_1day.start = date(2026, 4, 1)
     period_1day.end = date(2026, 4, 1)
 
-    with patch.object(sky_dao, "get_all_sky_delegated", return_value=fake_all_sky):
-        _, rank_list = sky_dao.get_delegate_list_sky(df, period_1day)
+    with patch.object(sky_protocol, "get_all_sky_delegated", return_value=fake_all_sky):
+        _, rank_list = sky_protocol.get_delegate_list_sky(df, period_1day)
 
     assert rank_list[0]["Delegate"] == "alice"
 
@@ -499,8 +499,8 @@ def test_get_delegate_list_sky_rank_total_rounded_to_2dp():
     period_1day.start = date(2026, 4, 1)
     period_1day.end = date(2026, 4, 1)
 
-    with patch.object(sky_dao, "get_all_sky_delegated", return_value=fake_all_sky):
-        sky_list, rank_list = sky_dao.get_delegate_list_sky(df, period_1day)
+    with patch.object(sky_protocol, "get_all_sky_delegated", return_value=fake_all_sky):
+        sky_list, rank_list = sky_protocol.get_delegate_list_sky(df, period_1day)
 
     assert rank_list[0]["Total Delegation"] == 1234.57
     # Raw sky stays unrounded
@@ -517,8 +517,8 @@ def test_get_delegate_list_sky_date_is_date_object():
     period_1day.start = date(2026, 4, 1)
     period_1day.end = date(2026, 4, 1)
 
-    with patch.object(sky_dao, "get_all_sky_delegated", return_value=fake_all_sky):
-        sky_list, rank_list = sky_dao.get_delegate_list_sky(df, period_1day)
+    with patch.object(sky_protocol, "get_all_sky_delegated", return_value=fake_all_sky):
+        sky_list, rank_list = sky_protocol.get_delegate_list_sky(df, period_1day)
 
     assert isinstance(rank_list[0]["Date"], date)
     assert isinstance(sky_list[0]["date"], date)
@@ -538,8 +538,8 @@ def test_get_delegate_list_sky_multiple_delegates_distinct_names():
     period_1day.start = date(2026, 4, 1)
     period_1day.end = date(2026, 4, 1)
 
-    with patch.object(sky_dao, "get_all_sky_delegated", return_value=fake_all_sky):
-        sky_list, rank_list = sky_dao.get_delegate_list_sky(df, period_1day)
+    with patch.object(sky_protocol, "get_all_sky_delegated", return_value=fake_all_sky):
+        sky_list, rank_list = sky_protocol.get_delegate_list_sky(df, period_1day)
 
     rank_by_name = {r["Delegate"]: r["Total Delegation"] for r in rank_list}
     assert rank_by_name == {"alice": 1000.0, "bob": 500.0}
@@ -557,8 +557,8 @@ def test_get_delegate_list_sky_passes_cache_max_age_hours_through():
     period_1day.start = date(2026, 4, 1)
     period_1day.end = date(2026, 4, 1)
 
-    with patch.object(sky_dao, "get_all_sky_delegated", return_value=fake_all_sky) as mock_dune:
-        sky_dao.get_delegate_list_sky(df, period_1day, cache_max_age_hours=24)
+    with patch.object(sky_protocol, "get_all_sky_delegated", return_value=fake_all_sky) as mock_dune:
+        sky_protocol.get_delegate_list_sky(df, period_1day, cache_max_age_hours=24)
 
     mock_dune.assert_called_once_with(cache_max_age_hours=24)
 
@@ -599,9 +599,9 @@ def test_get_vote_poll_ids_adds_column_per_poll():
         {"pollId": 5678, "startDate": date(2026, 4, 1), "endDate": date(2026, 4, 3)},
     ]
 
-    with patch("ad_voting_metrics.sky_dao.get_session") as mock_session:
+    with patch("ad_voting_metrics.sky_protocol.get_session") as mock_session:
         mock_session.return_value.get.return_value = _mock_poll_response([])
-        result = sky_dao.get_vote_poll_ids(poll_info, df, df_sky, current_datetime=_CLOSED_POLL_NOW)
+        result = sky_protocol.get_vote_poll_ids(poll_info, df, df_sky, current_datetime=_CLOSED_POLL_NOW)
 
     assert "1234" in result.columns
     assert "5678" in result.columns
@@ -619,11 +619,11 @@ def test_get_vote_poll_ids_normalizes_voter_address_case():
     ])
     poll_info = [{"pollId": 1234, "startDate": date(2026, 4, 1), "endDate": date(2026, 4, 3)}]
 
-    with patch("ad_voting_metrics.sky_dao.get_session") as mock_session:
+    with patch("ad_voting_metrics.sky_protocol.get_session") as mock_session:
         # API returns mixed-case voter address; lowercasing at boundary
         # makes the match work against the lowercase df contract.
         mock_session.return_value.get.return_value = _mock_poll_response(["0xAAA"])
-        result = sky_dao.get_vote_poll_ids(poll_info, df, df_sky, current_datetime=_CLOSED_POLL_NOW)
+        result = sky_protocol.get_vote_poll_ids(poll_info, df, df_sky, current_datetime=_CLOSED_POLL_NOW)
 
     assert result.loc[0, "1234"] == "Yes"
 
@@ -637,9 +637,9 @@ def test_get_vote_poll_ids_not_started_if_poll_ended_before_delegate_start():
     df_sky = _df_sky_for_window([])  # no SKY data
     poll_info = [{"pollId": 1234, "startDate": date(2026, 4, 1), "endDate": date(2026, 4, 3)}]
 
-    with patch("ad_voting_metrics.sky_dao.get_session") as mock_session:
+    with patch("ad_voting_metrics.sky_protocol.get_session") as mock_session:
         mock_session.return_value.get.return_value = _mock_poll_response([])
-        result = sky_dao.get_vote_poll_ids(poll_info, df, df_sky, current_datetime=_CLOSED_POLL_NOW)
+        result = sky_protocol.get_vote_poll_ids(poll_info, df, df_sky, current_datetime=_CLOSED_POLL_NOW)
 
     assert result.loc[0, "1234"] == "Not Started"
 
@@ -652,8 +652,8 @@ def test_get_vote_poll_ids_empty_poll_info_leaves_df_unchanged():
     df_sky = _df_sky_for_window([])
     original_columns = list(df.columns)
 
-    with patch("ad_voting_metrics.sky_dao.get_session"):
-        result = sky_dao.get_vote_poll_ids([], df, df_sky, current_datetime=_CLOSED_POLL_NOW)
+    with patch("ad_voting_metrics.sky_protocol.get_session"):
+        result = sky_protocol.get_vote_poll_ids([], df, df_sky, current_datetime=_CLOSED_POLL_NOW)
 
     assert list(result.columns) == original_columns
 
@@ -674,10 +674,10 @@ def test_get_vote_poll_ids_multiple_delegates_per_poll():
     ])
     poll_info = [{"pollId": 1234, "startDate": date(2026, 4, 1), "endDate": date(2026, 4, 3)}]
 
-    with patch("ad_voting_metrics.sky_dao.get_session") as mock_session:
+    with patch("ad_voting_metrics.sky_protocol.get_session") as mock_session:
         # Alice voted, Bob didn't
         mock_session.return_value.get.return_value = _mock_poll_response(["0xaaa"])
-        result = sky_dao.get_vote_poll_ids(poll_info, df, df_sky, current_datetime=_CLOSED_POLL_NOW)
+        result = sky_protocol.get_vote_poll_ids(poll_info, df, df_sky, current_datetime=_CLOSED_POLL_NOW)
 
     assert result.loc[0, "1234"] == "Yes"
     assert result.loc[1, "1234"] == "No"
@@ -712,9 +712,9 @@ def test_get_vote_executive_ids_adds_column_per_spell():
         {"address": "0xspell2", "startDate": date(2026, 4, 5)},
     ]
 
-    with patch("ad_voting_metrics.sky_dao.get_session") as mock_session:
+    with patch("ad_voting_metrics.sky_protocol.get_session") as mock_session:
         mock_session.return_value.get.return_value = _mock_executive_supporters_response({})
-        result = sky_dao.get_vote_executive_ids(spell_info, df, df_sky)
+        result = sky_protocol.get_vote_executive_ids(spell_info, df, df_sky)
 
     assert "0xspell1" in result.columns
     assert "0xspell2" in result.columns
@@ -728,11 +728,11 @@ def test_get_vote_executive_ids_supporter_with_sky_returns_yes():
     df_sky = _df_sky_for_window([("0xaaa", date(2026, 4, 5), 1000.0)])
     spell_info = [{"address": "0xspell1", "startDate": date(2026, 4, 5)}]
 
-    with patch("ad_voting_metrics.sky_dao.get_session") as mock_session:
+    with patch("ad_voting_metrics.sky_protocol.get_session") as mock_session:
         mock_session.return_value.get.return_value = _mock_executive_supporters_response(
             {"0xspell1": ["0xaaa"]},
         )
-        result = sky_dao.get_vote_executive_ids(spell_info, df, df_sky)
+        result = sky_protocol.get_vote_executive_ids(spell_info, df, df_sky)
 
     assert result.loc[0, "0xspell1"] == "Yes"
 
@@ -745,11 +745,11 @@ def test_get_vote_executive_ids_not_supporter_with_sky_returns_pending():
     df_sky = _df_sky_for_window([("0xaaa", date(2026, 4, 5), 1000.0)])
     spell_info = [{"address": "0xspell1", "startDate": date(2026, 4, 5)}]
 
-    with patch("ad_voting_metrics.sky_dao.get_session") as mock_session:
+    with patch("ad_voting_metrics.sky_protocol.get_session") as mock_session:
         mock_session.return_value.get.return_value = _mock_executive_supporters_response(
             {"0xspell1": []},  # no supporters
         )
-        result = sky_dao.get_vote_executive_ids(spell_info, df, df_sky)
+        result = sky_protocol.get_vote_executive_ids(spell_info, df, df_sky)
 
     assert result.loc[0, "0xspell1"] == "Pending verification"
 
@@ -762,11 +762,11 @@ def test_get_vote_executive_ids_zero_sky_returns_no_delegated_sky():
     df_sky = _df_sky_for_window([("0xaaa", date(2026, 4, 5), 0.0)])
     spell_info = [{"address": "0xspell1", "startDate": date(2026, 4, 5)}]
 
-    with patch("ad_voting_metrics.sky_dao.get_session") as mock_session:
+    with patch("ad_voting_metrics.sky_protocol.get_session") as mock_session:
         mock_session.return_value.get.return_value = _mock_executive_supporters_response(
             {"0xspell1": ["0xaaa"]},  # delegate IS a supporter, but no SKY
         )
-        result = sky_dao.get_vote_executive_ids(spell_info, df, df_sky)
+        result = sky_protocol.get_vote_executive_ids(spell_info, df, df_sky)
 
     assert result.loc[0, "0xspell1"] == "No Delegated SKY"
 
@@ -779,11 +779,11 @@ def test_get_vote_executive_ids_not_started_if_spell_started_before_delegate():
     df_sky = _df_sky_for_window([("0xaaa", date(2026, 4, 5), 1000.0)])
     spell_info = [{"address": "0xspell1", "startDate": date(2026, 4, 5)}]
 
-    with patch("ad_voting_metrics.sky_dao.get_session") as mock_session:
+    with patch("ad_voting_metrics.sky_protocol.get_session") as mock_session:
         mock_session.return_value.get.return_value = _mock_executive_supporters_response(
             {"0xspell1": ["0xaaa"]},
         )
-        result = sky_dao.get_vote_executive_ids(spell_info, df, df_sky)
+        result = sky_protocol.get_vote_executive_ids(spell_info, df, df_sky)
 
     assert result.loc[0, "0xspell1"] == "Not Started"
 
@@ -802,11 +802,11 @@ def test_get_vote_executive_ids_normalizes_supporter_address_case():
     df_sky = _df_sky_for_window([("0xaaa", date(2026, 4, 5), 1000.0)])
     spell_info = [{"address": "0xspell1", "startDate": date(2026, 4, 5)}]
 
-    with patch("ad_voting_metrics.sky_dao.get_session") as mock_session:
+    with patch("ad_voting_metrics.sky_protocol.get_session") as mock_session:
         mock_session.return_value.get.return_value = _mock_executive_supporters_response(
             {"0xspell1": ["0xAAA"]},  # API returns mixed-case
         )
-        result = sky_dao.get_vote_executive_ids(spell_info, df, df_sky)
+        result = sky_protocol.get_vote_executive_ids(spell_info, df, df_sky)
 
     # Despite API casing mismatch, the boundary-lowercase makes this work.
     assert result.loc[0, "0xspell1"] == "Yes"
@@ -820,9 +820,9 @@ def test_get_vote_executive_ids_empty_spell_info_leaves_df_unchanged():
     df_sky = _df_sky_for_window([])
     original_columns = list(df.columns)
 
-    with patch("ad_voting_metrics.sky_dao.get_session") as mock_session:
+    with patch("ad_voting_metrics.sky_protocol.get_session") as mock_session:
         mock_session.return_value.get.return_value = _mock_executive_supporters_response({})
-        result = sky_dao.get_vote_executive_ids([], df, df_sky)
+        result = sky_protocol.get_vote_executive_ids([], df, df_sky)
 
     assert list(result.columns) == original_columns
 
@@ -848,7 +848,7 @@ def test_get_poll_ids_single_page_filters_to_period():
     period = MonthPeriod(year=2025, month=4)
     responses.add(
         responses.GET,
-        sky_dao.SKY_ALL_POLLS_URL,
+        sky_protocol.SKY_ALL_POLLS_URL,
         json={
             "paginationInfo": {"numPages": 1},
             "polls": [
@@ -860,7 +860,7 @@ def test_get_poll_ids_single_page_filters_to_period():
         status=200,
     )
 
-    result = sky_dao.get_poll_ids(period)
+    result = sky_protocol.get_poll_ids(period)
 
     assert len(result) == 1
     poll = result[0]
@@ -876,7 +876,7 @@ def test_get_poll_ids_paginates_until_numpages_reached():
     period = MonthPeriod(year=2025, month=4)
     responses.add(
         responses.GET,
-        sky_dao.SKY_ALL_POLLS_URL,
+        sky_protocol.SKY_ALL_POLLS_URL,
         json={
             "paginationInfo": {"numPages": 2},
             "polls": [_poll_dict(201, "2025-04-02T00:00:00Z", "2025-04-05T16:00:00Z", "Page-1 poll")],
@@ -885,7 +885,7 @@ def test_get_poll_ids_paginates_until_numpages_reached():
     )
     responses.add(
         responses.GET,
-        sky_dao.SKY_ALL_POLLS_URL,
+        sky_protocol.SKY_ALL_POLLS_URL,
         json={
             "paginationInfo": {"numPages": 2},
             "polls": [_poll_dict(202, "2025-04-20T00:00:00Z", "2025-04-23T16:00:00Z", "Page-2 poll")],
@@ -893,7 +893,7 @@ def test_get_poll_ids_paginates_until_numpages_reached():
         status=200,
     )
 
-    result = sky_dao.get_poll_ids(period)
+    result = sky_protocol.get_poll_ids(period)
 
     assert [p["pollId"] for p in result] == [201, 202]
     assert len(responses.calls) == 2
@@ -910,7 +910,7 @@ def test_get_poll_ids_stops_on_empty_pagination_info():
     period = MonthPeriod(year=2025, month=4)
     responses.add(
         responses.GET,
-        sky_dao.SKY_ALL_POLLS_URL,
+        sky_protocol.SKY_ALL_POLLS_URL,
         json={
             "paginationInfo": [],
             "polls": [_poll_dict(301, "2025-04-02T00:00:00Z", "2025-04-05T16:00:00Z")],
@@ -918,7 +918,7 @@ def test_get_poll_ids_stops_on_empty_pagination_info():
         status=200,
     )
 
-    result = sky_dao.get_poll_ids(period)
+    result = sky_protocol.get_poll_ids(period)
 
     assert result == []
     assert len(responses.calls) == 1
@@ -930,12 +930,12 @@ def test_get_poll_ids_stops_on_empty_polls_list():
     period = MonthPeriod(year=2025, month=4)
     responses.add(
         responses.GET,
-        sky_dao.SKY_ALL_POLLS_URL,
+        sky_protocol.SKY_ALL_POLLS_URL,
         json={"paginationInfo": {"numPages": 5}, "polls": []},
         status=200,
     )
 
-    result = sky_dao.get_poll_ids(period)
+    result = sky_protocol.get_poll_ids(period)
 
     assert result == []
     assert len(responses.calls) == 1
@@ -947,18 +947,18 @@ def test_get_poll_ids_request_url_includes_period_start():
     period = MonthPeriod(year=2025, month=4)
     responses.add(
         responses.GET,
-        sky_dao.SKY_ALL_POLLS_URL,
+        sky_protocol.SKY_ALL_POLLS_URL,
         json={"paginationInfo": {"numPages": 1}, "polls": []},
         status=200,
     )
 
-    sky_dao.get_poll_ids(period)
+    sky_protocol.get_poll_ids(period)
 
     url = responses.calls[0].request.url
     assert url is not None
     assert "startDate=2025-04-01" in url
     assert "network=mainnet" in url
-    assert f"pageSize={sky_dao.SKY_POLL_PAGE_SIZE}" in url
+    assert f"pageSize={sky_protocol.SKY_POLL_PAGE_SIZE}" in url
 
 
 # ---------------------------------------------------------------------------
@@ -977,7 +977,7 @@ def test_get_executive_ids_filters_to_period_and_lowercases_address():
     period = MonthPeriod(year=2025, month=4)
     responses.add(
         responses.GET,
-        sky_dao.SKY_EXECUTIVE_URL,
+        sky_protocol.SKY_EXECUTIVE_URL,
         json=[
             _executive_dict("0xAAAA000000000000000000000000000000000001", "2025-04-10T00:00:00Z", "In window"),
             _executive_dict("0xBBBB000000000000000000000000000000000002", "2025-02-10T00:00:00Z", "Before"),
@@ -986,9 +986,9 @@ def test_get_executive_ids_filters_to_period_and_lowercases_address():
         status=200,
     )
     # Second page empty → terminates loop.
-    responses.add(responses.GET, sky_dao.SKY_EXECUTIVE_URL, json=[], status=200)
+    responses.add(responses.GET, sky_protocol.SKY_EXECUTIVE_URL, json=[], status=200)
 
-    result = sky_dao.get_executive_ids(period)
+    result = sky_protocol.get_executive_ids(period)
 
     assert len(result) == 1
     spell = result[0]
@@ -1003,23 +1003,23 @@ def test_get_executive_ids_advances_start_until_empty():
     period = MonthPeriod(year=2025, month=4)
     responses.add(
         responses.GET,
-        sky_dao.SKY_EXECUTIVE_URL,
+        sky_protocol.SKY_EXECUTIVE_URL,
         json=[_executive_dict("0xspell0000000000000000000000000000000001", "2025-04-05T00:00:00Z")],
         status=200,
     )
     responses.add(
         responses.GET,
-        sky_dao.SKY_EXECUTIVE_URL,
+        sky_protocol.SKY_EXECUTIVE_URL,
         json=[_executive_dict("0xspell0000000000000000000000000000000002", "2025-04-22T00:00:00Z")],
         status=200,
     )
-    responses.add(responses.GET, sky_dao.SKY_EXECUTIVE_URL, json=[], status=200)
+    responses.add(responses.GET, sky_protocol.SKY_EXECUTIVE_URL, json=[], status=200)
 
-    result = sky_dao.get_executive_ids(period)
+    result = sky_protocol.get_executive_ids(period)
 
     assert len(result) == 2
     assert len(responses.calls) == 3
-    page_size = sky_dao.SKY_EXECUTIVES_PAGE_SIZE
+    page_size = sky_protocol.SKY_EXECUTIVES_PAGE_SIZE
     url_0, url_1, url_2 = (c.request.url for c in responses.calls)
     assert url_0 is not None
     assert url_1 is not None
@@ -1033,9 +1033,9 @@ def test_get_executive_ids_advances_start_until_empty():
 def test_get_executive_ids_empty_first_page_returns_empty():
     """An empty first-page response terminates immediately and returns []."""
     period = MonthPeriod(year=2025, month=4)
-    responses.add(responses.GET, sky_dao.SKY_EXECUTIVE_URL, json=[], status=200)
+    responses.add(responses.GET, sky_protocol.SKY_EXECUTIVE_URL, json=[], status=200)
 
-    result = sky_dao.get_executive_ids(period)
+    result = sky_protocol.get_executive_ids(period)
 
     assert result == []
     assert len(responses.calls) == 1
