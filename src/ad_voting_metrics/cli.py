@@ -20,7 +20,7 @@ from dotenv import load_dotenv
 
 from . import sheets
 from . import sky_dao as sky
-from .compensation import compute_period_compensation
+from .compensation import CompensationConfig, PeriodCompensation, compute_period_compensation
 from .eligibility import DailyEligibility, DelegateMetricsInput, compute_daily_eligibility
 from .period import MonthPeriod
 from .reconciliation import build_entry, write_entry
@@ -271,27 +271,20 @@ def _compute_daily_results(
     return daily_results
 
 
-def _run_fetch(args: argparse.Namespace) -> None:
-    """Pull data from Dune + APIs, write CSVs and workbook tabs."""
-    period = args.month
+def _build_sky_and_ranking_frames(
+    df: pd.DataFrame,
+    period: MonthPeriod,
+    cache_hours: int | None,
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Pull Dune SKY data and build the sorted sky + ranking dataframes.
 
-    logger.info("Querying %s (%s through %s)", period, period.start.isoformat(), period.end.isoformat())
-
-    logger.info("Building delegate roster from delegates.yaml and vote.sky.money API...")
-    roster_result = build_roster_for_period(yaml_path=YAML_PATH, period=period, api_fetcher=fetch_aligned_delegates)
-    delegates = roster_result.active_delegates
-    drift_warnings = roster_result.drift_warnings
-    for warning in drift_warnings:
-        logger.warning(warning)
-    logger.info("Roster has %d delegates active during %s", len(delegates), period)
-
-    df = to_dataframe(delegates)
-
-    logger.info("Getting RANKING...")
+    Returns:
+        Tuple of (df_sky, df_ranking) sorted for downstream writers.
+    """
     delegate_list_sky, delegate_list_rank = sky.get_delegate_list_sky(
         df,
         period,
-        cache_max_age_hours=args.cache_hours,
+        cache_max_age_hours=cache_hours,
     )
     df_sky = pd.DataFrame(delegate_list_sky).sort_values(
         by=["date", "sky", "contract"],
@@ -303,6 +296,81 @@ def _run_fetch(args: argparse.Namespace) -> None:
         df_ranking.groupby("Date")["Total Delegation"].rank(method="first", ascending=False).astype(int)
     )
     df_ranking = df_ranking.sort_values(by=["Rank", "Date"])
+    return df_sky, df_ranking
+
+
+def _write_fetch_csvs(
+    df: pd.DataFrame,
+    df_sky: pd.DataFrame,
+    poll_info: list[dict],
+    spell_info: list[dict],
+) -> list[Path]:
+    """Write the sky and participation CSVs.
+
+    Returns:
+        The list of CSV paths written, in write order.
+    """
+    sky_csv = OUTPUT_DIR / "sky.csv"
+    df_sky.to_csv(sky_csv, index=False)
+    logger.info("SKY data by date saved to %s", sky_csv)
+
+    participation_csv = OUTPUT_DIR / "vote_participation.csv"
+    with participation_csv.open("w", newline="") as f:
+        csv.writer(f).writerows(
+            sheets.build_participation_values(df, poll_info, spell_info),
+        )
+    logger.info("Participation vote data saved to %s", participation_csv)
+    return [sky_csv, participation_csv]
+
+
+def _write_fetch_workbook_tabs(
+    period: MonthPeriod,
+    df: pd.DataFrame,
+    df_ranking: pd.DataFrame,
+    poll_info: list[dict],
+    spell_info: list[dict],
+) -> None:
+    """Open the workbook and write the participation/communication/daily tabs."""
+    try:
+        workbook = sheets.get_workbook()
+    except RuntimeError:
+        logger.exception("Could not open Sheets workbook")
+        logger.exception("CSV outputs in output_date/ are complete; skipping Sheets writes.")
+        return
+
+    def _safe_write(description: str, fn: Callable[..., object], *args: object) -> None:
+        try:
+            fn(*args)
+            logger.info("%s tab written to workbook for %s", description, period)
+        except ValueError:
+            logger.exception("%s writer rejected the data", description)
+        except (RuntimeError, gspread.exceptions.APIError):
+            logger.exception("Could not write %s tab", description)
+
+    _safe_write(
+        "Participation Raw Data", sheets.write_participation_raw_data, workbook, period, df, poll_info, spell_info
+    )
+    _safe_write("Communication Master", sheets.write_communication_master, workbook, df, poll_info, spell_info)
+    _safe_write("Daily Data", sheets.write_daily_data, workbook, period, df_ranking)
+
+
+def _run_fetch(args: argparse.Namespace) -> None:
+    """Pull data from Dune + APIs, write CSVs and workbook tabs."""
+    period = args.month
+
+    logger.info("Querying %s (%s through %s)", period, period.start.isoformat(), period.end.isoformat())
+
+    logger.info("Building delegate roster from delegates.yaml and vote.sky.money API...")
+    roster_result = build_roster_for_period(yaml_path=YAML_PATH, period=period, api_fetcher=fetch_aligned_delegates)
+    delegates = roster_result.active_delegates
+    for warning in roster_result.drift_warnings:
+        logger.warning(warning)
+    logger.info("Roster has %d delegates active during %s", len(delegates), period)
+
+    df = to_dataframe(delegates)
+
+    logger.info("Getting RANKING...")
+    df_sky, df_ranking = _build_sky_and_ranking_frames(df, period, args.cache_hours)
 
     logger.info("Getting POLL IDS...")
     poll_info = sky.get_poll_ids(period)
@@ -314,44 +382,8 @@ def _run_fetch(args: argparse.Namespace) -> None:
     logger.info("Getting VOTE FROM SPELL...")
     df = sky.get_vote_executive_ids(spell_info, df, df_sky)
 
-    output_files: list[Path] = []
-
-    sky_csv = OUTPUT_DIR / "sky.csv"
-    df_sky.to_csv(sky_csv, index=False)
-    output_files.append(sky_csv)
-    logger.info("SKY data by date saved to %s", sky_csv)
-
-    participation_csv = OUTPUT_DIR / "vote_participation.csv"
-    with participation_csv.open("w", newline="") as f:
-        csv.writer(f).writerows(
-            sheets.build_participation_values(df, poll_info, spell_info),
-        )
-    output_files.append(participation_csv)
-    logger.info("Participation vote data saved to %s", participation_csv)
-
-    try:
-        workbook: gspread.Spreadsheet | None = sheets.get_workbook()
-    except RuntimeError:
-        logger.exception("Could not open Sheets workbook")
-        logger.exception("CSV outputs in output_date/ are complete; skipping Sheets writes.")
-        workbook = None
-
-    if workbook is not None:
-
-        def _safe_write(description: str, fn: Callable[..., object], *args: object) -> None:
-            try:
-                fn(*args)
-                logger.info("%s tab written to workbook for %s", description, period)
-            except ValueError:
-                logger.exception("%s writer rejected the data", description)
-            except (RuntimeError, gspread.exceptions.APIError):
-                logger.exception("Could not write %s tab", description)
-
-        _safe_write(
-            "Participation Raw Data", sheets.write_participation_raw_data, workbook, period, df, poll_info, spell_info
-        )
-        _safe_write("Communication Master", sheets.write_communication_master, workbook, df, poll_info, spell_info)
-        _safe_write("Daily Data", sheets.write_daily_data, workbook, period, df_ranking)
+    output_files = _write_fetch_csvs(df, df_sky, poll_info, spell_info)
+    _write_fetch_workbook_tabs(period, df, df_ranking, poll_info, spell_info)
 
     entry = build_entry(
         period=period,
@@ -376,17 +408,89 @@ def _window_start_for_period(period: MonthPeriod) -> date:
     return date(year, month, 1)
 
 
+def _read_finalize_workbook_data(
+    workbook: gspread.Spreadsheet,
+    period: MonthPeriod,
+    window: tuple[date, date],
+) -> tuple[
+    dict[date, dict[str, int]],
+    dict[str, list[tuple[str, date, str]]],
+    dict[str, dict[str, str]],
+]:
+    """Read Daily Data, window participation, and Communication Master from the workbook.
+
+    Returns:
+        Tuple of (daily_ranks_by_day, participation_by_delegate, communication_by_delegate).
+    """
+    daily_ranks_by_day = _required_step("read Daily Data", sheets.read_daily_data, workbook, period)
+    logger.info("Daily Data has rank rows for %d days in %s", len(daily_ranks_by_day), period)
+
+    participation_by_delegate = sheets.read_participation_for_window(workbook, window[0], window[1])
+    logger.info(
+        "Window participation: %d total (delegate, poll) entries across %d delegates",
+        sum(len(v) for v in participation_by_delegate.values()),
+        len(participation_by_delegate),
+    )
+
+    communication_by_delegate = _required_step(
+        "read Communication Master",
+        sheets.read_communication_master,
+        workbook,
+    )
+    return daily_ranks_by_day, participation_by_delegate, communication_by_delegate
+
+
+def _compute_period_compensation_for_window(
+    period: MonthPeriod,
+    window: tuple[date, date],
+    delegates: list[Delegate],
+    config: CompensationConfig,
+    workbook_data: tuple[
+        dict[date, dict[str, int]],
+        dict[str, list[tuple[str, date, str]]],
+        dict[str, dict[str, str]],
+    ],
+) -> PeriodCompensation:
+    """Build metrics input, compute per-day eligibility, then period compensation.
+
+    Returns:
+        The PeriodCompensation for the given period and inputs.
+    """
+    daily_ranks_by_day, participation_by_delegate, communication_by_delegate = workbook_data
+    metrics_input = _build_metrics_input(delegates, participation_by_delegate, communication_by_delegate)
+    daily_results = _required_step(
+        "compute eligibility",
+        _compute_daily_results,
+        period,
+        window,
+        delegates=delegates,
+        daily_ranks_by_day=daily_ranks_by_day,
+        metrics_input=metrics_input,
+    )
+    final_metrics: dict[str, tuple[float | None, float | None]] = {
+        name: (entry.participation_pct, entry.communication_pct)
+        for name, entry in daily_results[-1].per_delegate.items()
+    }
+    return _required_step(
+        "compute compensation",
+        compute_period_compensation,
+        period=period,
+        daily_eligibility=daily_results,
+        config=config,
+        final_metrics=final_metrics,
+    )
+
+
 def _run_finalize(args: argparse.Namespace) -> None:
     """Read workbook tabs, compute eligibility and compensation, write the Compensation tab."""
     period = args.month
-    window_start = _window_start_for_period(period)
-    window_end = period.end
+    window = (_window_start_for_period(period), period.end)
 
     logger.info(
         "Finalize requested for %s; 6-month window %s to %s",
         period,
-        window_start,
-        window_end,
+        window[0],
+        window[1],
     )
 
     workbook = _required_step("open Sheets workbook", sheets.get_workbook)
@@ -407,51 +511,13 @@ def _run_finalize(args: argparse.Namespace) -> None:
         skip_api_check=True,
     )
     delegates = roster_result.active_delegates
-    drift_warnings = roster_result.drift_warnings
-    for warning in drift_warnings:
+    for warning in roster_result.drift_warnings:
         logger.warning(warning)
     logger.info("Roster has %d delegates active during %s", len(delegates), period)
 
-    daily_ranks_by_day = _required_step("read Daily Data", sheets.read_daily_data, workbook, period)
-    logger.info("Daily Data has rank rows for %d days in %s", len(daily_ranks_by_day), period)
+    workbook_data = _read_finalize_workbook_data(workbook, period, window)
 
-    participation_by_delegate = sheets.read_participation_for_window(workbook, window_start, window_end)
-    logger.info(
-        "Window participation: %d total (delegate, poll) entries across %d delegates",
-        sum(len(v) for v in participation_by_delegate.values()),
-        len(participation_by_delegate),
-    )
-
-    communication_by_delegate = _required_step(
-        "read Communication Master",
-        sheets.read_communication_master,
-        workbook,
-    )
-
-    metrics_input = _build_metrics_input(delegates, participation_by_delegate, communication_by_delegate)
-    daily_results = _required_step(
-        "compute eligibility",
-        _compute_daily_results,
-        period,
-        (window_start, window_end),
-        delegates=delegates,
-        daily_ranks_by_day=daily_ranks_by_day,
-        metrics_input=metrics_input,
-    )
-
-    final_metrics: dict[str, tuple[float | None, float | None]] = {
-        name: (entry.participation_pct, entry.communication_pct)
-        for name, entry in daily_results[-1].per_delegate.items()
-    }
-
-    period_comp = _required_step(
-        "compute compensation",
-        compute_period_compensation,
-        period=period,
-        daily_eligibility=daily_results,
-        config=config,
-        final_metrics=final_metrics,
-    )
+    period_comp = _compute_period_compensation_for_window(period, window, delegates, config, workbook_data)
     logger.info(
         "Compensation: %d delegates, slot_days_check=%s",
         len(period_comp.per_delegate),

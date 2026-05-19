@@ -100,6 +100,76 @@ def component_modifier(pct: float | None) -> float:
     return (pct - _BUDGET_FLOOR) / _RAMP_WIDTH
 
 
+def _aggregate_daily_eligibility(
+    daily_eligibility: Sequence[DailyEligibility],
+) -> tuple[dict[str, dict[int, int]], dict[str, tuple[int | None, int | None]]]:
+    """Collect per-delegate level-day counts and (rank, level) on the final day.
+
+    Returns:
+        Tuple of (day_counts, end_state). day_counts maps name to
+        {1: count, 2: count, 3: count}. end_state maps name to
+        (rank, assigned_level) from the period's last day.
+    """
+    day_counts: dict[str, dict[int, int]] = {}
+    end_state: dict[str, tuple[int | None, int | None]] = {}
+    last_day_index = len(daily_eligibility) - 1
+    for i, de in enumerate(daily_eligibility):
+        for name, entry in de.per_delegate.items():
+            counts = day_counts.setdefault(name, {1: 0, 2: 0, 3: 0})
+            if entry.assigned_level in {1, 2, 3}:
+                counts[entry.assigned_level] += 1
+            if i == last_day_index:
+                end_state[name] = (entry.rank, entry.assigned_level)
+    return day_counts, end_state
+
+
+def _build_delegate_compensation(
+    name: str,
+    counts: dict[int, int],
+    end_state_entry: tuple[int | None, int | None],
+    metrics_entry: tuple[float | None, float | None],
+    context: tuple[int, CompensationConfig],
+) -> DelegateCompensation:
+    """Build a single DelegateCompensation row from aggregated inputs.
+
+    Returns:
+        The DelegateCompensation row for `name`.
+    """
+    days_in_period, config = context
+    d1, d2, d3 = counts[1], counts[2], counts[3]
+    entitlement = (
+        (d1 / days_in_period) * config.l1_usds
+        + (d2 / days_in_period) * config.l2_usds
+        + (d3 / days_in_period) * config.l3_usds
+    )
+    p_pct, c_pct = metrics_entry
+    modifier = component_modifier(p_pct) * component_modifier(c_pct)
+    final_amount = round(entitlement * modifier, 0)
+    if modifier < 1.0 and entitlement > 0:
+        notes = f"Payments reduced to {modifier * 100:.2f}% via metrics modifier"
+    else:
+        notes = ""
+    rank, level = end_state_entry
+    return DelegateCompensation(
+        name=name,
+        rank_at_period_end=rank,
+        level_at_period_end=level,
+        days_as_l1=d1,
+        days_as_l2=d2,
+        days_as_l3=d3,
+        participation_pct=p_pct,
+        communication_pct=c_pct,
+        metrics_modifier=modifier,
+        entitlement_pre_modifier=entitlement,
+        final_amount=final_amount,
+        buffer_carry_in=0.0,
+        buffer_added=final_amount,
+        payment_amount=0.0,
+        buffer_post_payment=0.0,
+        notes=notes,
+    )
+
+
 def compute_period_compensation(
     *,
     period: MonthPeriod,
@@ -129,66 +199,24 @@ def compute_period_compensation(
         msg = f"daily_eligibility has {len(daily_eligibility)} entries but period {period} has {days_in_period} days"
         raise ValueError(msg)
 
-    # Collect every name that appears on that day, plus per-level day counts.
-    day_counts: dict[str, dict[int, int]] = {}
-    end_state: dict[str, tuple[int | None, int | None]] = {}
-    last_day_index = days_in_period - 1
-    for i, de in enumerate(daily_eligibility):
-        for name, entry in de.per_delegate.items():
-            counts = day_counts.setdefault(name, {1: 0, 2: 0, 3: 0})
-            if entry.assigned_level in {1, 2, 3}:
-                counts[entry.assigned_level] += 1
-            if i == last_day_index:
-                end_state[name] = (entry.rank, entry.assigned_level)
+    day_counts, end_state = _aggregate_daily_eligibility(daily_eligibility)
 
     missing_metrics = sorted(set(day_counts) - set(final_metrics))
     if missing_metrics:
         msg_0 = f"final_metrics is missing entries for active delegates: {missing_metrics}"
         raise ValueError(msg_0)
 
-    rows: list[DelegateCompensation] = []
-    for name in sorted(day_counts):
-        counts = day_counts[name]
-        d1, d2, d3 = counts[1], counts[2], counts[3]
-
-        entitlement = (
-            (d1 / days_in_period) * config.l1_usds
-            + (d2 / days_in_period) * config.l2_usds
-            + (d3 / days_in_period) * config.l3_usds
+    context = (days_in_period, config)
+    rows = [
+        _build_delegate_compensation(
+            name,
+            day_counts[name],
+            end_state.get(name, (None, None)),
+            final_metrics[name],
+            context,
         )
-
-        p_pct, c_pct = final_metrics[name]
-        modifier = component_modifier(p_pct) * component_modifier(c_pct)
-
-        final_amount = round(entitlement * modifier, 0)
-
-        if modifier < 1.0 and entitlement > 0:
-            notes = f"Payments reduced to {modifier * 100:.2f}% via metrics modifier"
-        else:
-            notes = ""
-
-        rank, level = end_state.get(name, (None, None))
-
-        rows.append(
-            DelegateCompensation(
-                name=name,
-                rank_at_period_end=rank,
-                level_at_period_end=level,
-                days_as_l1=d1,
-                days_as_l2=d2,
-                days_as_l3=d3,
-                participation_pct=p_pct,
-                communication_pct=c_pct,
-                metrics_modifier=modifier,
-                entitlement_pre_modifier=entitlement,
-                final_amount=final_amount,
-                buffer_carry_in=0.0,
-                buffer_added=final_amount,
-                payment_amount=0.0,
-                buffer_post_payment=0.0,
-                notes=notes,
-            ),
-        )
+        for name in sorted(day_counts)
+    ]
 
     total_slot_days = sum(r.days_as_l1 + r.days_as_l2 + r.days_as_l3 for r in rows)
     expected_slot_days = days_in_period * config.total_slots
