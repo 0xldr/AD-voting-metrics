@@ -32,7 +32,6 @@ SCOPES = (
     "https://www.googleapis.com/auth/spreadsheets",
     "https://www.googleapis.com/auth/drive",
 )
-MONTHS_IN_YEAR = 12
 
 
 def get_workbook(
@@ -1007,20 +1006,15 @@ def write_compensation_tab(
 def _enumerate_months(start: date, end: date) -> list[MonthPeriod]:
     """Return one MonthPeriod per calendar month touched by [start, end].
 
-    Inclusive on both ends. Handles year rollover.
+    Inclusive on both ends.
 
     Returns:
         Months in chronological order.
     """
-    months: list[MonthPeriod] = []
-    y, m = start.year, start.month
-    while (y, m) <= (end.year, end.month):
-        months.append(MonthPeriod(year=y, month=m))
-        m += 1
-        if m > MONTHS_IN_YEAR:
-            m = 1
-            y += 1
-    return months
+    return [
+        MonthPeriod(year=p.year, month=p.month)
+        for p in pd.period_range(start=start, end=end, freq="M")
+    ]
 
 
 def _parse_poll_history_tab(

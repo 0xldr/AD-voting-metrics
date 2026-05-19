@@ -1,19 +1,11 @@
-"""Domain type for a single calendar month.
+"""Domain type for a single calendar month."""
 
-Carrying the month identity (year + month) explicitly rather than a
-(start_date, end_date) tuple keeps the month name available without
-having to derive it back from dates and catches a class of bugs where
-two date arguments get swapped.
-"""
-
-import calendar
 from dataclasses import dataclass
-from datetime import UTC, date, datetime
+from datetime import date
 
-from dateutil import parser as dateparser
+import pandas as pd
 
 YEAR_LOWER_BOUND = 2022
-MONTHS_IN_YEAR = 12
 
 
 @dataclass(frozen=True)
@@ -28,29 +20,36 @@ class MonthPeriod:
     month: int
 
     def __post_init__(self) -> None:
-        """Validate month is 1..12 and year is >=2022.
+        """Normalize out-of-range months into adjacent years; reject pre-2022 years.
+
+        Constructing with month outside 1..12 rolls into the neighboring year
+        (e.g. month=13 becomes the next January, month=0 becomes the previous
+        December).
 
         Raises:
-            ValueError: if month is out of range or year is before 2022.
+            ValueError: if the (normalized) year is before the project's lower bound.
         """
-        if not 1 <= self.month <= MONTHS_IN_YEAR:
-            msg = f"month must be 1..12, got {self.month}"
-            raise ValueError(msg)
-        # No upper bound on year — the CLI rejects future months elsewhere.
+        normalized = pd.Period(year=self.year, month=self.month, freq="M")
+        if (normalized.year, normalized.month) != (self.year, self.month):
+            object.__setattr__(self, "year", normalized.year)
+            object.__setattr__(self, "month", normalized.month)
         if self.year < YEAR_LOWER_BOUND:
-            msg_0 = f"year must be >= 2022, got {self.year}"
-            raise ValueError(msg_0)
+            msg = f"year must be >= {YEAR_LOWER_BOUND}, got {self.year}"
+            raise ValueError(msg)
+
+    @property
+    def _period(self) -> pd.Period:
+        return pd.Period(year=self.year, month=self.month, freq="M")
 
     @property
     def start(self) -> date:
         """First day of the month."""
-        return date(self.year, self.month, 1)
+        return self._period.start_time.date()
 
     @property
     def end(self) -> date:
         """Last day of the month, accounting for variable month length."""
-        last_day = calendar.monthrange(self.year, self.month)[1]
-        return date(self.year, self.month, last_day)
+        return self._period.end_time.date()
 
     def __str__(self) -> str:
         """Render as April 2026 rather than "MonthPeriod(year=2026, month=4)".
@@ -58,33 +57,27 @@ class MonthPeriod:
         Returns:
             The human-readable form.
         """
-        return f"{calendar.month_name[self.month]} {self.year}"
+        return self._period.strftime("%B %Y")
 
     @classmethod
     def from_string(cls, value: str) -> "MonthPeriod":
         """Parse a human or ISO month string into a MonthPeriod.
 
-        Accepts "April 2026", "Apr 2026", "2026-04", and other formats
-        dateutil.parser handles. Day component is ignored; only year
-        and month are read. Future months are NOT rejected - that's a
-        CLI-input concern.
+        Accepts "April 2026", "Apr 2026", "2026-04", and similar formats.
+        Day component is ignored; only year and month are read.
 
         Returns:
-            A MonthPeriod for the parsed (year, month)
+            A MonthPeriod for the parsed (year, month).
 
         Raises:
             ValueError: if the input cannot be parsed as a month.
         """
-        # Lazy-imported to keep dateutil off the import path for callers
-        # that construct MonthPeriod directly from year/month.
-
-        # Fixed sentinel default so dateutil doesn't fill the day from
-        # today's date - "April 2026" on May 5 would otherwise be April 5.
-        sentinel = datetime(2000, 1, 1, tzinfo=UTC)
+        msg = f"could not parse {value!r} as a month. Try formats like 'April 2026' or '2026-04'."
         try:
-            parsed = dateparser.parse(value, default=sentinel)
-        except (ValueError, TypeError, OverflowError) as e:
-            msg = f"could not parse {value!r} as a month. Try formats like 'April 2026' or '2026-04'."
+            p = pd.Period(value, freq="M")
+        except (ValueError, TypeError) as e:
             raise ValueError(msg) from e
-
-        return cls(year=parsed.year, month=parsed.month)
+        # pd.Period("") returns NaT instead of raising; pandas-stubs doesn't model that.
+        if p is pd.NaT:  # type: ignore[comparison-overlap]
+            raise ValueError(msg)
+        return cls(year=p.year, month=p.month)

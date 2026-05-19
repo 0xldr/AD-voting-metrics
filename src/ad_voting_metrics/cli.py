@@ -398,14 +398,9 @@ def _run_fetch(args: argparse.Namespace) -> None:
 def _window_start_for_period(period: MonthPeriod) -> date:
     """Return the first day of the 6-month window ending in `period`.
 
-    For April 2026 (month=4): start is November 1, 2026.
+    For April 2026 (month=4): start is November 1, 2025.
     """
-    year = period.year
-    month = period.month - 5
-    while month <= 0:
-        month += 12
-        year -= 1
-    return date(year, month, 1)
+    return MonthPeriod(year=period.year, month=period.month - 5).start
 
 
 def _read_finalize_workbook_data(
