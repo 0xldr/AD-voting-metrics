@@ -105,7 +105,7 @@ def test_str_format():
 
 
 @pytest.mark.parametrize(
-    "value, expected",
+    ("value", "expected"),
     [
         ("April 2026", MonthPeriod(2026, 4)),
         ("January 2025", MonthPeriod(2025, 1)),
@@ -144,7 +144,7 @@ def test_from_string_result_does_not_depend_on_current_day():
     ],
 )
 def test_from_string_unparseable_raises_value_error(value):
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="could not parse"):
         MonthPeriod.from_string(value)
 
 

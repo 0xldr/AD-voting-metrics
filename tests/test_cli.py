@@ -14,7 +14,6 @@ from ad_voting_metrics.cli import (
     parse_cache_hours,
 )
 from ad_voting_metrics.compensation import CompensationConfig, PeriodCompensation
-from ad_voting_metrics.eligibility import DailyEligibility
 from ad_voting_metrics.period import MonthPeriod
 
 
@@ -214,7 +213,8 @@ def _make_finalize_args(month: MonthPeriod | None = None) -> argparse.Namespace:
 def test_run_finalize_workbook_open_failure_exits():
     with (
         patch(
-            "ad_voting_metrics.cli.sheets.get_workbook", side_effect=RuntimeError("auth failure")
+            "ad_voting_metrics.cli.sheets.get_workbook",
+            side_effect=RuntimeError("auth failure"),
         ),
         pytest.raises(SystemExit),
     ):
@@ -383,9 +383,7 @@ def test_run_finalize_eligibility_tie_at_cutoff_exits():
     # All ranked 6 → tie crossing the 6-slot cutoff
     ranks_per_day = {date(2026, 4, d): {f"D{i}": 6 for i in range(7)} for d in range(1, 31)}
     # Give everyone perfect participation history so they're all eligible
-    participation = {
-        f"D{i}": [(f"poll_{j}", date(2026, 2, 1), "Yes") for j in range(10)] for i in range(7)
-    }
+    participation = {f"D{i}": [(f"poll_{j}", date(2026, 2, 1), "Yes") for j in range(10)] for i in range(7)}
     communication = {f"D{i}": {f"poll_{j}": "Yes" for j in range(10)} for i in range(7)}
 
     with (
@@ -394,7 +392,8 @@ def test_run_finalize_eligibility_tie_at_cutoff_exits():
         patch("ad_voting_metrics.cli.build_roster_for_period") as mock_roster,
         patch("ad_voting_metrics.cli.sheets.read_daily_data", return_value=ranks_per_day),
         patch(
-            "ad_voting_metrics.cli.sheets.read_participation_for_window", return_value=participation
+            "ad_voting_metrics.cli.sheets.read_participation_for_window",
+            return_value=participation,
         ),
         patch("ad_voting_metrics.cli.sheets.read_communication_master", return_value=communication),
     ):

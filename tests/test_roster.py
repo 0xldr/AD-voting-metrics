@@ -12,7 +12,6 @@ from ad_voting_metrics.period import MonthPeriod
 from ad_voting_metrics.roster import (
     Delegate,
     DelegatesConfig,
-    LevelAssignment,
     build_roster_for_period,
     load_delegates,
     merge_with_api,
@@ -115,7 +114,7 @@ def _delegate_with_levels(
     start_date: date = date(2024, 1, 1),
     end_date: date | None = None,
 ) -> Delegate:
-    """Construct a Delegate with optional level assignments and field overrides.
+    """Return a Delegate with optional level assignments and field overrides.
 
     `levels` is typed `list[dict]` rather than `list[LevelAssignment]`
     because test callers feed in raw YAML-shaped dicts to exercise
@@ -129,7 +128,7 @@ def _delegate_with_levels(
         vote_delegate_address=vote_delegate_address,
         start_date=start_date,
         end_date=end_date,
-        levels=cast(list, levels) if levels is not None else [],
+        levels=cast("list", levels) if levels is not None else [],
     )
 
 
@@ -174,8 +173,8 @@ def test_level_assignment_end_must_be_after_start():
                     "level": 1,
                     "start_date": date(2025, 12, 1),
                     "end_date": date(2025, 11, 1),
-                }
-            ]
+                },
+            ],
         )
 
 
@@ -199,7 +198,7 @@ def test_level_period_must_fit_within_alignment_end():
                     "level": 1,
                     "start_date": date(2025, 1, 1),
                     "end_date": date(2025, 12, 31),
-                }
+                },
             ],
         )
 
@@ -229,7 +228,7 @@ def test_overlapping_levels_rejected():
                     "start_date": date(2025, 1, 1),  # overlaps with above
                     "end_date": date(2025, 12, 31),
                 },
-            ]
+            ],
         )
 
 
@@ -240,7 +239,7 @@ def test_levels_with_open_ended_earlier_period_rejected():
             levels=[
                 {"level": 2, "start_date": date(2024, 6, 1), "end_date": None},
                 {"level": 1, "start_date": date(2025, 6, 1), "end_date": None},
-            ]
+            ],
         )
 
 
@@ -278,7 +277,7 @@ def test_adjacent_levels_with_one_day_gap_accepted():
                 "start_date": date(2025, 6, 1),
                 "end_date": None,
             },
-        ]
+        ],
     )
     assert d.level_at(date(2025, 5, 31)) == 2
     assert d.level_at(date(2025, 6, 1)) == 1
@@ -296,21 +295,21 @@ def test_level_at_returns_none_for_unassigned_delegate():
 
 def test_level_at_returns_level_within_period():
     d = _delegate_with_levels(
-        levels=[{"level": 1, "start_date": date(2025, 12, 1), "end_date": None}]
+        levels=[{"level": 1, "start_date": date(2025, 12, 1), "end_date": None}],
     )
     assert d.level_at(date(2026, 1, 15)) == 1
 
 
 def test_level_at_returns_none_before_period_starts():
     d = _delegate_with_levels(
-        levels=[{"level": 1, "start_date": date(2025, 12, 1), "end_date": None}]
+        levels=[{"level": 1, "start_date": date(2025, 12, 1), "end_date": None}],
     )
     assert d.level_at(date(2025, 11, 30)) is None
 
 
 def test_level_at_returns_level_on_start_date_inclusive():
     d = _delegate_with_levels(
-        levels=[{"level": 1, "start_date": date(2025, 12, 1), "end_date": None}]
+        levels=[{"level": 1, "start_date": date(2025, 12, 1), "end_date": None}],
     )
     assert d.level_at(date(2025, 12, 1)) == 1
 
@@ -323,8 +322,8 @@ def test_level_at_returns_level_on_end_date_inclusive():
                 "level": 1,
                 "start_date": date(2025, 12, 1),
                 "end_date": date(2026, 3, 31),
-            }
-        ]
+            },
+        ],
     )
     assert d.level_at(date(2026, 3, 31)) == 1
     assert d.level_at(date(2026, 4, 1)) is None
@@ -344,7 +343,7 @@ def test_level_at_with_sequential_levels():
                 "start_date": date(2025, 6, 1),
                 "end_date": None,
             },
-        ]
+        ],
     )
     assert d.level_at(date(2024, 12, 1)) == 2
     assert d.level_at(date(2025, 5, 31)) == 2
@@ -447,7 +446,7 @@ def test_duplicate_addresses_rejected():
             delegates=[
                 Delegate(name="A", vote_delegate_address=addr, start_date=date(2025, 1, 1)),
                 Delegate(name="B", vote_delegate_address=addr, start_date=date(2025, 2, 1)),
-            ]
+            ],
         )
 
 
@@ -545,7 +544,7 @@ def test_real_delegates_yaml():
 
 
 def _api_entry(name: str, address: str) -> dict:
-    """Minimal API-shaped delegate dict."""
+    """Return a minimal API-shaped delegate dict."""
     return {
         "name": name,
         "voteDelegateAddress": address,
@@ -558,7 +557,7 @@ def test_merge_no_drift():
     yaml_config = DelegatesConfig(
         delegates=[
             Delegate(name="Active", vote_delegate_address=addr, start_date=date(2024, 1, 1)),
-        ]
+        ],
     )
     api = [_api_entry("Active", addr)]
     delegates, warnings = merge_with_api(yaml_config, api)
@@ -571,7 +570,7 @@ def test_merge_yaml_active_api_absent_warns():
     yaml_config = DelegatesConfig(
         delegates=[
             Delegate(name="GhostlyActive", vote_delegate_address=addr, start_date=date(2024, 1, 1)),
-        ]
+        ],
     )
     api: list[dict] = []  # API doesn't return this delegate
     _, warnings = merge_with_api(yaml_config, api)
@@ -591,7 +590,7 @@ def test_merge_yaml_exited_api_absent_no_warn():
                 start_date=date(2024, 1, 1),
                 end_date=date(2025, 6, 30),
             ),
-        ]
+        ],
     )
     api: list[dict] = []
     _, warnings = merge_with_api(yaml_config, api)
@@ -608,7 +607,7 @@ def test_merge_yaml_exited_api_present_warns():
                 start_date=date(2024, 1, 1),
                 end_date=date(2025, 6, 30),
             ),
-        ]
+        ],
     )
     api = [_api_entry("ExitedButReappearing", addr)]
     _, warnings = merge_with_api(yaml_config, api)
@@ -632,7 +631,7 @@ def test_merge_address_case_insensitive():
     yaml_config = DelegatesConfig(
         delegates=[
             Delegate(name="X", vote_delegate_address=addr_lower, start_date=date(2024, 1, 1)),
-        ]
+        ],
     )
     api = [_api_entry("X", addr_mixed)]
     _, warnings = merge_with_api(yaml_config, api)
@@ -645,7 +644,7 @@ def test_merge_names_differ_addresses_match_no_warn():
     yaml_config = DelegatesConfig(
         delegates=[
             Delegate(name="BONAPUBLICA", vote_delegate_address=addr, start_date=date(2024, 1, 1)),
-        ]
+        ],
     )
     api = [_api_entry("Bonapublica", addr)]  # different casing
     _, warnings = merge_with_api(yaml_config, api)
@@ -659,9 +658,11 @@ def test_merge_returns_yaml_delegates():
     yaml_config = DelegatesConfig(
         delegates=[
             Delegate(
-                name="OnlyInYaml", vote_delegate_address=addr_in_yaml, start_date=date(2024, 1, 1)
+                name="OnlyInYaml",
+                vote_delegate_address=addr_in_yaml,
+                start_date=date(2024, 1, 1),
             ),
-        ]
+        ],
     )
     api = [_api_entry("OnlyInApi", addr_in_api_only)]
     delegates, _ = merge_with_api(yaml_config, api)

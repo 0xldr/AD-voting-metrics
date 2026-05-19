@@ -138,8 +138,7 @@ def write_entry(directory: Path, period: MonthPeriod, entry: ReconciliationEntry
         path = directory / _filename(period, entry["run_timestamp"])
         path.write_text(json.dumps(entry, indent=2, ensure_ascii=False))
         logger.info("Reconciliation log written to %s", path)
-        return path
-    except Exception as e:
+    except (OSError, TypeError, ValueError) as e:
         logger.warning(
             "Failed to write reconciliation log to %s: %s: %s. Run output is unaffected.",
             directory,
@@ -147,3 +146,5 @@ def write_entry(directory: Path, period: MonthPeriod, entry: ReconciliationEntry
             e,
         )
         return None
+    else:
+        return path

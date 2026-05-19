@@ -18,11 +18,12 @@ import pandas as pd
 from google.oauth2.service_account import Credentials
 from gspread.utils import rowcol_to_a1
 
+from .compensation import CompensationConfig
 from .metrics import DISCOUNTED, NOT_PARTICIPATED, PARTICIPATED
 from .period import MonthPeriod
 
 if TYPE_CHECKING:
-    from .compensation import CompensationConfig, PeriodCompensation
+    from .compensation import PeriodCompensation
 
 # Scopes required to read/write spreadsheets and open them by ID. The Drive
 # scope is needed because gspread uses Drive APIs for open_by key.
@@ -30,6 +31,7 @@ SCOPES = (
     "https://www.googleapis.com/auth/spreadsheets",
     "https://www.googleapis.com/auth/drive",
 )
+MONTHS_IN_YEAR = 12
 
 
 def get_workbook(
@@ -58,7 +60,7 @@ def get_workbook(
             raise RuntimeError(
                 "GOOGLE_SERVICE_ACCOUNT_FILE environment variable is not set. "
                 "Add it to your .env file (see .env.example), pointing at the "
-                "JSON key file you download from Google Cloud Console."
+                "JSON key file you download from Google Cloud Console.",
             )
 
     if workbook_id is None:
@@ -67,18 +69,19 @@ def get_workbook(
             raise RuntimeError(
                 "SHEETS_WORKBOOK_ID environment variable is not set. "
                 "Add it to your .env file (see .env.example). The ID is the "
-                "long string in the workbook URL between /d/ and /edit."
+                "long string in the workbook URL between /d/ and /edit.",
             )
 
     sa_path = Path(service_account_file)
     if not sa_path.exists():
-        raise RuntimeError(
-            f"Service account file not found at {sa_path}. "
-            f"Check GOOGLE_SERVICE_ACCOUNT_FILE in your .env file points at "
-            f"the correct path."
+        msg = (
+            f"Service account file not found at {sa_path}. Check GOOGLE_SERVICE_ACCOUNT_FILE in your .env file points "
+            f"at the correct path."
         )
+        raise RuntimeError(msg)
     if not sa_path.is_file():
-        raise RuntimeError(f"Service account file path {sa_path} exists but is not a file.")
+        msg_0 = f"Service account file path {sa_path} exists but is not a file."
+        raise RuntimeError(msg_0)
 
     try:
         credentials = Credentials.from_service_account_file(
@@ -88,10 +91,8 @@ def get_workbook(
     except ValueError as e:
         # google-auth raises ValueError for malformed JSON or wrong key type
         # (e.g., user credentials when service-account expected).
-        raise RuntimeError(
-            f"Service account file at {sa_path} could not be parsed as a "
-            f"service-account JSON key. Original key: {e}"
-        ) from e
+        msg = f"Service account file at {sa_path} could not be parsed as a service-account JSON key. Original key: {e}"
+        raise RuntimeError(msg) from e
 
     client = gspread.authorize(credentials)
 
@@ -101,13 +102,12 @@ def get_workbook(
         # Usually a 403 because the workbook isn't shared with the service
         # account. Surface the email so the operator can fix it.
         sa_email = credentials.service_account_email
-        raise RuntimeError(
-            f"Could not open workbook {workbook_id!r}. Most likely the "
-            f"workbook isn't shared with the service account email "
-            f"{sa_email}, or the workbook ID is wrong. Share the workbook "
-            f"with that email as Editor in Google Sheets, then re-run. "
-            f"Original error: {e}"
-        ) from e
+        msg_1 = (
+            f"Could not open workbook {workbook_id!r}. Most likely the workbook isn't shared with the service account "
+            f"email {sa_email}, or the workbook ID is wrong. Share the workbook with that email as Editor in Google "
+            f"Sheets, then re-run. Original error: {e}"
+        )
+        raise RuntimeError(msg_1) from e
 
 
 def list_tab_names(workbook: gspread.Spreadsheet) -> list[str]:
@@ -164,7 +164,8 @@ def _open_required_tab(
     try:
         return workbook.worksheet(title)
     except gspread.exceptions.WorksheetNotFound as exc:
-        raise RuntimeError(f"Workbook is missing the '{title}' tab. {instructions}") from exc
+        msg = f"Workbook is missing the '{title}' tab. {instructions}"
+        raise RuntimeError(msg) from exc
 
 
 # Daily Data tab: long format, one row per (date, delegate), workbook-wide.
@@ -185,7 +186,7 @@ def _read_daily_data_existing(
         Mapping from (date_iso_str, delegate_name) to (sky, rank).
     """
     all_rows = worksheet.get_all_values()
-    if not all_rows or len(all_rows) < 2:
+    if not all_rows or len(all_rows) <= 1:
         return {}
 
     header = all_rows[0]
@@ -196,7 +197,7 @@ def _read_daily_data_existing(
 
     existing: dict[tuple[str, str], tuple[float, int]] = {}
     for row in all_rows[1:]:
-        if len(row) < 4:
+        if len(row) < len(DAILY_DATA_COLUMNS):
             continue
         date_str, delegate, sky_str, rank_str = row[0], row[1], row[2], row[3]
         if not date_str or not delegate:
@@ -247,9 +248,8 @@ def write_daily_data(
     """
     missing = [c for c in DAILY_DATA_COLUMNS if c not in df_ranking.columns]
     if missing:
-        raise ValueError(
-            f"df_ranking is missing required columns: {missing}. Has: {list(df_ranking.columns)}"
-        )
+        msg = f"df_ranking is missing required columns: {missing}. Has: {list(df_ranking.columns)}"
+        raise ValueError(msg)
 
     subset = df_ranking[list(DAILY_DATA_COLUMNS)].copy()
     subset["Date"] = subset["Date"].apply(_coerce_date)
@@ -280,13 +280,13 @@ def write_daily_data(
         if date_str in existing_counts_by_date:
             existing_count = existing_counts_by_date[date_str]
             if existing_count != new_count:
-                raise ValueError(
-                    f"Roster drift detected for date {date_str}: existing Daily Data "
-                    f"has {existing_count} delegate rows, current fetch for {period} "
-                    f"has {new_count}. The active-delegate count for that date "
-                    f"changed between fetches. Reconcile manually (roster YAML) "
-                    f"vs Communication Master / Daily Data) before re-running."
+                msg_0 = (
+                    f"Roster drift detected for date {date_str}: existing Daily Data has {existing_count} delegate "
+                    f"rows, current fetch for {period} has {new_count}. The active-delegate count for that date "
+                    f"changed between fetches. Reconcile manually (roster YAML) vs Communication Master / Daily Data) "
+                    f"before re-running."
                 )
+                raise ValueError(msg_0)
     # Merge: preserve existing dates not in the current fetch; overwrite
     # the rest with new values.
     dates_in_new = set(new_counts_by_date.keys())
@@ -590,7 +590,7 @@ def _sort_comm_rows_by_start_date(merged_rows: dict[str, list[str]]) -> list[tup
     for poll_id, row in merged_rows.items():
         start = row[1] if len(row) > 1 else ""
         try:
-            datetime.fromisoformat(start.replace("Z", "+00:00"))
+            datetime.fromisoformat(start)
             parseable.append((poll_id, row))
         except ValueError:
             unparseable.append((poll_id, row))
@@ -658,12 +658,15 @@ def write_communication_master(
         header = list(existing_header)
         missing = [n for n in delegate_names if n not in set(existing_header)]
         if missing:
-            raise ValueError(
+            msg = (
                 f"Communication Master is missing column(s) for delegate(s): "
                 f"{missing}. Add a column header with the exact delegate name "
                 f"for each missing delegate to the Communication Master tab, "
                 f"then re-run. (Columns can't be auto-added - operators control "
                 f"column placement and naming.)"
+            )
+            raise ValueError(
+                msg,
             )
 
     n_metadata = len(PARTICIPATION_METADATA_COLUMNS)
@@ -739,7 +742,7 @@ COMPENSATION_COLUMNS = (
 )
 
 
-def _compensation_tab_title(period: MonthPeriod) -> str:
+def compensation_tab_title(period: MonthPeriod) -> str:
     """Return the per-period tab title, e.g. "April 2026 Compensation"."""
     return f"{period} Compensation"
 
@@ -754,7 +757,6 @@ def read_config(workbook: gspread.Spreadsheet) -> "CompensationConfig":
         Parsed CompensationConfig.
 
     Raises:
-        RuntimeError: if the Config tab doesn't exist.
         ValueError: if a required key is missing or a value can't
             be coerced.
     """
@@ -766,12 +768,13 @@ def read_config(workbook: gspread.Spreadsheet) -> "CompensationConfig":
 
     rows = worksheet.get_all_values()
     if not rows:
-        raise ValueError(f"'{CONFIG_TAB_TITLE}' tab is empty.")
+        msg = f"'{CONFIG_TAB_TITLE}' tab is empty."
+        raise ValueError(msg)
 
     # Skip the header rows; collect Key -> raw Value strings
     kv: dict[str, str] = {}
     for row in rows[1:]:
-        if len(row) < 2:
+        if len(row) <= 1:
             continue
         key, value = row[0].strip(), row[1].strip()
         if not key:
@@ -780,10 +783,8 @@ def read_config(workbook: gspread.Spreadsheet) -> "CompensationConfig":
 
     missing = [k for k in _REQUIRED_CONFIG_KEYS if k not in kv]
     if missing:
-        raise ValueError(
-            f"'{CONFIG_TAB_TITLE}' tab is missing required keys: {missing}. "
-            f"Required: {list(_REQUIRED_CONFIG_KEYS)}."
-        )
+        msg = f"'{CONFIG_TAB_TITLE}' tab is missing required keys: {missing}. Required: {list(_REQUIRED_CONFIG_KEYS)}."
+        raise ValueError(msg)
 
     try:
         l1 = float(kv["L1_USDS"])
@@ -791,9 +792,8 @@ def read_config(workbook: gspread.Spreadsheet) -> "CompensationConfig":
         l3 = float(kv["L3_USDS"])
         total = int(kv["TOTAL_SLOTS"])
     except ValueError as exc:
-        raise ValueError(f"'{CONFIG_TAB_TITLE}' has un-parseable value: {exc}") from exc
-
-    from .compensation import CompensationConfig
+        msg = f"'{CONFIG_TAB_TITLE}' has un-parseable value: {exc}"
+        raise ValueError(msg) from exc
 
     return CompensationConfig(
         l1_usds=l1,
@@ -811,9 +811,9 @@ def _level_label(level: int | None) -> str:
     """
     if level == 1:
         return "Level 1"
-    if level == 2:
+    if level == 2:  # noqa: PLR2004
         return "Level 2"
-    if level == 3:
+    if level == 3:  # noqa: PLR2004
         return "Level 3"
     return "No"
 
@@ -853,8 +853,8 @@ def write_compensation_tab(
 
     # Count delegates at each level (based on level_at_period_end).
     n_l1 = sum(1 for r in rows_in if r.level_at_period_end == 1)
-    n_l2 = sum(1 for r in rows_in if r.level_at_period_end == 2)
-    n_l3 = sum(1 for r in rows_in if r.level_at_period_end == 3)
+    n_l2 = sum(1 for r in rows_in if r.level_at_period_end == 2)  # noqa: PLR2004
+    n_l3 = sum(1 for r in rows_in if r.level_at_period_end == 3)  # noqa: PLR2004
 
     period = period_comp.period
     config = period_comp.config
@@ -949,7 +949,7 @@ def write_compensation_tab(
 
     worksheet = get_or_create_tab(
         workbook,
-        _compensation_tab_title(period),
+        compensation_tab_title(period),
         rows=max(len(all_values) + 50, 100),
         cols=n_cols,
     )
@@ -980,7 +980,7 @@ def _enumerate_months(start: date, end: date) -> list[MonthPeriod]:
     while (y, m) <= (end.year, end.month):
         months.append(MonthPeriod(year=y, month=m))
         m += 1
-        if m > 12:
+        if m > MONTHS_IN_YEAR:
             m = 1
             y += 1
     return months
@@ -1002,7 +1002,7 @@ def _parse_poll_history_tab(
         delegate cells at `n_metadata + offset`.
     """
     rows = worksheet.get_all_values()
-    if len(rows) < 2:
+    if len(rows) <= 1:
         return [], []
 
     header = rows[0]
@@ -1069,11 +1069,11 @@ def read_daily_data(
         result.setdefault(day, {})[delegate] = rank
 
     if not result:
-        raise RuntimeError(
-            f"'{DAILY_DATA_TAB_TITLE}' tab has no rows for {period} "
-            f"({period_start} to {period_end}). Run `fetch` for {period} "
+        msg = (
+            f"'{DAILY_DATA_TAB_TITLE}' tab has no rows for {period} ({period_start} to {period_end}). Run `fetch` for "
             f"before running `finalize`."
         )
+        raise RuntimeError(msg)
 
     return result
 

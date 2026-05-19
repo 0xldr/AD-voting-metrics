@@ -8,7 +8,8 @@ vars and verifies end-to-end connectivity.
 
 import json
 import uuid
-from datetime import date, datetime
+import warnings
+from datetime import UTC, date, datetime
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -16,7 +17,7 @@ import gspread
 import pandas as pd
 import pytest
 
-import ad_voting_metrics.sheets as sheets
+from ad_voting_metrics import sheets
 from ad_voting_metrics.period import MonthPeriod
 
 # ---------------------------------------------------------------------------
@@ -127,14 +128,16 @@ def test_get_workbook_wrong_key_type_raises(tmp_path):
 
 
 def _make_fake_sa_file(tmp_path: Path) -> Path:
-    """Write a syntactically-valid service-account JSON file - credential loading is patched."""
+    """Return a syntactically-valid service-account JSON file - credential loading is patched."""
     sa = tmp_path / "sa.json"
     sa.write_text(
-        json.dumps({
-            "type": "service_account",
-            "project_id": "fake-project",
-            "client_email": "fake@fake-project.iam.gserviceaccount.com",
-        })
+        json.dumps(
+            {
+                "type": "service_account",
+                "project_id": "fake-project",
+                "client_email": "fake@fake-project.iam.gserviceaccount.com",
+            }
+        ),
     )
     return sa
 
@@ -148,7 +151,9 @@ def test_get_workbook_happy_path_returns_spreadsheet(tmp_path):
     fake_creds = MagicMock()
 
     with (
-        patch.object(sheets.Credentials, "from_service_account_file", return_value=fake_creds),
+        patch.object(
+            sheets.Credentials, "from_service_account_file", return_value=fake_creds
+        ),
         patch.object(sheets.gspread, "authorize", return_value=fake_client),
     ):
         result = sheets.get_workbook(
@@ -187,11 +192,13 @@ def test_get_workbook_api_error_on_open_wrapped_with_context(tmp_path):
     fake_client.open_by_key.side_effect = gspread.exceptions.APIError(
         # gspread.exceptions.APIError takes a response-like object in v6;
         # MagicMock satisfies the constructor without real HTTP machinery.
-        MagicMock(status_code=403, text="not shared")
+        MagicMock(status_code=403, text="not shared"),
     )
 
     with (
-        patch.object(sheets.Credentials, "from_service_account_file", return_value=fake_creds),
+        patch.object(
+            sheets.Credentials, "from_service_account_file", return_value=fake_creds
+        ),
         patch.object(sheets.gspread, "authorize", return_value=fake_client),
         pytest.raises(RuntimeError, match="shared with the service account"),
     ):
@@ -208,13 +215,17 @@ def test_get_workbook_api_error_message_includes_sa_email(tmp_path):
     fake_creds.service_account_email = "scripted@my-project.iam.gserviceaccount.com"
     fake_client = MagicMock()
     fake_client.open_by_key.side_effect = gspread.exceptions.APIError(
-        MagicMock(status_code=403, text="not shared")
+        MagicMock(status_code=403, text="not shared"),
     )
 
     with (
-        patch.object(sheets.Credentials, "from_service_account_file", return_value=fake_creds),
+        patch.object(
+            sheets.Credentials, "from_service_account_file", return_value=fake_creds
+        ),
         patch.object(sheets.gspread, "authorize", return_value=fake_client),
-        pytest.raises(RuntimeError, match=r"scripted@my-project\.iam\.gserviceaccount\.com"),
+        pytest.raises(
+            RuntimeError, match=r"scripted@my-project\.iam\.gserviceaccount\.com"
+        ),
     ):
         sheets.get_workbook(
             service_account_file=sa_file,
@@ -232,7 +243,9 @@ def test_get_workbook_explicit_args_override_env(monkeypatch, tmp_path):
     fake_client.open_by_key.return_value = MagicMock(spec=gspread.Spreadsheet)
 
     with (
-        patch.object(sheets.Credentials, "from_service_account_file", return_value=MagicMock()),
+        patch.object(
+            sheets.Credentials, "from_service_account_file", return_value=MagicMock()
+        ),
         patch.object(sheets.gspread, "authorize", return_value=fake_client),
     ):
         sheets.get_workbook(
@@ -356,11 +369,12 @@ def test_clear_tab_calls_worksheet_clear():
 
 
 @pytest.fixture
-def _temp_tab(request):
+def temp_tab():
     """Yield a unique temp-tab title; clean up the tab after the test even on failure."""
     tab_name = f"_test_temp_{uuid.uuid4().hex[:8]}"
-
-    def cleanup():
+    try:
+        yield tab_name
+    finally:
         try:
             workbook = sheets.get_workbook()
             try:
@@ -368,13 +382,12 @@ def _temp_tab(request):
                 workbook.del_worksheet(ws)
             except gspread.exceptions.WorksheetNotFound:
                 pass
-        except Exception:
-            # Don't let cleanup failure mask the test result. Operator can
-            # manually delete any leftover _test_temp_* tabs
-            pass
-
-    request.addfinalizer(cleanup)
-    return tab_name
+        except Exception as e:  # noqa: BLE001 — teardown must not mask test result; surface via warning
+            warnings.warn(
+                f"Failed to clean up temp tab {tab_name}: {type(e).__name__}: {e}. "
+                f"Operator can manually delete any leftover _test_temp_* tabs.",
+                stacklevel=1,
+            )
 
 
 @pytest.mark.integration
@@ -387,25 +400,25 @@ def test_list_tab_names_returns_real_tabs():
 
 
 @pytest.mark.integration
-def test_get_or_create_tab_creates_and_finds_real_tab(_temp_tab):
+def test_get_or_create_tab_creates_and_finds_real_tab(temp_tab):
     """Create a real tab, verify it appears, fetch it again, get the same one."""
     workbook = sheets.get_workbook()
 
     # First call creates
-    created = sheets.get_or_create_tab(workbook, _temp_tab, rows=50, cols=5)
-    assert created.title == _temp_tab
-    assert _temp_tab in sheets.list_tab_names(workbook)
+    created = sheets.get_or_create_tab(workbook, temp_tab, rows=50, cols=5)
+    assert created.title == temp_tab
+    assert temp_tab in sheets.list_tab_names(workbook)
 
     # Second call returns the same tab (doesn't create a duplicate)
-    fetched = sheets.get_or_create_tab(workbook, _temp_tab, rows=999, cols=99)
+    fetched = sheets.get_or_create_tab(workbook, temp_tab, rows=999, cols=99)
     assert fetched.id == created.id
 
 
 @pytest.mark.integration
-def test_clear_tab_wipes_real_cells(_temp_tab):
+def test_clear_tab_wipes_real_cells(temp_tab):
     """Write some data, clear, verify the cells are empty."""
     workbook = sheets.get_workbook()
-    ws = sheets.get_or_create_tab(workbook, _temp_tab, rows=10, cols=3)
+    ws = sheets.get_or_create_tab(workbook, temp_tab, rows=10, cols=3)
 
     # Write some data
     ws.update(values=[["hello", "world"], ["foo", "bar"]], range_name="A1:B2")
@@ -426,13 +439,15 @@ def test_clear_tab_wipes_real_cells(_temp_tab):
 
 
 def _make_ranking_df():
-    """Build a small df_ranking-shaped DataFrame: Date, Delegate, Total Delegation, Rank"""
-    return pd.DataFrame({
-        "Date": [date(2026, 4, 1), date(2026, 4, 1), date(2026, 4, 2)],
-        "Delegate": ["BLUE", "Cloaky", "BLUE"],
-        "Total Delegation": [1234567.89, 987654.32, 1234999.99],
-        "Rank": [1, 2, 1],
-    })
+    """Return a small df_ranking-shaped DataFrame: Date, Delegate, Total Delegation, Rank"""
+    return pd.DataFrame(
+        {
+            "Date": [date(2026, 4, 1), date(2026, 4, 1), date(2026, 4, 2)],
+            "Delegate": ["BLUE", "Cloaky", "BLUE"],
+            "Total Delegation": [1234567.89, 987654.32, 1234999.99],
+            "Rank": [1, 2, 1],
+        }
+    )
 
 
 def test_daily_data_columns_pinned():
@@ -446,7 +461,7 @@ def test_daily_data_tab_title_constant():
 
 
 def _empty_existing_ws(workbook):
-    """MagicMock worksheet returning no existing rows; for first-fetch tests where the tab is empty"""
+    """Return MagicMock worksheet returning no existing rows; for first-fetch tests where the tab is empty"""
     fake_ws = MagicMock(spec=gspread.Worksheet)
     fake_ws.get_all_values.return_value = []
     workbook.worksheet.return_value = fake_ws
@@ -514,12 +529,14 @@ def test_write_daily_data_clears_before_writing():
 def test_write_daily_data_preserves_existing_rows_for_other_dates():
     """Preserve existing rows for dates not in the current fetch (tab is workbook-wide)."""
     # Current fetch covers April 2026, rank-1 BLUE only
-    df = pd.DataFrame({
-        "Date": [date(2026, 4, 1)],
-        "Delegate": ["BLUE"],
-        "Total Delegation": [100.0],
-        "Rank": [1],
-    })
+    df = pd.DataFrame(
+        {
+            "Date": [date(2026, 4, 1)],
+            "Delegate": ["BLUE"],
+            "Total Delegation": [100.0],
+            "Rank": [1],
+        }
+    )
     # Existing tab has a March 2026 row (different month, should be preserved)
     workbook = MagicMock()
     fake_ws = MagicMock(spec=gspread.Worksheet)
@@ -542,12 +559,14 @@ def test_write_daily_data_preserves_existing_rows_for_other_dates():
 
 def test_write_daily_data_overwrites_existing_rows_for_current_dates():
     """Overwrite existing rows for dates in the current fetch (re-runs are idempotent)."""
-    df = pd.DataFrame({
-        "Date": [date(2026, 4, 1)],
-        "Delegate": ["BLUE"],
-        "Total Delegation": [999.99],  # different from existing 100.0
-        "Rank": [1],
-    })
+    df = pd.DataFrame(
+        {
+            "Date": [date(2026, 4, 1)],
+            "Delegate": ["BLUE"],
+            "Total Delegation": [999.99],  # different from existing 100.0
+            "Rank": [1],
+        }
+    )
     workbook = MagicMock()
     fake_ws = MagicMock(spec=gspread.Worksheet)
     fake_ws.get_all_values.return_value = [
@@ -569,12 +588,14 @@ def test_write_daily_data_overwrites_existing_rows_for_current_dates():
 def test_write_daily_data_raises_on_roster_drift():
     """Raise when a shared date has different delegate counts (roster changed mid-period)."""
     # Current fetch has 2 delegates for April 1
-    df = pd.DataFrame({
-        "Date": [date(2026, 4, 1), date(2026, 4, 1)],
-        "Delegate": ["BLUE", "Cloaky"],
-        "Total Delegation": [100.0, 200.0],
-        "Rank": [1, 2],
-    })
+    df = pd.DataFrame(
+        {
+            "Date": [date(2026, 4, 1), date(2026, 4, 1)],
+            "Delegate": ["BLUE", "Cloaky"],
+            "Total Delegation": [100.0, 200.0],
+            "Rank": [1, 2],
+        }
+    )
     # Existing tab has 3 delegates for April 1 (drift!)
     workbook = MagicMock()
     fake_ws = MagicMock(spec=gspread.Worksheet)
@@ -593,12 +614,14 @@ def test_write_daily_data_raises_on_roster_drift():
 
 def test_write_daily_data_no_drift_when_dates_dont_overlap():
     """Skip the drift check when existing and new data share no dates."""
-    df = pd.DataFrame({
-        "Date": [date(2026, 4, 1), date(2026, 4, 1)],
-        "Delegate": ["BLUE", "Cloaky"],
-        "Total Delegation": [100.0, 200.0],
-        "Rank": [1, 2],
-    })
+    df = pd.DataFrame(
+        {
+            "Date": [date(2026, 4, 1), date(2026, 4, 1)],
+            "Delegate": ["BLUE", "Cloaky"],
+            "Total Delegation": [100.0, 200.0],
+            "Rank": [1, 2],
+        }
+    )
     workbook = MagicMock()
     fake_ws = MagicMock(spec=gspread.Worksheet)
     # March data has 1 delegate, April has 2 — different counts but different
@@ -616,12 +639,14 @@ def test_write_daily_data_no_drift_when_dates_dont_overlap():
 
 def test_write_daily_data_handles_unparseable_existing_rows():
     """Drop malformed rows from the existing tab rather than crashing the whole write."""
-    df = pd.DataFrame({
-        "Date": [date(2026, 4, 1)],
-        "Delegate": ["BLUE"],
-        "Total Delegation": [100.0],
-        "Rank": [1],
-    })
+    df = pd.DataFrame(
+        {
+            "Date": [date(2026, 4, 1)],
+            "Delegate": ["BLUE"],
+            "Total Delegation": [100.0],
+            "Rank": [1],
+        }
+    )
     workbook = MagicMock()
     fake_ws = MagicMock(spec=gspread.Worksheet)
     fake_ws.get_all_values.return_value = [
@@ -641,12 +666,14 @@ def test_write_daily_data_handles_unparseable_existing_rows():
 
 def test_write_daily_data_handles_unrecognised_existing_header():
     """Treat an existing tab with wrong-shape header shape as empty; clear-and-rewrite replaces it."""
-    df = pd.DataFrame({
-        "Date": [date(2026, 4, 1)],
-        "Delegate": ["BLUE"],
-        "Total Delegation": [100.0],
-        "Rank": [1],
-    })
+    df = pd.DataFrame(
+        {
+            "Date": [date(2026, 4, 1)],
+            "Delegate": ["BLUE"],
+            "Total Delegation": [100.0],
+            "Rank": [1],
+        }
+    )
     workbook = MagicMock()
     fake_ws = MagicMock(spec=gspread.Worksheet)
     fake_ws.get_all_values.return_value = [
@@ -666,12 +693,14 @@ def test_write_daily_data_handles_unrecognised_existing_header():
 
 def test_write_daily_data_sort_order_date_then_rank():
     """Merged output is sorted by (Date ascending, Rank ascending)."""
-    df = pd.DataFrame({
-        "Date": [date(2026, 4, 2), date(2026, 4, 1), date(2026, 4, 1)],
-        "Delegate": ["BLUE", "Cloaky", "BLUE"],
-        "Total Delegation": [10.0, 20.0, 30.0],
-        "Rank": [1, 2, 1],
-    })
+    df = pd.DataFrame(
+        {
+            "Date": [date(2026, 4, 2), date(2026, 4, 1), date(2026, 4, 1)],
+            "Delegate": ["BLUE", "Cloaky", "BLUE"],
+            "Total Delegation": [10.0, 20.0, 30.0],
+            "Rank": [1, 2, 1],
+        }
+    )
     workbook = MagicMock()
     fake_ws = _empty_existing_ws(workbook)
     period = MonthPeriod(year=2026, month=4)
@@ -701,12 +730,14 @@ def test_write_daily_data_range_matches_data_shape():
 
 def test_write_daily_data_handles_pandas_timestamps():
     """Dates can arrive as pandas Timestamps; they get ISO-formatted."""
-    df = pd.DataFrame({
-        "Date": pd.to_datetime(["2026-04-01", "2026-04-02"]),
-        "Delegate": ["BLUE", "Cloaky"],
-        "Total Delegation": [100.0, 200.0],
-        "Rank": [1, 2],
-    })
+    df = pd.DataFrame(
+        {
+            "Date": pd.to_datetime(["2026-04-01", "2026-04-02"]),
+            "Delegate": ["BLUE", "Cloaky"],
+            "Total Delegation": [100.0, 200.0],
+            "Rank": [1, 2],
+        }
+    )
     workbook = MagicMock()
     fake_ws = _empty_existing_ws(workbook)
     period = MonthPeriod(year=2026, month=4)
@@ -720,13 +751,15 @@ def test_write_daily_data_handles_pandas_timestamps():
 
 def test_write_daily_data_extra_columns_ignored():
     """Extra columns in df_ranking beyond the canonical four are ignored."""
-    df = pd.DataFrame({
-        "Date": [date(2026, 4, 1)],
-        "Delegate": ["BLUE"],
-        "Total Delegation": [100.0],
-        "Rank": [1],
-        "ExtraColumn": ["ignored"],
-    })
+    df = pd.DataFrame(
+        {
+            "Date": [date(2026, 4, 1)],
+            "Delegate": ["BLUE"],
+            "Total Delegation": [100.0],
+            "Rank": [1],
+            "ExtraColumn": ["ignored"],
+        }
+    )
     workbook = MagicMock()
     fake_ws = _empty_existing_ws(workbook)
     period = MonthPeriod(year=2026, month=4)
@@ -771,17 +804,19 @@ def test_write_daily_data_returns_worksheet():
 
 
 @pytest.mark.integration
-def test_write_daily_data_to_real_workbook(_temp_tab, monkeypatch):
+def test_write_daily_data_to_real_workbook(temp_tab, monkeypatch):
     """End-to-end: write a small Daily Data set to a temp tab, read back, verify cells."""
-    df = pd.DataFrame({
-        "Date": [date(2026, 4, 1), date(2026, 4, 2)],
-        "Delegate": ["TestDelegateA", "TestDelegateB"],
-        "Total Delegation": [123.45, 678.90],
-        "Rank": [1, 2],
-    })
+    df = pd.DataFrame(
+        {
+            "Date": [date(2026, 4, 1), date(2026, 4, 2)],
+            "Delegate": ["TestDelegateA", "TestDelegateB"],
+            "Total Delegation": [123.45, 678.90],
+            "Rank": [1, 2],
+        }
+    )
 
     # Force the writer to use our temp tab name instead of the real one
-    monkeypatch.setattr(sheets, "DAILY_DATA_TAB_TITLE", _temp_tab)
+    monkeypatch.setattr(sheets, "DAILY_DATA_TAB_TITLE", temp_tab)
 
     workbook = sheets.get_workbook()
     period = MonthPeriod(year=2026, month=4)
@@ -808,20 +843,22 @@ def test_write_daily_data_to_real_workbook(_temp_tab, monkeypatch):
 
 
 def _make_participation_df():
-    """Pre-transpose participation df: one row per delegate, one column per poll/spell."""
-    return pd.DataFrame({
-        "Delegate Name": ["BLUE", "Cloaky", "BONAPUBLICA"],
-        "Delegate Contract": ["0xaaa", "0xbbb", "0xccc"],
-        "Start Date": ["2025-12-01", "2025-12-01", "2025-12-01"],
-        # Two polls + one spell
-        "12345": ["Yes", "No", "Yes"],
-        "12346": ["Yes", "Yes", "Pending verification"],
-        "0xspell001": ["Yes", "No Delegated SKY", "Yes"],
-    })
+    """Return pre-transpose participation df: one row per delegate, one column per poll/spell."""
+    return pd.DataFrame(
+        {
+            "Delegate Name": ["BLUE", "Cloaky", "BONAPUBLICA"],
+            "Delegate Contract": ["0xaaa", "0xbbb", "0xccc"],
+            "Start Date": ["2025-12-01", "2025-12-01", "2025-12-01"],
+            # Two polls + one spell
+            "12345": ["Yes", "No", "Yes"],
+            "12346": ["Yes", "Yes", "Pending verification"],
+            "0xspell001": ["Yes", "No Delegated SKY", "Yes"],
+        }
+    )
 
 
 def _make_poll_info():
-    """Sample poll_info, two polls covering 12345 and 12346."""
+    """Return sample poll_info, two polls covering 12345 and 12346."""
     return [
         {
             "pollId": 12345,
@@ -839,7 +876,7 @@ def _make_poll_info():
 
 
 def _make_spell_info():
-    """Sample spell_info covering 0xspell001."""
+    """Return sample spell_info covering 0xspell001."""
     return [
         {
             "address": "0xspell001",
@@ -853,7 +890,9 @@ def _make_spell_info():
 def test_build_participation_values_returns_header_plus_one_row_per_poll():
     """Header row first, then one row per poll/spell column in df."""
     df = _make_participation_df()
-    values = sheets.build_participation_values(df, _make_poll_info(), _make_spell_info())
+    values = sheets.build_participation_values(
+        df, _make_poll_info(), _make_spell_info()
+    )
 
     # 1 header + 3 poll/spell rows (12345, 12346, 0xspell001)
     assert len(values) == 4
@@ -862,18 +901,38 @@ def test_build_participation_values_returns_header_plus_one_row_per_poll():
 def test_build_participation_values_header_format():
     """Header is metadata columns + delegate names in df row order."""
     df = _make_participation_df()
-    values = sheets.build_participation_values(df, _make_poll_info(), _make_spell_info())
+    values = sheets.build_participation_values(
+        df, _make_poll_info(), _make_spell_info()
+    )
 
-    assert values[0] == ["Poll Id", "Start Date", "End Date", "Title", "BLUE", "Cloaky", "BONAPUBLICA"]
+    assert values[0] == [
+        "Poll Id",
+        "Start Date",
+        "End Date",
+        "Title",
+        "BLUE",
+        "Cloaky",
+        "BONAPUBLICA",
+    ]
 
 
 def test_build_participation_values_row_format():
     """Each non-header row: poll_id, start_date, end_date, title, then per-delegate statuses."""
     df = _make_participation_df()
-    values = sheets.build_participation_values(df, _make_poll_info(), _make_spell_info())
+    values = sheets.build_participation_values(
+        df, _make_poll_info(), _make_spell_info()
+    )
 
     # First poll row: 12345
-    assert values[1] == ["12345", "2026-04-05", "2026-04-08", "Approve SubDAO X", "Yes", "No", "Yes"]
+    assert values[1] == [
+        "12345",
+        "2026-04-05",
+        "2026-04-08",
+        "Approve SubDAO X",
+        "Yes",
+        "No",
+        "Yes",
+    ]
 
 
 def test_build_participation_values_spell_has_empty_end_date():
@@ -892,17 +951,21 @@ def test_build_participation_values_spell_has_empty_end_date():
     # Spell row (third data row) should have empty End Date.
     spell_row = values[3]
     assert spell_row[0] == "0xspell001"
-    assert spell_row[2] == ""  # End Date
+    assert (
+        spell_row[2] == ""
+    )  # End Date — exact empty-string check; cell type is object  # noqa: PLC1901
 
 
 def test_build_participation_values_unknown_column_has_blank_metadata():
     """Poll/spell column in df with no matching info: metadata cells blank, statuses still written."""
-    df = pd.DataFrame({
-        "Delegate Name": ["Alice"],
-        "Delegate Contract": ["0xaaa"],
-        "Start Date": ["2025-12-01"],
-        "99999": ["Yes"],  # not in poll_info or spell_info
-    })
+    df = pd.DataFrame(
+        {
+            "Delegate Name": ["Alice"],
+            "Delegate Contract": ["0xaaa"],
+            "Start Date": ["2025-12-01"],
+            "99999": ["Yes"],  # not in poll_info or spell_info
+        }
+    )
     values = sheets.build_participation_values(df, [], [])
 
     # Header + 1 row for the unknown column
@@ -912,11 +975,13 @@ def test_build_participation_values_unknown_column_has_blank_metadata():
 
 def test_build_participation_values_zero_polls_returns_header_only():
     """Zero-poll month: only the header row, no data rows."""
-    df = pd.DataFrame({
-        "Delegate Name": ["Alice"],
-        "Delegate Contract": ["0xaaa"],
-        "Start Date": ["2025-12-01"],
-    })
+    df = pd.DataFrame(
+        {
+            "Delegate Name": ["Alice"],
+            "Delegate Contract": ["0xaaa"],
+            "Start Date": ["2025-12-01"],
+        }
+    )
     values = sheets.build_participation_values(df, [], [])
 
     assert len(values) == 1
@@ -925,12 +990,19 @@ def test_build_participation_values_zero_polls_returns_header_only():
 
 def test_participation_metadata_columns_pinned():
     """The metadata columns are pinned so an edit fails the test."""
-    assert sheets.PARTICIPATION_METADATA_COLUMNS == ("Poll Id", "Start Date", "End Date", "Title")
+    assert sheets.PARTICIPATION_METADATA_COLUMNS == (
+        "Poll Id",
+        "Start Date",
+        "End Date",
+        "Title",
+    )
 
 
 def test_participation_raw_data_tab_title():
     period = MonthPeriod(year=2026, month=4)
-    assert sheets._participation_raw_data_tab_title(period) == ("Participation Raw Data April 2026")
+    assert sheets._participation_raw_data_tab_title(period) == (
+        "Participation Raw Data April 2026"
+    )
 
 
 def test_lookup_poll_or_spell_finds_poll():
@@ -964,7 +1036,7 @@ def test_coerce_date_handles_date():
 
 def test_coerce_date_handles_datetime():
     """Datetime → ISO date string, time portion dropped."""
-    assert sheets._coerce_date(datetime(2026, 4, 5, 12, 30)) == "2026-04-05"
+    assert sheets._coerce_date(datetime(2026, 4, 5, 12, 30, tzinfo=UTC)) == "2026-04-05"
 
 
 def test_coerce_date_handles_pandas_timestamp():
@@ -974,7 +1046,7 @@ def test_coerce_date_handles_pandas_timestamp():
 
 def test_coerce_date_handles_none():
     """Return empty string for None (spells have no endDate key)."""
-    assert sheets._coerce_date(None) == ""
+    assert not sheets._coerce_date(None)
 
 
 def test_write_participation_creates_tab_with_correct_title():
@@ -1098,12 +1170,14 @@ def test_write_participation_data_rows_one_per_poll_with_metadata():
 
 def test_write_participation_unknown_poll_id_has_blank_metadata():
     """Unknown poll/spell column gets blank metadata; status data is still written."""
-    df = pd.DataFrame({
-        "Delegate Name": ["BLUE"],
-        "Delegate Contract": ["0xaaa"],
-        "Start Date": ["2025-12-01"],
-        "99999": ["Yes"],  # poll ID not in poll_info
-    })
+    df = pd.DataFrame(
+        {
+            "Delegate Name": ["BLUE"],
+            "Delegate Contract": ["0xaaa"],
+            "Start Date": ["2025-12-01"],
+            "99999": ["Yes"],  # poll ID not in poll_info
+        }
+    )
     workbook = MagicMock()
     fake_ws = MagicMock(spec=gspread.Worksheet)
     workbook.worksheet.return_value = fake_ws
@@ -1123,11 +1197,13 @@ def test_write_participation_unknown_poll_id_has_blank_metadata():
 
 def test_write_participation_zero_polls_writes_header_only():
     """A delegate-only df with no poll/spell columns writes just the header."""
-    df = pd.DataFrame({
-        "Delegate Name": ["BLUE", "Cloaky"],
-        "Delegate Contract": ["0xaaa", "0xbbb"],
-        "Start Date": ["2025-12-01", "2025-12-01"],
-    })
+    df = pd.DataFrame(
+        {
+            "Delegate Name": ["BLUE", "Cloaky"],
+            "Delegate Contract": ["0xaaa", "0xbbb"],
+            "Start Date": ["2025-12-01", "2025-12-01"],
+        }
+    )
     workbook = MagicMock()
     fake_ws = MagicMock(spec=gspread.Worksheet)
     workbook.worksheet.return_value = fake_ws
@@ -1189,13 +1265,13 @@ def test_write_participation_range_matches_data_shape():
 
 
 @pytest.mark.integration
-def test_write_participation_raw_data_to_real_workbook(_temp_tab, monkeypatch):
+def test_write_participation_raw_data_to_real_workbook(temp_tab, monkeypatch):
     """End-to-end: write a small participation set, read back, verify."""
     df = _make_participation_df()
     monkeypatch.setattr(
         sheets,
         "_participation_raw_data_tab_title",
-        lambda period: _temp_tab,
+        lambda _period: temp_tab,
     )
 
     workbook = sheets.get_workbook()
@@ -1226,7 +1302,7 @@ def test_write_participation_raw_data_to_real_workbook(_temp_tab, monkeypatch):
 
 
 def _empty_existing_comm_ws(workbook):
-    """Make a fresh MagicMock worksheet for first-fetch Communication Master."""
+    """Return a fresh MagicMock worksheet for first-fetch Communication Master."""
     fake_ws = MagicMock(spec=gspread.Worksheet)
     fake_ws.get_all_values.return_value = []
     workbook.worksheet.return_value = fake_ws
@@ -1299,12 +1375,14 @@ def test_write_communication_master_first_fetch_pending_for_yes_participation():
     """First fetch: 'Yes' participation defaults communication to 'Pending verification'."""
     # Fixture: poll 12345 has all 3 delegates as "Yes" - except cloaky is "No"
     # Use a simplified df where everyone said Yes
-    df = pd.DataFrame({
-        "Delegate Name": ["BLUE", "Cloaky"],
-        "Delegate Contract": ["0xaaa", "0xbbb"],
-        "Start Date": ["2025-12-01", "2025-12-01"],
-        "12345": ["Yes", "Yes"],
-    })
+    df = pd.DataFrame(
+        {
+            "Delegate Name": ["BLUE", "Cloaky"],
+            "Delegate Contract": ["0xaaa", "0xbbb"],
+            "Start Date": ["2025-12-01", "2025-12-01"],
+            "12345": ["Yes", "Yes"],
+        }
+    )
     workbook = MagicMock()
     fake_ws = _empty_existing_comm_ws(workbook)
 
@@ -1324,12 +1402,14 @@ def test_write_communication_master_first_fetch_pending_for_yes_participation():
 
 def test_write_communication_master_first_fetch_did_not_vote_for_no_participation():
     """Participation = 'No' → communication = 'Did not vote' (cross-ref)."""
-    df = pd.DataFrame({
-        "Delegate Name": ["BLUE", "Cloaky"],
-        "Delegate Contract": ["0xaaa", "0xbbb"],
-        "Start Date": ["2025-12-01", "2025-12-01"],
-        "12345": ["Yes", "No"],  # Cloaky didn't vote
-    })
+    df = pd.DataFrame(
+        {
+            "Delegate Name": ["BLUE", "Cloaky"],
+            "Delegate Contract": ["0xaaa", "0xbbb"],
+            "Start Date": ["2025-12-01", "2025-12-01"],
+            "12345": ["Yes", "No"],  # Cloaky didn't vote
+        }
+    )
     workbook = MagicMock()
     fake_ws = _empty_existing_comm_ws(workbook)
 
@@ -1347,12 +1427,14 @@ def test_write_communication_master_first_fetch_did_not_vote_for_no_participatio
 
 def test_write_communication_master_first_fetch_mirrors_discounted():
     """Participation in DISCOUNTED → communication mirrors that status."""
-    df = pd.DataFrame({
-        "Delegate Name": ["BLUE", "Cloaky", "BONAPUBLICA"],
-        "Delegate Contract": ["0xaaa", "0xbbb", "0xccc"],
-        "Start Date": ["2025-12-01", "2025-12-01", "2025-12-01"],
-        "12345": ["Not Started", "Exited", "No Delegated SKY"],
-    })
+    df = pd.DataFrame(
+        {
+            "Delegate Name": ["BLUE", "Cloaky", "BONAPUBLICA"],
+            "Delegate Contract": ["0xaaa", "0xbbb", "0xccc"],
+            "Start Date": ["2025-12-01", "2025-12-01", "2025-12-01"],
+            "12345": ["Not Started", "Exited", "No Delegated SKY"],
+        }
+    )
     workbook = MagicMock()
     fake_ws = _empty_existing_comm_ws(workbook)
 
@@ -1371,12 +1453,14 @@ def test_write_communication_master_first_fetch_mirrors_discounted():
 
 def test_write_communication_master_missing_column_raises():
     """Raise with clear instructions when YAML adds a delegate not in the existing tab."""
-    df = pd.DataFrame({
-        "Delegate Name": ["BLUE", "Cloaky", "NewDelegate"],  # NewDelegate added
-        "Delegate Contract": ["0xaaa", "0xbbb", "0xccc"],
-        "Start Date": ["2025-12-01", "2025-12-01", "2026-04-01"],
-        "12345": ["Yes", "Yes", "Yes"],
-    })
+    df = pd.DataFrame(
+        {
+            "Delegate Name": ["BLUE", "Cloaky", "NewDelegate"],  # NewDelegate added
+            "Delegate Contract": ["0xaaa", "0xbbb", "0xccc"],
+            "Start Date": ["2025-12-01", "2025-12-01", "2026-04-01"],
+            "12345": ["Yes", "Yes", "Yes"],
+        }
+    )
     workbook = MagicMock()
     fake_ws = MagicMock(spec=gspread.Worksheet)
     # Existing tab has only BLUE and Cloaky columns
@@ -1397,12 +1481,14 @@ def test_write_communication_master_missing_column_raises():
 
 def test_write_communication_master_preserves_operator_edits():
     """Preserve existing non-blank cells; fill blanks with the cross-reference default."""
-    df = pd.DataFrame({
-        "Delegate Name": ["BLUE", "Cloaky"],
-        "Delegate Contract": ["0xaaa", "0xbbb"],
-        "Start Date": ["2025-12-01", "2025-12-01"],
-        "12345": ["Yes", "Yes"],
-    })
+    df = pd.DataFrame(
+        {
+            "Delegate Name": ["BLUE", "Cloaky"],
+            "Delegate Contract": ["0xaaa", "0xbbb"],
+            "Start Date": ["2025-12-01", "2025-12-01"],
+            "12345": ["Yes", "Yes"],
+        }
+    )
     workbook = MagicMock()
     fake_ws = MagicMock(spec=gspread.Worksheet)
     # Existing tab has poll 12345 with operator-set "Yes" for BLUE,
@@ -1429,12 +1515,14 @@ def test_write_communication_master_preserves_operator_edits():
 
 def test_write_communication_master_preserves_historical_polls():
     """Polls in the existing tab but not in the current fetch are kept."""
-    df = pd.DataFrame({
-        "Delegate Name": ["BLUE", "Cloaky"],
-        "Delegate Contract": ["0xaaa", "0xbbb"],
-        "Start Date": ["2025-12-01", "2025-12-01"],
-        "12345": ["Yes", "Yes"],
-    })
+    df = pd.DataFrame(
+        {
+            "Delegate Name": ["BLUE", "Cloaky"],
+            "Delegate Contract": ["0xaaa", "0xbbb"],
+            "Start Date": ["2025-12-01", "2025-12-01"],
+            "12345": ["Yes", "Yes"],
+        }
+    )
     workbook = MagicMock()
     fake_ws = MagicMock(spec=gspread.Worksheet)
     fake_ws.get_all_values.return_value = [
@@ -1465,12 +1553,14 @@ def test_write_communication_master_historical_delegate_cells_blank_for_new_poll
     A delegate removed from YAML keeps their column (historical data)
     but we don't know their alignment dates for new polls.
     """
-    df = pd.DataFrame({
-        "Delegate Name": ["BLUE"],  # Cloaky no longer in roster
-        "Delegate Contract": ["0xaaa"],
-        "Start Date": ["2025-12-01"],
-        "12345": ["Yes"],
-    })
+    df = pd.DataFrame(
+        {
+            "Delegate Name": ["BLUE"],  # Cloaky no longer in roster
+            "Delegate Contract": ["0xaaa"],
+            "Start Date": ["2025-12-01"],
+            "12345": ["Yes"],
+        }
+    )
     workbook = MagicMock()
     fake_ws = MagicMock(spec=gspread.Worksheet)
     fake_ws.get_all_values.return_value = [
@@ -1492,18 +1582,20 @@ def test_write_communication_master_historical_delegate_cells_blank_for_new_poll
     row_12345 = next(r for r in values[1:] if r[0] == "12345")
     assert row_12345[4] == "Pending verification"  # BLUE (in roster, Yes participation)
     # Cloaky column at index 5: blank since not in current roster
-    assert row_12345[5] == ""
+    assert not row_12345[5]
 
 
 def test_write_communication_master_sort_order_start_date_descending():
     """Output sorted by Start Date descending (newest first)."""
-    df = pd.DataFrame({
-        "Delegate Name": ["BLUE"],
-        "Delegate Contract": ["0xaaa"],
-        "Start Date": ["2025-12-01"],
-        "12345": ["Yes"],
-        "12346": ["Yes"],
-    })
+    df = pd.DataFrame(
+        {
+            "Delegate Name": ["BLUE"],
+            "Delegate Contract": ["0xaaa"],
+            "Start Date": ["2025-12-01"],
+            "12345": ["Yes"],
+            "12346": ["Yes"],
+        }
+    )
     workbook = MagicMock()
     fake_ws = _empty_existing_comm_ws(workbook)
 
@@ -1577,13 +1669,13 @@ def test_write_communication_master_uses_correct_tab_name():
 
 
 @pytest.mark.integration
-def test_write_communication_master_to_real_workbook(_temp_tab, monkeypatch):
+def test_write_communication_master_to_real_workbook(temp_tab, monkeypatch):
     """End-to-end: first-fetch write, read back, verify defaults are applied."""
     df = _make_participation_df()
     monkeypatch.setattr(
         sheets,
         "COMMUNICATION_MASTER_TAB_TITLE",
-        _temp_tab,
+        temp_tab,
     )
 
     workbook = sheets.get_workbook()
@@ -1612,7 +1704,7 @@ def test_write_communication_master_to_real_workbook(_temp_tab, monkeypatch):
 
 
 def _make_config_ws(rows: list[list[str]]) -> MagicMock:
-    """Build a MagicMock worksheet returning `rows` from get_all_values()."""
+    """Return a MagicMock worksheet returning `rows` from get_all_values()."""
     ws = MagicMock(spec=gspread.Worksheet)
     ws.get_all_values.return_value = rows
     return ws
@@ -1638,12 +1730,14 @@ def test_read_config_empty_tab_raises_value_error():
 def test_read_config_missing_required_key_raises():
     """ValueError lists the missing keys for the operator."""
     workbook = MagicMock()
-    workbook.worksheet.return_value = _make_config_ws([
-        ["Key", "Value"],
-        ["L1_USDS", "33333"],
-        ["L2_USDS", "14583"],
-        # L3_USDS and TOTAL_SLOTS missing
-    ])
+    workbook.worksheet.return_value = _make_config_ws(
+        [
+            ["Key", "Value"],
+            ["L1_USDS", "33333"],
+            ["L2_USDS", "14583"],
+            # L3_USDS and TOTAL_SLOTS missing
+        ]
+    )
 
     with pytest.raises(ValueError, match="missing required keys"):
         sheets.read_config(workbook)
@@ -1651,13 +1745,15 @@ def test_read_config_missing_required_key_raises():
 
 def test_read_config_unparseable_value_raises():
     workbook = MagicMock()
-    workbook.worksheet.return_value = _make_config_ws([
-        ["Key", "Value"],
-        ["L1_USDS", "not_a_number"],
-        ["L2_USDS", "14583"],
-        ["L3_USDS", "4000"],
-        ["TOTAL_SLOTS", "6"],
-    ])
+    workbook.worksheet.return_value = _make_config_ws(
+        [
+            ["Key", "Value"],
+            ["L1_USDS", "not_a_number"],
+            ["L2_USDS", "14583"],
+            ["L3_USDS", "4000"],
+            ["TOTAL_SLOTS", "6"],
+        ]
+    )
 
     with pytest.raises(ValueError, match="un-parseable"):
         sheets.read_config(workbook)
@@ -1667,13 +1763,15 @@ def test_read_config_happy_path_returns_compensation_config():
     from ad_voting_metrics.compensation import CompensationConfig
 
     workbook = MagicMock()
-    workbook.worksheet.return_value = _make_config_ws([
-        ["Key", "Value"],
-        ["L1_USDS", "33333"],
-        ["L2_USDS", "14583"],
-        ["L3_USDS", "4000"],
-        ["TOTAL_SLOTS", "6"],
-    ])
+    workbook.worksheet.return_value = _make_config_ws(
+        [
+            ["Key", "Value"],
+            ["L1_USDS", "33333"],
+            ["L2_USDS", "14583"],
+            ["L3_USDS", "4000"],
+            ["TOTAL_SLOTS", "6"],
+        ]
+    )
 
     config = sheets.read_config(workbook)
     assert isinstance(config, CompensationConfig)
@@ -1686,15 +1784,17 @@ def test_read_config_happy_path_returns_compensation_config():
 def test_read_config_unknown_keys_silently_ignored():
     """Future-proofing: extra keys in the Config tab don't break the read."""
     workbook = MagicMock()
-    workbook.worksheet.return_value = _make_config_ws([
-        ["Key", "Value"],
-        ["L1_USDS", "33333"],
-        ["L2_USDS", "14583"],
-        ["L3_USDS", "4000"],
-        ["TOTAL_SLOTS", "6"],
-        ["FUTURE_THRESHOLD", "0.5"],  # not yet defined
-        ["BUFFER_CAP", "100000"],  # not yet defined
-    ])
+    workbook.worksheet.return_value = _make_config_ws(
+        [
+            ["Key", "Value"],
+            ["L1_USDS", "33333"],
+            ["L2_USDS", "14583"],
+            ["L3_USDS", "4000"],
+            ["TOTAL_SLOTS", "6"],
+            ["FUTURE_THRESHOLD", "0.5"],  # not yet defined
+            ["BUFFER_CAP", "100000"],  # not yet defined
+        ]
+    )
 
     config = sheets.read_config(workbook)
     assert config.l1_usds == 33333.0
@@ -1703,14 +1803,16 @@ def test_read_config_unknown_keys_silently_ignored():
 def test_read_config_handles_short_rows():
     """A row with only one cell (no value column) is skipped."""
     workbook = MagicMock()
-    workbook.worksheet.return_value = _make_config_ws([
-        ["Key", "Value"],
-        ["L1_USDS", "33333"],
-        ["accidentally_partial_row"],
-        ["L2_USDS", "14583"],
-        ["L3_USDS", "4000"],
-        ["TOTAL_SLOTS", "6"],
-    ])
+    workbook.worksheet.return_value = _make_config_ws(
+        [
+            ["Key", "Value"],
+            ["L1_USDS", "33333"],
+            ["accidentally_partial_row"],
+            ["L2_USDS", "14583"],
+            ["L3_USDS", "4000"],
+            ["TOTAL_SLOTS", "6"],
+        ]
+    )
 
     config = sheets.read_config(workbook)
     assert config.l1_usds == 33333.0
@@ -1718,13 +1820,15 @@ def test_read_config_handles_short_rows():
 
 def test_read_config_strips_whitespace_from_keys_and_values():
     workbook = MagicMock()
-    workbook.worksheet.return_value = _make_config_ws([
-        ["Key", "Value"],
-        ["  L1_USDS  ", "  33333  "],
-        ["L2_USDS", "14583"],
-        ["L3_USDS", "4000"],
-        ["TOTAL_SLOTS", "6"],
-    ])
+    workbook.worksheet.return_value = _make_config_ws(
+        [
+            ["Key", "Value"],
+            ["  L1_USDS  ", "  33333  "],
+            ["L2_USDS", "14583"],
+            ["L3_USDS", "4000"],
+            ["TOTAL_SLOTS", "6"],
+        ]
+    )
 
     config = sheets.read_config(workbook)
     assert config.l1_usds == 33333.0
@@ -1737,10 +1841,11 @@ def test_read_config_strips_whitespace_from_keys_and_values():
 
 def _make_period_comp(
     *,
-    delegates: list[tuple[str, int | None, float | None, float | None, int]] | None = None,
+    delegates: list[tuple[str, int | None, float | None, float | None, int]]
+    | None = None,
     validation: dict[str, str] | None = None,
 ):
-    """Build a PeriodCompensation for testing.
+    """Return a PeriodCompensation for testing.
 
     Each delegate tuple is (name, level_at_period_end, p_pct, c_pct, days_l3).
     Modifier and final_amount are derived. Defaults to a single Alice row.
@@ -1785,7 +1890,7 @@ def _make_period_comp(
                 payment_amount=0.0,
                 buffer_post_payment=0.0,
                 notes="",
-            )
+            ),
         )
     return PeriodCompensation(
         period=period,
@@ -1856,7 +1961,7 @@ def test_write_compensation_tab_writes_level_counts():
             ("Dave", 3, 1.0, 1.0, 30),
             ("Eve", 3, 1.0, 1.0, 30),
             ("Frank", None, 0.5, 1.0, 0),  # unassigned, doesn't count
-        ]
+        ],
     )
 
     workbook = MagicMock()
@@ -1878,7 +1983,7 @@ def test_write_compensation_tab_writes_total_sum_formula():
         delegates=[
             ("Alice", 3, 1.0, 1.0, 30),
             ("Bob", 3, 1.0, 1.0, 30),
-        ]
+        ],
     )
 
     workbook = MagicMock()
@@ -1927,7 +2032,7 @@ def test_write_compensation_tab_writes_data_rows_in_order():
             ("Alice", 3, 1.0, 1.0, 30),
             ("Bob", 3, 1.0, 1.0, 30),
             ("Charlie", 3, 1.0, 1.0, 30),
-        ]
+        ],
     )
 
     workbook = MagicMock()
@@ -1948,7 +2053,7 @@ def test_write_compensation_tab_none_pct_renders_as_no_data():
     period_comp = _make_period_comp(
         delegates=[
             ("Newbie", None, None, None, 0),
-        ]
+        ],
     )
 
     workbook = MagicMock()
@@ -1971,7 +2076,7 @@ def test_write_compensation_tab_level_label_mapping():
             ("B_L2", 2, 1.0, 1.0, 0),
             ("C_L3", 3, 1.0, 1.0, 30),
             ("D_None", None, 0.5, 1.0, 0),
-        ]
+        ],
     )
 
     workbook = MagicMock()
@@ -2016,9 +2121,11 @@ def test_write_compensation_tab_clears_before_writing():
 
     fake_ws.clear.assert_called_once()
     # Order matters: clear before update.
-    clear_idx = fake_ws.method_calls.index(next(c for c in fake_ws.method_calls if c[0] == "clear"))
+    clear_idx = fake_ws.method_calls.index(
+        next(c for c in fake_ws.method_calls if c[0] == "clear")
+    )
     update_idx = fake_ws.method_calls.index(
-        next(c for c in fake_ws.method_calls if c[0] == "update")
+        next(c for c in fake_ws.method_calls if c[0] == "update"),
     )
     assert clear_idx < update_idx
 
@@ -2074,7 +2181,7 @@ def test_enumerate_months_partial_month_at_edges():
 
 
 def _daily_data_ws(rows: list[list[str]]) -> MagicMock:
-    """Build a MagicMock Daily Data worksheet from row data."""
+    """Return a MagicMock Daily Data worksheet from row data."""
     ws = MagicMock(spec=gspread.Worksheet)
     ws.get_all_values.return_value = rows
     return ws
@@ -2091,10 +2198,12 @@ def test_read_daily_data_missing_tab_raises_with_operator_message():
 def test_read_daily_data_no_rows_in_period_raises():
     """Case A: tab exists but has no rows covering the requested period."""
     workbook = MagicMock()
-    workbook.worksheet.return_value = _daily_data_ws([
-        ["Date", "Delegate", "Total Delegation", "Rank"],
-        ["2026-01-15", "Alice", "1000000", "1"],  # different period
-    ])
+    workbook.worksheet.return_value = _daily_data_ws(
+        [
+            ["Date", "Delegate", "Total Delegation", "Rank"],
+            ["2026-01-15", "Alice", "1000000", "1"],  # different period
+        ]
+    )
 
     with pytest.raises(RuntimeError, match="no rows for"):
         sheets.read_daily_data(workbook, MonthPeriod(year=2026, month=4))
@@ -2103,13 +2212,15 @@ def test_read_daily_data_no_rows_in_period_raises():
 def test_read_daily_data_returns_ranks_for_every_day_present():
     """Pivots rows into {day: {delegate: rank}}."""
     workbook = MagicMock()
-    workbook.worksheet.return_value = _daily_data_ws([
-        ["Date", "Delegate", "Total Delegation", "Rank"],
-        ["2026-04-01", "Alice", "1000000", "1"],
-        ["2026-04-01", "Bob", "500000", "2"],
-        ["2026-04-02", "Alice", "1000000", "1"],
-        ["2026-04-02", "Bob", "500000", "2"],
-    ])
+    workbook.worksheet.return_value = _daily_data_ws(
+        [
+            ["Date", "Delegate", "Total Delegation", "Rank"],
+            ["2026-04-01", "Alice", "1000000", "1"],
+            ["2026-04-01", "Bob", "500000", "2"],
+            ["2026-04-02", "Alice", "1000000", "1"],
+            ["2026-04-02", "Bob", "500000", "2"],
+        ]
+    )
 
     result = sheets.read_daily_data(workbook, MonthPeriod(year=2026, month=4))
 
@@ -2120,12 +2231,14 @@ def test_read_daily_data_returns_ranks_for_every_day_present():
 def test_read_daily_data_filters_out_other_months():
     """Workbook-wide tab; only rows in the requested period come back."""
     workbook = MagicMock()
-    workbook.worksheet.return_value = _daily_data_ws([
-        ["Date", "Delegate", "Total Delegation", "Rank"],
-        ["2026-03-31", "Alice", "1000000", "1"],  # March
-        ["2026-04-01", "Alice", "1000000", "1"],  # April — kept
-        ["2026-05-01", "Alice", "1000000", "1"],  # May — filtered
-    ])
+    workbook.worksheet.return_value = _daily_data_ws(
+        [
+            ["Date", "Delegate", "Total Delegation", "Rank"],
+            ["2026-03-31", "Alice", "1000000", "1"],  # March
+            ["2026-04-01", "Alice", "1000000", "1"],  # April — kept
+            ["2026-05-01", "Alice", "1000000", "1"],  # May — filtered
+        ]
+    )
 
     result = sheets.read_daily_data(workbook, MonthPeriod(year=2026, month=4))
 
@@ -2135,11 +2248,13 @@ def test_read_daily_data_filters_out_other_months():
 def test_read_daily_data_skips_unparseable_dates():
     """Malformed date strings are dropped, not raised."""
     workbook = MagicMock()
-    workbook.worksheet.return_value = _daily_data_ws([
-        ["Date", "Delegate", "Total Delegation", "Rank"],
-        ["not-a-date", "Alice", "1000000", "1"],
-        ["2026-04-01", "Alice", "1000000", "1"],
-    ])
+    workbook.worksheet.return_value = _daily_data_ws(
+        [
+            ["Date", "Delegate", "Total Delegation", "Rank"],
+            ["not-a-date", "Alice", "1000000", "1"],
+            ["2026-04-01", "Alice", "1000000", "1"],
+        ]
+    )
 
     result = sheets.read_daily_data(workbook, MonthPeriod(year=2026, month=4))
 
@@ -2152,7 +2267,7 @@ def test_read_daily_data_skips_unparseable_dates():
 
 
 def _participation_ws(rows: list[list[str]]) -> MagicMock:
-    """Build a MagicMock Participation Raw Data worksheet from row data."""
+    """Return a MagicMock Participation Raw Data worksheet from row data."""
     ws = MagicMock(spec=gspread.Worksheet)
     ws.get_all_values.return_value = rows
     return ws
@@ -2178,16 +2293,20 @@ def test_read_participation_for_window_aggregates_across_months():
 
     def by_title(title: str) -> MagicMock:
         if title == "Participation Raw Data March 2026":
-            return _participation_ws([
-                ["Poll Id", "Start Date", "End Date", "Title", "Alice", "Bob"],
-                ["1001", "2026-03-15", "2026-03-20", "Poll 1", "Yes", "Yes"],
-            ])
+            return _participation_ws(
+                [
+                    ["Poll Id", "Start Date", "End Date", "Title", "Alice", "Bob"],
+                    ["1001", "2026-03-15", "2026-03-20", "Poll 1", "Yes", "Yes"],
+                ]
+            )
         if title == "Participation Raw Data April 2026":
-            return _participation_ws([
-                ["Poll Id", "Start Date", "End Date", "Title", "Alice", "Bob"],
-                ["1002", "2026-04-05", "2026-04-10", "Poll 2", "Yes", "No"],
-                ["1003", "2026-04-15", "2026-04-20", "Poll 3", "No", "Yes"],
-            ])
+            return _participation_ws(
+                [
+                    ["Poll Id", "Start Date", "End Date", "Title", "Alice", "Bob"],
+                    ["1002", "2026-04-05", "2026-04-10", "Poll 2", "Yes", "No"],
+                    ["1003", "2026-04-15", "2026-04-20", "Poll 3", "No", "Yes"],
+                ]
+            )
         raise gspread.exceptions.WorksheetNotFound(title)
 
     workbook.worksheet.side_effect = by_title
@@ -2215,11 +2334,13 @@ def test_read_participation_for_window_aggregates_across_months():
 def test_read_participation_for_window_filters_polls_outside_window():
     """A poll dated outside the window bounds is dropped even if its tab is in scope."""
     workbook = MagicMock()
-    workbook.worksheet.return_value = _participation_ws([
-        ["Poll Id", "Start Date", "End Date", "Title", "Alice"],
-        ["1001", "2026-04-01", "2026-04-10", "In window", "Yes"],
-        ["1002", "2026-04-30", "2026-05-05", "Out of window", "No"],
-    ])
+    workbook.worksheet.return_value = _participation_ws(
+        [
+            ["Poll Id", "Start Date", "End Date", "Title", "Alice"],
+            ["1001", "2026-04-01", "2026-04-10", "In window", "Yes"],
+            ["1002", "2026-04-30", "2026-05-05", "Out of window", "No"],
+        ]
+    )
 
     result = sheets.read_participation_for_window(
         workbook,
@@ -2232,11 +2353,13 @@ def test_read_participation_for_window_filters_polls_outside_window():
 
 def test_read_participation_for_window_skips_rows_with_unparseable_dates():
     workbook = MagicMock()
-    workbook.worksheet.return_value = _participation_ws([
-        ["Poll Id", "Start Date", "End Date", "Title", "Alice"],
-        ["1001", "not-a-date", "2026-04-10", "Broken", "Yes"],
-        ["1002", "2026-04-05", "2026-04-10", "OK", "Yes"],
-    ])
+    workbook.worksheet.return_value = _participation_ws(
+        [
+            ["Poll Id", "Start Date", "End Date", "Title", "Alice"],
+            ["1001", "not-a-date", "2026-04-10", "Broken", "Yes"],
+            ["1002", "2026-04-05", "2026-04-10", "OK", "Yes"],
+        ]
+    )
 
     result = sheets.read_participation_for_window(
         workbook,
@@ -2263,9 +2386,11 @@ def test_read_participation_for_window_handles_empty_tab():
 def test_read_participation_for_window_header_only_tab():
     """Header without data rows produces empty lists per delegate."""
     workbook = MagicMock()
-    workbook.worksheet.return_value = _participation_ws([
-        ["Poll Id", "Start Date", "End Date", "Title", "Alice", "Bob"],
-    ])
+    workbook.worksheet.return_value = _participation_ws(
+        [
+            ["Poll Id", "Start Date", "End Date", "Title", "Alice", "Bob"],
+        ]
+    )
 
     result = sheets.read_participation_for_window(
         workbook,
@@ -2281,10 +2406,12 @@ def test_read_participation_for_window_header_only_tab():
 def test_read_participation_for_window_partial_rows():
     """A row missing trailing status cells gets empty string for those delegates."""
     workbook = MagicMock()
-    workbook.worksheet.return_value = _participation_ws([
-        ["Poll Id", "Start Date", "End Date", "Title", "Alice", "Bob"],
-        ["1001", "2026-04-05", "2026-04-10", "Poll", "Yes"],  # missing Bob's column
-    ])
+    workbook.worksheet.return_value = _participation_ws(
+        [
+            ["Poll Id", "Start Date", "End Date", "Title", "Alice", "Bob"],
+            ["1001", "2026-04-05", "2026-04-10", "Poll", "Yes"],  # missing Bob's column
+        ]
+    )
 
     result = sheets.read_participation_for_window(
         workbook,
@@ -2309,7 +2436,9 @@ def _comm_master_ws(rows: list[list[str]]) -> MagicMock:
 
 def test_read_communication_master_missing_tab_raises():
     workbook = MagicMock()
-    workbook.worksheet.side_effect = gspread.exceptions.WorksheetNotFound("Communication Master")
+    workbook.worksheet.side_effect = gspread.exceptions.WorksheetNotFound(
+        "Communication Master"
+    )
 
     with pytest.raises(RuntimeError, match=r"Communication Master.*fetch"):
         sheets.read_communication_master(workbook)
@@ -2325,20 +2454,31 @@ def test_read_communication_master_empty_tab_returns_empty_dict():
 def test_read_communication_master_header_only_returns_empty():
     """Header but no data rows → empty dict (no entries to populate)."""
     workbook = MagicMock()
-    workbook.worksheet.return_value = _comm_master_ws([
-        ["Poll Id", "Start Date", "End Date", "Title", "Alice", "Bob"],
-    ])
+    workbook.worksheet.return_value = _comm_master_ws(
+        [
+            ["Poll Id", "Start Date", "End Date", "Title", "Alice", "Bob"],
+        ]
+    )
 
     assert sheets.read_communication_master(workbook) == {}
 
 
 def test_read_communication_master_pivots_into_delegate_keyed_dict():
     workbook = MagicMock()
-    workbook.worksheet.return_value = _comm_master_ws([
-        ["Poll Id", "Start Date", "End Date", "Title", "Alice", "Bob"],
-        ["1001", "2026-04-05", "2026-04-10", "Poll 1", "Yes", "No"],
-        ["1002", "2026-04-15", "2026-04-20", "Poll 2", "Pending verification", "Yes"],
-    ])
+    workbook.worksheet.return_value = _comm_master_ws(
+        [
+            ["Poll Id", "Start Date", "End Date", "Title", "Alice", "Bob"],
+            ["1001", "2026-04-05", "2026-04-10", "Poll 1", "Yes", "No"],
+            [
+                "1002",
+                "2026-04-15",
+                "2026-04-20",
+                "Poll 2",
+                "Pending verification",
+                "Yes",
+            ],
+        ]
+    )
 
     result = sheets.read_communication_master(workbook)
 
@@ -2350,12 +2490,14 @@ def test_read_communication_master_pivots_into_delegate_keyed_dict():
 
 def test_read_communication_master_skips_blank_poll_id_rows():
     workbook = MagicMock()
-    workbook.worksheet.return_value = _comm_master_ws([
-        ["Poll Id", "Start Date", "End Date", "Title", "Alice"],
-        ["1001", "2026-04-05", "2026-04-10", "Poll 1", "Yes"],
-        ["", "", "", "", ""],  # blank row
-        ["1002", "2026-04-15", "2026-04-20", "Poll 2", "No"],
-    ])
+    workbook.worksheet.return_value = _comm_master_ws(
+        [
+            ["Poll Id", "Start Date", "End Date", "Title", "Alice"],
+            ["1001", "2026-04-05", "2026-04-10", "Poll 1", "Yes"],
+            ["", "", "", "", ""],  # blank row
+            ["1002", "2026-04-15", "2026-04-20", "Poll 2", "No"],
+        ]
+    )
 
     result = sheets.read_communication_master(workbook)
 
@@ -2365,10 +2507,12 @@ def test_read_communication_master_skips_blank_poll_id_rows():
 def test_read_communication_master_partial_rows_get_empty_string():
     """A row missing trailing cells gets empty string for those delegates."""
     workbook = MagicMock()
-    workbook.worksheet.return_value = _comm_master_ws([
-        ["Poll Id", "Start Date", "End Date", "Title", "Alice", "Bob"],
-        ["1001", "2026-04-05", "2026-04-10", "Poll 1", "Yes"],  # missing Bob
-    ])
+    workbook.worksheet.return_value = _comm_master_ws(
+        [
+            ["Poll Id", "Start Date", "End Date", "Title", "Alice", "Bob"],
+            ["1001", "2026-04-05", "2026-04-10", "Poll 1", "Yes"],  # missing Bob
+        ]
+    )
 
     result = sheets.read_communication_master(workbook)
 
@@ -2379,9 +2523,11 @@ def test_read_communication_master_partial_rows_get_empty_string():
 def test_read_communication_master_no_delegate_columns_returns_empty():
     """A tab with only metadata columns (no delegates) returns {}."""
     workbook = MagicMock()
-    workbook.worksheet.return_value = _comm_master_ws([
-        ["Poll Id", "Start Date", "End Date", "Title"],
-        ["1001", "2026-04-05", "2026-04-10", "Poll 1"],
-    ])
+    workbook.worksheet.return_value = _comm_master_ws(
+        [
+            ["Poll Id", "Start Date", "End Date", "Title"],
+            ["1001", "2026-04-05", "2026-04-10", "Poll 1"],
+        ]
+    )
 
     assert sheets.read_communication_master(workbook) == {}

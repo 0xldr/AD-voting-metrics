@@ -58,8 +58,7 @@ def fetch_aligned_delegates() -> list[dict]:
         # while-else: fires only if the loop exhausts without breaking, -
         # i.e. we hit the page cap with hasNextPage still true.
         logger.warning(
-            "fetch_aligned_delegates hit page cap of %d with hasNextPage still true; "
-            "results may be incomplete",
+            "fetch_aligned_delegates hit page cap of %d with hasNextPage still true; results may be incomplete",
             _MAX_PAGES,
         )
     logger.info("Fetched %d aligned delegates from API", len(delegates))

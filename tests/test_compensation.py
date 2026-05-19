@@ -147,7 +147,7 @@ def test_full_period_l3_perfect_metrics():
     assert row.entitlement_pre_modifier == pytest.approx(4000.0)
     assert row.metrics_modifier == 1.0
     assert row.final_amount == 4000.0
-    assert row.notes == ""
+    assert not row.notes
 
 
 def test_full_period_l1_perfect_metrics():
@@ -167,12 +167,10 @@ def test_full_period_l1_perfect_metrics():
 def test_partial_period_l3():
     """15 days L3 out of 30 → half the L3 amount."""
     half_l3 = [
-        _daily(date(2026, 4, d), {"Alice": _delegate_eligibility("Alice", assigned_level=3)})
-        for d in range(1, 16)
+        _daily(date(2026, 4, d), {"Alice": _delegate_eligibility("Alice", assigned_level=3)}) for d in range(1, 16)
     ]
     half_none = [
-        _daily(date(2026, 4, d), {"Alice": _delegate_eligibility("Alice", assigned_level=None)})
-        for d in range(16, 31)
+        _daily(date(2026, 4, d), {"Alice": _delegate_eligibility("Alice", assigned_level=None)}) for d in range(16, 31)
     ]
     result = compute_period_compensation(
         period=PERIOD,
@@ -188,13 +186,9 @@ def test_partial_period_l3():
 
 def test_mid_period_promotion_l3_to_l1():
     """15 days L3 + 15 days L1 → (15/30)*4000 + (15/30)*33333 = 2000 + 16666.5."""
-    days = [
-        _daily(date(2026, 4, d), {"Alice": _delegate_eligibility("Alice", assigned_level=3)})
-        for d in range(1, 16)
-    ]
+    days = [_daily(date(2026, 4, d), {"Alice": _delegate_eligibility("Alice", assigned_level=3)}) for d in range(1, 16)]
     days.extend(
-        _daily(date(2026, 4, d), {"Alice": _delegate_eligibility("Alice", assigned_level=1)})
-        for d in range(16, 31)
+        _daily(date(2026, 4, d), {"Alice": _delegate_eligibility("Alice", assigned_level=1)}) for d in range(16, 31)
     )
     result = compute_period_compensation(
         period=PERIOD,
@@ -286,7 +280,7 @@ def test_notes_blank_when_modifier_is_one():
         config=CONFIG,
         final_metrics={"Alice": (1.0, 1.0)},
     )
-    assert result.per_delegate[0].notes == ""
+    assert not result.per_delegate[0].notes
 
 
 def test_notes_populated_when_modifier_under_one():
@@ -315,7 +309,7 @@ def test_notes_blank_when_no_entitlement():
         config=CONFIG,
         final_metrics={"Alice": (0.85, 0.85)},
     )
-    assert result.per_delegate[0].notes == ""
+    assert not result.per_delegate[0].notes
 
 
 # ---------------------------------------------------------------------------
@@ -348,14 +342,16 @@ def test_rank_and_level_taken_from_last_day():
     """rank_at_period_end and level_at_period_end come from day 30."""
     days = [
         _daily(
-            date(2026, 4, d), {"Alice": _delegate_eligibility("Alice", assigned_level=3, rank=1)}
+            date(2026, 4, d),
+            {"Alice": _delegate_eligibility("Alice", assigned_level=3, rank=1)},
         )
         for d in range(1, 30)
     ]
     days.append(
         _daily(
-            date(2026, 4, 30), {"Alice": _delegate_eligibility("Alice", assigned_level=1, rank=2)}
-        )
+            date(2026, 4, 30),
+            {"Alice": _delegate_eligibility("Alice", assigned_level=1, rank=2)},
+        ),
     )
     result = compute_period_compensation(
         period=PERIOD,
@@ -396,9 +392,7 @@ def test_per_delegate_sorted_alphabetically():
 
 def test_slot_days_check_good_when_full():
     """30 days x 6 slots = 180 slot-days, all filled → GOOD."""
-    delegates = {
-        f"D{i}": _delegate_eligibility(f"D{i}", assigned_level=3, rank=i) for i in range(6)
-    }
+    delegates = {f"D{i}": _delegate_eligibility(f"D{i}", assigned_level=3, rank=i) for i in range(6)}
     result = compute_period_compensation(
         period=PERIOD,
         daily_eligibility=_full_period(delegates),
@@ -410,9 +404,7 @@ def test_slot_days_check_good_when_full():
 
 def test_slot_days_check_not_good_when_underfilled():
     """Only 3 slots filled out of 6 → 90 slot-days vs 180 expected → NOT GOOD."""
-    delegates = {
-        f"D{i}": _delegate_eligibility(f"D{i}", assigned_level=3, rank=i) for i in range(3)
-    }
+    delegates = {f"D{i}": _delegate_eligibility(f"D{i}", assigned_level=3, rank=i) for i in range(3)}
     result = compute_period_compensation(
         period=PERIOD,
         daily_eligibility=_full_period(delegates),

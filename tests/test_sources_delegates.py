@@ -2,7 +2,6 @@
 
 import pytest
 import responses
-from pytest import LogCaptureFixture
 
 from ad_voting_metrics.sources import http as http_module
 from ad_voting_metrics.sources.delegates import _MAX_PAGES, DELEGATES_URL, fetch_aligned_delegates
@@ -17,7 +16,7 @@ def reset_session():
 
 
 def _delegate_dict(name: str, address: str) -> dict:
-    """Minimal API-shaped delegate dict for tests."""
+    """Return a minimal API-shaped delegate dict for tests."""
     return {
         "name": name,
         "voteDelegateAddress": address,
@@ -178,7 +177,7 @@ def test_query_params_include_aligned_filter():
 
 @responses.activate
 def test_stops_on_empty_page_even_when_hasnextpage_true():
-    """Treat an empty page as end-of-data; sky.money returns delegates=[] with hasNextPage=true forever after the last."""
+    """Treat an empty page as end-of-data; sky.money returns delegates=[] with hasNextPage=true forever after last."""
     # Page 1: 2 delegates, hasNextPage = true
     responses.add(
         responses.GET,
@@ -211,7 +210,7 @@ def test_stops_on_empty_page_even_when_hasnextpage_true():
 
 
 @responses.activate
-def test_page_cap_stops_infinite_loop(caplog: LogCaptureFixture):
+def test_page_cap_stops_infinite_loop(caplog: pytest.LogCaptureFixture):
     """If the API always returns hasNextPage=true, we should stop after 10 pages."""
     # Register enough responses to satisfy _MAX_PAGES, all with hasNextPage=true
     for _ in range(_MAX_PAGES):
@@ -254,7 +253,7 @@ def test_500_error_raises():
     # We register only one response, so retries will fail on subsequent
     # attempts (responses will raise ConnectionError when no match exists).
     # That's acceptable — the test just confirms 500s don't get swallowed.
-    with pytest.raises(Exception):  # noqa: B017 — Exception or RetryError or HTTPError, depending on retry behavior
+    with pytest.raises(Exception):  # noqa: B017, PT011 — Exception or RetryError or HTTPError, depending on retry behavior
         fetch_aligned_delegates()
 
 
@@ -267,5 +266,5 @@ def test_404_error_raises():
         status=404,
     )
     # 404 isn't in the retry list, so raise_for_status fires immediately.
-    with pytest.raises(Exception):  # noqa: B017
+    with pytest.raises(Exception):  # noqa: B017, PT011
         fetch_aligned_delegates()

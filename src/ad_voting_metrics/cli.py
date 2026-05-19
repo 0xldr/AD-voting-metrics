@@ -55,12 +55,13 @@ def parse_month(value: str) -> MonthPeriod:
     except ValueError as e:
         raise argparse.ArgumentTypeError(str(e)) from e
 
-    today = date.today()
+    today = datetime.now(UTC).date()
     if period.start > today:
-        raise argparse.ArgumentTypeError(
+        msg = (
             f"{value!r} resolves to {period.start.isoformat()}..{period.end.isoformat()}, "
-            "which is entirely in the future."
+            f"which is entirely in the future."
         )
+        raise argparse.ArgumentTypeError(msg)
 
     return period
 
@@ -77,10 +78,12 @@ def parse_cache_hours(value: str) -> int:
     try:
         hours = int(value)
     except ValueError as e:
-        raise argparse.ArgumentTypeError(f"{value!r} is not an integer") from e
+        msg = f"{value!r} is not an integer"
+        raise argparse.ArgumentTypeError(msg) from e
     if hours < 0:
+        msg_0 = f"{value!r} is negative; --cache-hours must be 0 or greater"
         raise argparse.ArgumentTypeError(
-            f"{value!r} is negative; --cache-hours must be 0 or greater"
+            msg_0,
         )
     return hours
 
@@ -125,9 +128,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
         required=True,
         type=parse_month,
         metavar="MONTH",
-        help=(
-            "Month to query, e.g. 'April 2026' or '2026-04'. Resolves to the full calendar month."
-        ),
+        help=("Month to query, e.g. 'April 2026' or '2026-04'. Resolves to the full calendar month."),
     )
     fetch_parser.add_argument(
         "--cache-hours",
@@ -159,8 +160,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
         type=parse_month,
         metavar="MONTH",
         help=(
-            "Month to finalize, e.g. 'April 2026' or '2026-04'. Must match - "
-            "a month previously processed by `fetch`."
+            "Month to finalize, e.g. 'April 2026' or '2026-04'. Must match - a month previously processed by `fetch`."
         ),
     )
 
@@ -340,10 +340,10 @@ def _run_fetch(args: argparse.Namespace) -> None:
             try:
                 fn(*args)
                 logger.info("%s tab written to workbook for %s", description, period)
-            except ValueError as e:
-                logger.error("%s writer rejected the data: %s", description, e)
-            except (RuntimeError, gspread.exceptions.APIError) as e:
-                logger.error("Could not write %s tab: %s", description, e)
+            except ValueError:
+                logger.exception("%s writer rejected the data", description)
+            except (RuntimeError, gspread.exceptions.APIError):
+                logger.exception("Could not write %s tab", description)
 
         _safe_write(
             "Participation Raw Data", sheets.write_participation_raw_data, workbook, period, df, poll_info, spell_info
@@ -380,11 +380,7 @@ def _window_start_for_period(period: MonthPeriod) -> date:
 
 
 def _run_finalize(args: argparse.Namespace) -> None:
-    """Read workbook tabs, compute eligibility and compensation, write the Compensation tab.
-
-    Raises:
-        SystemExit: on any unrecoverable error.
-    """
+    """Read workbook tabs, compute eligibility and compensation, write the Compensation tab."""
     period = args.month
     window_start = _window_start_for_period(period)
     window_end = period.end
@@ -482,7 +478,7 @@ def _run_finalize(args: argparse.Namespace) -> None:
         dune_cache_max_age_hours=None,
         api_delegate_count=roster_result.api_delegate_count,
         api_fetch_succeeded=roster_result.api_fetch_succeeded,
-        output_files=[Path(f"workbook:{sheets._compensation_tab_title(period)}")],
+        output_files=[Path(f"workbook:{sheets.compensation_tab_title(period)}")],
     )
     write_entry(RECONCILIATION_LOG_PATH, period, entry)
 
@@ -512,4 +508,5 @@ def main(argv: list[str] | None = None) -> None:
         _run_finalize(args)
     else:
         # argparse should already have rejected this; defensive fallback
-        raise SystemExit(f"Unknown command: {args.command!r}")
+        msg = f"Unknown command: {args.command!r}"
+        raise SystemExit(msg)
