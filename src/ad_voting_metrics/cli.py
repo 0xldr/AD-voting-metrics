@@ -12,7 +12,7 @@ import logging
 from collections.abc import Callable
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
-from typing import TypeVar
+from typing import TypeAlias, TypeVar
 
 import gspread
 import pandas as pd
@@ -29,7 +29,15 @@ from .sources.delegates import fetch_aligned_delegates
 
 logger = logging.getLogger(__name__)
 
-_T = TypeVar("_T")
+T = TypeVar("T")
+
+# Per-period workbook state read out of the Compensation Sheet for `finalize`:
+# (daily_ranks_by_day, participation_by_delegate, communication_by_delegate).
+_WorkbookData: TypeAlias = tuple[
+    dict[date, dict[str, int]],
+    dict[str, list[tuple[str, date, str]]],
+    dict[str, dict[str, str]],
+]
 
 # Locate data and output directories relative to the repo root
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
@@ -81,10 +89,8 @@ def parse_cache_hours(value: str) -> int:
         msg = f"{value!r} is not an integer"
         raise argparse.ArgumentTypeError(msg) from e
     if hours < 0:
-        msg_0 = f"{value!r} is negative; --cache-hours must be 0 or greater"
-        raise argparse.ArgumentTypeError(
-            msg_0,
-        )
+        msg = f"{value!r} is negative; --cache-hours must be 0 or greater"
+        raise argparse.ArgumentTypeError(msg)
     return hours
 
 
@@ -100,7 +106,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
             "Generate AD voting metrics for a single month. The workflow "
             "is two-step: `fetch` pulls SKY delegations and poll/spell vote "
             "data and writes the raw participation tabs to the workbook "
-            "(and CSVs to output_data/)."
+            "(and CSVs to output_data/). "
             "An operator then reviews communication entries manually. "
             "`finalize` reads the operator-reviewed communication data and "
             "writes the Compensation tab."
@@ -160,7 +166,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
         type=parse_month,
         metavar="MONTH",
         help=(
-            "Month to finalize, e.g. 'April 2026' or '2026-04'. Must match - a month previously processed by `fetch`."
+            "Month to finalize, e.g. 'April 2026' or '2026-04'. Must match a month previously processed by `fetch`."
         ),
     )
 
@@ -194,7 +200,7 @@ def check_period_has_ended(period: MonthPeriod, today: date) -> None:
         raise SystemExit(msg)
 
 
-def _required_step(description: str, fn: Callable[..., _T], *args: object, **kwargs: object) -> _T:
+def _required_step(description: str, fn: Callable[..., T], *args: object, **kwargs: object) -> T:
     """Run an IO/compute step; on failure, log, and exit.
 
     Returns:
@@ -224,17 +230,10 @@ def _build_metrics_input(
     for delegate in delegates:
         entries = participation_by_delegate.get(delegate.name, [])
         comm_map = communication_by_delegate.get(delegate.name, {})
-        poll_starts: list[date] = []
-        p_statuses: list[str] = []
-        c_statuses: list[str] = []
-        for poll_id, poll_start, p_status in entries:
-            poll_starts.append(poll_start)
-            p_statuses.append(p_status)
-            c_statuses.append(comm_map.get(poll_id, ""))
         metrics_input[delegate.name] = DelegateMetricsInput(
-            poll_starts=poll_starts,
-            participation_statuses=p_statuses,
-            communication_statuses=c_statuses,
+            poll_starts=[poll_start for _, poll_start, _ in entries],
+            participation_statuses=[p_status for _, _, p_status in entries],
+            communication_statuses=[comm_map.get(poll_id, "") for poll_id, _, _ in entries],
         )
     return metrics_input
 
@@ -255,20 +254,16 @@ def _compute_daily_results(
     Returns:
         List of DailyEligibility, one per day in period.start..period.end inclusive.
     """
-    daily_results: list[DailyEligibility] = []
-    current = period.start
-    while current <= period.end:
-        daily_results.append(
-            compute_daily_eligibility(
-                day=current,
-                window=window,
-                delegates=delegates,
-                daily_ranks=daily_ranks_by_day.get(current, {}),
-                metrics_input=metrics_input,
-            )
+    return [
+        compute_daily_eligibility(
+            day=day,
+            window=window,
+            delegates=delegates,
+            daily_ranks=daily_ranks_by_day.get(day, {}),
+            metrics_input=metrics_input,
         )
-        current += timedelta(days=1)
-    return daily_results
+        for day in pd.date_range(period.start, period.end, freq="D").date
+    ]
 
 
 def _build_sky_and_ranking_frames(
@@ -335,7 +330,7 @@ def _write_fetch_workbook_tabs(
         workbook = sheets.get_workbook()
     except RuntimeError:
         logger.exception("Could not open Sheets workbook")
-        logger.exception("CSV outputs in output_date/ are complete; skipping Sheets writes.")
+        logger.info("CSV outputs in output_data/ are complete; skipping Sheets writes.")
         return
 
     def _safe_write(description: str, fn: Callable[..., object], *args: object) -> None:
@@ -407,11 +402,7 @@ def _read_finalize_workbook_data(
     workbook: gspread.Spreadsheet,
     period: MonthPeriod,
     window: tuple[date, date],
-) -> tuple[
-    dict[date, dict[str, int]],
-    dict[str, list[tuple[str, date, str]]],
-    dict[str, dict[str, str]],
-]:
+) -> _WorkbookData:
     """Read Daily Data, window participation, and Communication Master from the workbook.
 
     Returns:
@@ -440,11 +431,7 @@ def _compute_period_compensation_for_window(
     window: tuple[date, date],
     delegates: list[Delegate],
     config: CompensationConfig,
-    workbook_data: tuple[
-        dict[date, dict[str, int]],
-        dict[str, list[tuple[str, date, str]]],
-        dict[str, dict[str, str]],
-    ],
+    workbook_data: _WorkbookData,
 ) -> PeriodCompensation:
     """Build metrics input, compute per-day eligibility, then period compensation.
 
@@ -522,9 +509,6 @@ def _run_finalize(args: argparse.Namespace) -> None:
     _required_step("write Compensation tab", sheets.write_compensation_tab, workbook, period_comp)
     logger.info("Compensation tab written for %s", period)
 
-    # Finalize doesn't hit Dune or the API and writes to a workbook tab
-    # rather than a file - record the tab title in output_files so log
-    # readers can tell finalize runs apart from fetch runs.
     entry = build_entry(
         period=period,
         yaml_path=YAML_PATH,
@@ -545,7 +529,7 @@ def main(argv: list[str] | None = None) -> None:
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s %(levelname)s %(message)s",
-        datefmt="%Y-%m%d %H-%M-%S",
+        datefmt="%Y-%m-%d %H:%M:%S",
     )
     logging.getLogger("dune-client").setLevel(logging.WARNING)
     load_dotenv()
