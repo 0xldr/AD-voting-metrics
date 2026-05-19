@@ -444,11 +444,10 @@ def test_get_delegate_list_sky_returns_one_row_per_delegate_per_day():
     period_2day.month = 4
 
     with patch.object(sky_protocol, "get_all_sky_delegated", return_value=fake_all_sky):
-        sky_list, rank_list = sky_protocol.get_delegate_list_sky(df, period_2day)
+        result = sky_protocol.get_delegate_list_sky(df, period_2day)
 
-    # Two rows each: one per (entity, day).
-    assert len(sky_list) == 2
-    assert len(rank_list) == 2
+    assert len(result) == 2
+    assert list(result.columns) == ["contract", "name", "date", "sky"]
 
 
 def test_get_delegate_list_sky_fills_missing_dune_days_with_zero():
@@ -465,16 +464,16 @@ def test_get_delegate_list_sky_fills_missing_dune_days_with_zero():
     period_3day.end = date(2026, 4, 3)
 
     with patch.object(sky_protocol, "get_all_sky_delegated", return_value=fake_all_sky):
-        sky_list, _rank_list = sky_protocol.get_delegate_list_sky(df, period_3day)
+        result = sky_protocol.get_delegate_list_sky(df, period_3day)
 
-    by_date = {r["date"]: r["sky"] for r in sky_list}
+    by_date = dict(zip(result["date"], result["sky"], strict=True))
     assert by_date[date(2026, 4, 1)] == 0
     assert by_date[date(2026, 4, 2)] == 1500.0
     assert by_date[date(2026, 4, 3)] == 0
 
 
-def test_get_delegate_list_sky_rank_list_lowercases_name():
-    """Names in the rank list are lowercased and stripped."""
+def test_get_delegate_list_sky_lowercases_and_strips_name():
+    """The name column is the delegate's name lowercased and stripped."""
     df = pd.DataFrame([
         {"Delegate Name": "  Alice  ", "Delegate Contract": "0xaaa", "Start Date": "2024-01-01"},
     ])
@@ -484,13 +483,13 @@ def test_get_delegate_list_sky_rank_list_lowercases_name():
     period_1day.end = date(2026, 4, 1)
 
     with patch.object(sky_protocol, "get_all_sky_delegated", return_value=fake_all_sky):
-        _, rank_list = sky_protocol.get_delegate_list_sky(df, period_1day)
+        result = sky_protocol.get_delegate_list_sky(df, period_1day)
 
-    assert rank_list[0]["Delegate"] == "alice"
+    assert result.iloc[0]["name"] == "alice"
 
 
-def test_get_delegate_list_sky_rank_total_rounded_to_2dp():
-    """Total Delegation rounds to 2 decimal places; raw sky is unrounded."""
+def test_get_delegate_list_sky_preserves_unrounded_sky():
+    """The sky column carries the raw Dune value; rounding is the caller's job."""
     df = pd.DataFrame([
         {"Delegate Name": "Alice", "Delegate Contract": "0xaaa", "Start Date": "2024-01-01"},
     ])
@@ -500,15 +499,13 @@ def test_get_delegate_list_sky_rank_total_rounded_to_2dp():
     period_1day.end = date(2026, 4, 1)
 
     with patch.object(sky_protocol, "get_all_sky_delegated", return_value=fake_all_sky):
-        sky_list, rank_list = sky_protocol.get_delegate_list_sky(df, period_1day)
+        result = sky_protocol.get_delegate_list_sky(df, period_1day)
 
-    assert rank_list[0]["Total Delegation"] == 1234.57
-    # Raw sky stays unrounded
-    assert sky_list[0]["sky"] == 1234.56789
+    assert result.iloc[0]["sky"] == 1234.56789
 
 
 def test_get_delegate_list_sky_date_is_date_object():
-    """Date fields in both output lists are datetime.date objects, not strings."""
+    """The date column holds datetime.date objects, not strings."""
     df = pd.DataFrame([
         {"Delegate Name": "Alice", "Delegate Contract": "0xaaa", "Start Date": "2024-01-01"},
     ])
@@ -518,14 +515,13 @@ def test_get_delegate_list_sky_date_is_date_object():
     period_1day.end = date(2026, 4, 1)
 
     with patch.object(sky_protocol, "get_all_sky_delegated", return_value=fake_all_sky):
-        sky_list, rank_list = sky_protocol.get_delegate_list_sky(df, period_1day)
+        result = sky_protocol.get_delegate_list_sky(df, period_1day)
 
-    assert isinstance(rank_list[0]["Date"], date)
-    assert isinstance(sky_list[0]["date"], date)
+    assert isinstance(result.iloc[0]["date"], date)
 
 
-def test_get_delegate_list_sky_multiple_delegates_distinct_names():
-    """Two distinct delegates produce separate (name, date) and (contract, date) entries."""
+def test_get_delegate_list_sky_multiple_delegates_distinct_rows():
+    """Two delegates produce separate (contract, name, sky) entries per day."""
     df = pd.DataFrame([
         {"Delegate Name": "Alice", "Delegate Contract": "0xaaa", "Start Date": "2024-01-01"},
         {"Delegate Name": "Bob", "Delegate Contract": "0xbbb", "Start Date": "2024-01-01"},
@@ -539,12 +535,12 @@ def test_get_delegate_list_sky_multiple_delegates_distinct_names():
     period_1day.end = date(2026, 4, 1)
 
     with patch.object(sky_protocol, "get_all_sky_delegated", return_value=fake_all_sky):
-        sky_list, rank_list = sky_protocol.get_delegate_list_sky(df, period_1day)
+        result = sky_protocol.get_delegate_list_sky(df, period_1day)
 
-    rank_by_name = {r["Delegate"]: r["Total Delegation"] for r in rank_list}
-    assert rank_by_name == {"alice": 1000.0, "bob": 500.0}
-    sky_by_contract = {r["contract"]: r["sky"] for r in sky_list}
-    assert sky_by_contract == {"0xaaa": 1000.0, "0xbbb": 500.0}
+    by_name = dict(zip(result["name"], result["sky"], strict=True))
+    assert by_name == {"alice": 1000.0, "bob": 500.0}
+    by_contract = dict(zip(result["contract"], result["sky"], strict=True))
+    assert by_contract == {"0xaaa": 1000.0, "0xbbb": 500.0}
 
 
 def test_get_delegate_list_sky_passes_cache_max_age_hours_through():
@@ -813,7 +809,7 @@ def test_get_vote_executive_ids_normalizes_supporter_address_case():
 
 
 def test_get_vote_executive_ids_empty_spell_info_leaves_df_unchanged():
-    """No spells → df has no new columns added (but the HTTP call still happens)."""
+    """No spells → df is returned unchanged and the supporters HTTP call is skipped."""
     df = pd.DataFrame([
         {"Delegate Name": "Alice", "Delegate Contract": "0xaaa", "Start Date": "2024-01-01"},
     ])
@@ -821,10 +817,10 @@ def test_get_vote_executive_ids_empty_spell_info_leaves_df_unchanged():
     original_columns = list(df.columns)
 
     with patch("ad_voting_metrics.sky_protocol.get_session") as mock_session:
-        mock_session.return_value.get.return_value = _mock_executive_supporters_response({})
         result = sky_protocol.get_vote_executive_ids([], df, df_sky)
 
     assert list(result.columns) == original_columns
+    mock_session.return_value.get.assert_not_called()
 
 
 # ---------------------------------------------------------------------------

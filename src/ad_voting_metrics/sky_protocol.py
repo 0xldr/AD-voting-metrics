@@ -6,6 +6,7 @@ Owns the close-day vote-status rule (see `determine_vote_status`).
 import itertools
 import logging
 import os
+from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, date, datetime, time, timedelta
 
 import pandas as pd
@@ -34,18 +35,22 @@ SKY_EXECUTIVES_PAGE_SIZE = 100
 # spin without bound. Real runs exit far earlier on empty data.
 SKY_EXECUTIVES_PAGINATION_HARD_CAP = 10_000_000
 
+# Max concurrent voter-list fetches in get_vote_poll_ids. vote.sky.money
+# tolerates this comfortably; raising it gives diminishing returns.
+_POLL_VOTER_FETCH_CONCURRENCY = 8
+
 
 def get_all_sky_delegated(cache_max_age_hours: int | None = None) -> pd.DataFrame:
     """Fetch daily SKY delegations from Dune, indexed on (contract, date).
 
     With cache_max_age_hours set, uses Dune's get_latest_result and reuses
     a cached execution if it's within the threshold; otherwise executes
-    fresh. Useful during developmentto avoid burning Dune credits.
+    fresh. Useful during development to avoid burning Dune credits.
 
     Returns:
         DataFrame indexed on (delegation_contract, dt) with one
         running_total_balance column. delegation_contract is lowercased;
-        dt is a YYYY-MM-DD string.
+        dt is a datetime.date.
 
     Raises:
         RuntimeError: if DUNE_API_KEY is unset.
@@ -81,15 +86,14 @@ def get_all_sky_delegated(cache_max_age_hours: int | None = None) -> pd.DataFram
 
 def get_delegate_list_sky(
     df: pd.DataFrame, period: MonthPeriod, cache_max_age_hours: int | None = None
-) -> tuple[list, list]:
-    """Build per-day SKY-delegation rows for each delegate across the period.
+) -> pd.DataFrame:
+    """Build one row per (delegate, day) with SKY balance for the period.
 
     Missing daily rows from Dune are filled with zero.
 
     Returns:
-        A (delegate_list_sky, delegate_list_rank) tuple where:
-          - delegate_list_sky is keyed by (contract, date) with daily SKY balance
-          - delegate_list_rank is keyed by (name, date) with totals for ranking
+        DataFrame with columns: contract, name, date, sky. One row per
+        (delegate, day) covering every day in the period.
     """
     all_sky_delegated = get_all_sky_delegated(cache_max_age_hours=cache_max_age_hours)
 
@@ -108,19 +112,12 @@ def get_delegate_list_sky(
         .reset_index()
     )
 
-    delegate_list_sky: list[dict] = []
-    delegate_list_rank: list[dict] = []
-    for record in filled.to_dict(orient="records"):
-        contract = record["delegation_contract"]
-        day = record["dt"]
-        sky = float(record["running_total_balance"])
-        delegate_list_sky.append({"contract": contract, "sky": sky, "date": day})
-        delegate_list_rank.append({
-            "Delegate": names_by_contract[contract],
-            "Total Delegation": round(sky, 2),
-            "Date": day,
-        })
-    return delegate_list_sky, delegate_list_rank
+    return pd.DataFrame({
+        "contract": filled["delegation_contract"],
+        "name": filled["delegation_contract"].map(names_by_contract),
+        "date": filled["dt"],
+        "sky": filled["running_total_balance"],
+    })
 
 
 def get_poll_ids(period: MonthPeriod) -> list[dict]:
@@ -223,6 +220,32 @@ def determine_vote_status(
     return "No"
 
 
+def _build_sky_lookup(df_sky: pd.DataFrame) -> dict[tuple[str, date], float]:
+    """Materialize df_sky into a (contract, date) -> sky-balance dict for O(1) lookup.
+
+    Returns:
+        Mapping of (contract, date) to that day's SKY balance.
+    """
+    return {(r["contract"], r["date"]): float(r["sky"]) for r in df_sky.to_dict(orient="records")}
+
+
+def _fetch_poll_voters(poll: dict) -> tuple[int, set[str]]:
+    """Fetch the voter address set for one poll.
+
+    Returns:
+        Tuple of (pollId, lowercased voter addresses).
+    """
+    response = get_session().get(
+        f"{SKY_POLL_ID_URL}/{poll['pollId']}",
+        params={"network": "mainnet"},
+        headers=HEADERS,
+        timeout=HTTP_TIMEOUT,
+    )
+    response.raise_for_status()
+    data = response.json()
+    return poll["pollId"], {vote["voter"].lower() for vote in data.get("votesByAddress", [])}
+
+
 def get_vote_poll_ids(
     poll_info: list[dict], df: pd.DataFrame, df_sky: pd.DataFrame, current_datetime: datetime
 ) -> pd.DataFrame:
@@ -236,26 +259,26 @@ def get_vote_poll_ids(
     Returns:
         The same df, mutated in place with one new column per poll.
     """
-    sky_lookup: dict[tuple[str, date], float] = {
-        (r["contract"], r["date"]): float(r["sky"]) for r in df_sky.to_dict(orient="records")
-    }
+    if not poll_info:
+        return df
+
+    sky_lookup = _build_sky_lookup(df_sky)
+    first_dates_by_contract = dict(
+        zip(df["Delegate Contract"], df["Start Date"].map(date.fromisoformat), strict=True),
+    )
+
+    with ThreadPoolExecutor(max_workers=_POLL_VOTER_FETCH_CONCURRENCY) as executor:
+        voter_sets = dict(executor.map(_fetch_poll_voters, poll_info))
 
     for poll in poll_info:
-        vote_statuses = []
-        base_url = f"{SKY_POLL_ID_URL}/{poll['pollId']}?network=mainnet"
-        response = get_session().get(base_url, headers=HEADERS, timeout=HTTP_TIMEOUT)
-
-        response.raise_for_status()
-        data = response.json()
-        voter_set = {voter["voter"].lower() for voter in data.get("votesByAddress", [])}
-
+        voter_set = voter_sets[poll["pollId"]]
         start_date = poll["startDate"]
         end_date = poll["endDate"]
         poll_window_days = [start_date + timedelta(days=i) for i in range((end_date - start_date).days + 1)]
 
-        for _index, row in df.iterrows():
+        vote_statuses = []
+        for _, row in df.iterrows():
             address = row["Delegate Contract"]
-            first_delegate_date = date.fromisoformat(row["Start Date"])
             delegate_voted = address in voter_set
 
             sky_by_date: dict[date, float] = {
@@ -265,7 +288,7 @@ def get_vote_poll_ids(
                 sky_by_date, end_date, delegate_voted=delegate_voted, current_datetime=current_datetime
             )
 
-            if first_delegate_date > end_date:
+            if first_dates_by_contract[address] > end_date:
                 status = "Not Started"
 
             vote_statuses.append(status)
@@ -281,31 +304,29 @@ def get_executive_ids(period: MonthPeriod) -> list[dict]:
     Returns:
         List of dicts with address, startDate (as `date`), and title.
     """
-    spell_info = []
-    start = 0
-    limit = SKY_EXECUTIVES_PAGE_SIZE
-    while start < SKY_EXECUTIVES_PAGINATION_HARD_CAP:
-        base_url = f"{SKY_EXECUTIVE_URL}?start={start}&limit={limit}"
-        response = get_session().get(base_url, headers=HEADERS, timeout=HTTP_TIMEOUT)
-
+    spell_info: list[dict] = []
+    for start in itertools.count(0, SKY_EXECUTIVES_PAGE_SIZE):
+        if start >= SKY_EXECUTIVES_PAGINATION_HARD_CAP:
+            break
+        response = get_session().get(
+            SKY_EXECUTIVE_URL,
+            params={"start": start, "limit": SKY_EXECUTIVES_PAGE_SIZE},
+            headers=HEADERS,
+            timeout=HTTP_TIMEOUT,
+        )
         response.raise_for_status()
-
         data = response.json()
-
         if not data:
             break
 
         for execute in data:
             date_execute = datetime.fromisoformat(execute["date"]).date()
-
             if period.start <= date_execute <= period.end:
                 spell_info.append({
                     "address": execute["address"].lower(),
                     "startDate": date_execute,
                     "title": execute["title"],
                 })
-
-        start += limit
 
     return spell_info
 
@@ -314,24 +335,30 @@ def get_vote_executive_ids(spell_info: list[dict], df: pd.DataFrame, df_sky: pd.
     """Add one column per spell to df, populated with each delegate's vote status.
 
     Returns:
-        The same df, mutated in place with one new column per spell.
+        The same df, mutated in place with one new column per spell. Returns
+        df unchanged (and skips the supporters HTTP call) when spell_info is empty.
     """
-    base_url = f"{SKY_EXECUTIVE_SUPPORTERS_URL}?network=mainnet"
-    response = get_session().get(base_url, headers=HEADERS, timeout=HTTP_TIMEOUT)
-    response.raise_for_status()
-    data = response.json()
+    if not spell_info:
+        return df
 
-    sky_lookup: dict[tuple[str, date], float] = {
-        (r["contract"], r["date"]): float(r["sky"]) for r in df_sky.to_dict(orient="records")
-    }
+    response = get_session().get(
+        SKY_EXECUTIVE_SUPPORTERS_URL,
+        params={"network": "mainnet"},
+        headers=HEADERS,
+        timeout=HTTP_TIMEOUT,
+    )
+    response.raise_for_status()
+    supporters_by_spell = response.json()
+
+    sky_lookup = _build_sky_lookup(df_sky)
 
     for spell in spell_info:
         vote_statuses = []
         spell_address = spell["address"]
         start_date = spell["startDate"]
-        supporter_set = {s["address"].lower() for s in data.get(spell_address, [])}
+        supporter_set = {s["address"].lower() for s in supporters_by_spell.get(spell_address, [])}
 
-        for _index, row in df.iterrows():
+        for _, row in df.iterrows():
             address = row["Delegate Contract"]
             first_delegate_date = date.fromisoformat(row["Start Date"])
 
