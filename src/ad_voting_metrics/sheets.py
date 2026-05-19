@@ -530,19 +530,39 @@ def _apply_cross_reference_rule(participation: str) -> str:
     return ""
 
 
-def _build_comm_row_for_poll(
-    poll_id_str: str,
-    start_date_iso: str,
-    end_date_iso: str,
-    title: str,
-    header_len: int,
+def _compute_delegate_defaults(
+    poll_id: object,
     delegate_col_index: dict[str, int],
     df_by_delegate: dict[str, pd.Series],
     current_roster: set[str],
-    poll_id: object,
+) -> dict[int, str]:
+    """Return {col_idx: default cell value} for in-roster delegate columns.
+
+    Out-of-roster columns are omitted so their cells stay blank.
+
+    Returns:
+        Mapping of column index to default cell value.
+    """
+    defaults: dict[int, str] = {}
+    for col_name, col_idx in delegate_col_index.items():
+        if col_name not in current_roster:
+            continue
+        p_status = str(df_by_delegate[col_name].get(poll_id, ""))
+        defaults[col_idx] = _apply_cross_reference_rule(p_status)
+    return defaults
+
+
+def _build_comm_row_for_poll(
+    metadata_cells: tuple[str, str, str, str],
+    header_len: int,
+    defaults: dict[int, str],
     existing_row: list[str] | None,
 ) -> list[str]:
     """Build one merged Communication Master row.
+
+    metadata_cells is (poll_id_str, start_date_iso, end_date_iso, title)
+    and is written to columns 0-3 of the row. defaults maps column index
+    to default cell value for in-roster delegate columns.
 
     For an existing row, blanks are filled with current metadata or
     defaults; non-blank cells (operator edits) are preserved. For a new
@@ -552,16 +572,9 @@ def _build_comm_row_for_poll(
     Returns:
         A row matching the current header length.
     """
-    defaults: dict[int, str] = {}
-    for col_name, col_idx in delegate_col_index.items():
-        if col_name not in current_roster:
-            continue
-        p_status = str(df_by_delegate[col_name].get(poll_id, ""))
-        defaults[col_idx] = _apply_cross_reference_rule(p_status)
-
     if existing_row is not None:
         row = list(existing_row)
-        for i, current_val in enumerate([poll_id_str, start_date_iso, end_date_iso, title]):
+        for i, current_val in enumerate(metadata_cells):
             if _isblank(row[i]):
                 row[i] = current_val
         for col_idx, default_val in defaults.items():
@@ -570,10 +583,8 @@ def _build_comm_row_for_poll(
         return row
 
     row = [""] * header_len
-    row[0] = poll_id_str
-    row[1] = start_date_iso
-    row[2] = end_date_iso
-    row[3] = title
+    for i, val in enumerate(metadata_cells):
+        row[i] = val
     for col_idx, default_val in defaults.items():
         row[col_idx] = default_val
     return row
@@ -689,16 +700,11 @@ def write_communication_master(
         end_date_iso = _coerce_date(metadata.get("endDate")) if metadata else ""
         title = str(metadata.get("title", "")) if metadata else ""
 
+        defaults = _compute_delegate_defaults(poll_id, delegate_col_index, df_by_delegate, current_roster)
         merged_rows[poll_id_str] = _build_comm_row_for_poll(
-            poll_id_str=poll_id_str,
-            start_date_iso=start_date_iso,
-            end_date_iso=end_date_iso,
-            title=title,
+            metadata_cells=(poll_id_str, start_date_iso, end_date_iso, title),
             header_len=len(header),
-            delegate_col_index=delegate_col_index,
-            df_by_delegate=df_by_delegate,
-            current_roster=current_roster,
-            poll_id=poll_id,
+            defaults=defaults,
             existing_row=merged_rows.get(poll_id_str),
         )
 

@@ -241,13 +241,16 @@ def _build_metrics_input(
 
 def _compute_daily_results(
     period: MonthPeriod,
-    window_start: date,
-    window_end: date,
+    window: tuple[date, date],
+    *,
     delegates: list[Delegate],
     daily_ranks_by_day: dict[date, dict[str, int]],
     metrics_input: dict[str, DelegateMetricsInput],
 ) -> list[DailyEligibility]:
     """Compute eligibility for each day in the period.
+
+    window is the (start, end) of the trailing metrics window, applied
+    identically on each day.
 
     Returns:
         List of DailyEligibility, one per day in period.start..period.end inclusive.
@@ -258,8 +261,7 @@ def _compute_daily_results(
         daily_results.append(
             compute_daily_eligibility(
                 day=current,
-                window_start=window_start,
-                window_end=window_end,
+                window=window,
                 delegates=delegates,
                 daily_ranks=daily_ranks_by_day.get(current, {}),
                 metrics_input=metrics_input,
@@ -354,13 +356,8 @@ def _run_fetch(args: argparse.Namespace) -> None:
     entry = build_entry(
         period=period,
         yaml_path=YAML_PATH,
-        yaml_config=roster_result.yaml_config,
-        active_delegates=delegates,
-        drift_warnings=drift_warnings,
-        dune_query_id=sky.DUNE_SKY_QUERY_ID,
-        dune_cache_max_age_hours=args.cache_hours,
-        api_delegate_count=roster_result.api_delegate_count,
-        api_fetch_succeeded=roster_result.api_fetch_succeeded,
+        roster=roster_result,
+        dune=(sky.DUNE_SKY_QUERY_ID, args.cache_hours),
         output_files=output_files,
     )
     write_entry(RECONCILIATION_LOG_PATH, period, entry)
@@ -436,11 +433,10 @@ def _run_finalize(args: argparse.Namespace) -> None:
         "compute eligibility",
         _compute_daily_results,
         period,
-        window_start,
-        window_end,
-        delegates,
-        daily_ranks_by_day,
-        metrics_input,
+        (window_start, window_end),
+        delegates=delegates,
+        daily_ranks_by_day=daily_ranks_by_day,
+        metrics_input=metrics_input,
     )
 
     final_metrics: dict[str, tuple[float | None, float | None]] = {
@@ -471,13 +467,8 @@ def _run_finalize(args: argparse.Namespace) -> None:
     entry = build_entry(
         period=period,
         yaml_path=YAML_PATH,
-        yaml_config=roster_result.yaml_config,
-        active_delegates=delegates,
-        drift_warnings=drift_warnings,
-        dune_query_id=sky.DUNE_SKY_QUERY_ID,
-        dune_cache_max_age_hours=None,
-        api_delegate_count=roster_result.api_delegate_count,
-        api_fetch_succeeded=roster_result.api_fetch_succeeded,
+        roster=roster_result,
+        dune=(sky.DUNE_SKY_QUERY_ID, None),
         output_files=[Path(f"workbook:{sheets.compensation_tab_title(period)}")],
     )
     write_entry(RECONCILIATION_LOG_PATH, period, entry)

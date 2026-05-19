@@ -21,7 +21,7 @@ from pathlib import Path
 from typing import TypedDict
 
 from .period import MonthPeriod
-from .roster import Delegate, DelegatesConfig
+from .roster import RosterResult
 
 logger = logging.getLogger(__name__)
 
@@ -56,22 +56,18 @@ def build_entry(
     *,
     period: MonthPeriod,
     yaml_path: Path,
-    yaml_config: DelegatesConfig,
-    active_delegates: list[Delegate],
-    drift_warnings: list[str],
-    dune_query_id: int,
-    dune_cache_max_age_hours: int | None,
-    api_delegate_count: int,
-    api_fetch_succeeded: bool,
+    roster: RosterResult,
+    dune: tuple[int, int | None],
     output_files: list[Path],
 ) -> ReconciliationEntry:
     """Construct a reconciliation log entry from this run's facts.
 
-    dune_cache_max_age_hours is None when Dune was run fresh, or an
-    integer N when --cache-hours N was used.
+    `dune` is (query_id, cache_max_age_hours). cache_max_age_hours is
+    None when Dune was run fresh, or an integer N when --cache-hours N
+    was used.
 
-    api_delegate_count is 0 when api_fetch_succeeded is False (the
-    API call raised and was soft-failed).
+    `roster.api_delegate_count` is 0 when api_fetch_succeeded is False
+    (the API call raised and was soft-failed).
 
     All fields are JSON-serializable. The keyword-only signature reflects
     the call pattern in cli.py and prevents accidental positional calls.
@@ -79,9 +75,11 @@ def build_entry(
     Returns:
         A populated ReconciliationEntry.
     """
+    yaml_config = roster.yaml_config
     yaml_active = sum(1 for d in yaml_config.delegates if d.end_date is None)
     yaml_exited = sum(1 for d in yaml_config.delegates if d.end_date is not None)
 
+    dune_query_id, dune_cache_max_age_hours = dune
     dune_execution_mode = "fresh" if dune_cache_max_age_hours is None else "cached"
 
     return {
@@ -93,10 +91,10 @@ def build_entry(
         "yaml_total_delegates": len(yaml_config.delegates),
         "yaml_active_delegates": yaml_active,
         "yaml_exited_delegates": yaml_exited,
-        "api_delegate_count": api_delegate_count,
-        "api_fetch_succeeded": api_fetch_succeeded,
-        "active_during_period": len(active_delegates),
-        "drift_warnings": list(drift_warnings),
+        "api_delegate_count": roster.api_delegate_count,
+        "api_fetch_succeeded": roster.api_fetch_succeeded,
+        "active_during_period": len(roster.active_delegates),
+        "drift_warnings": list(roster.drift_warnings),
         "dune_query_id": dune_query_id,
         "dune_execution_mode": dune_execution_mode,
         "dune_cache_max_age_hours": dune_cache_max_age_hours,

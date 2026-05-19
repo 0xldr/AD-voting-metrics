@@ -82,49 +82,40 @@ class _PartialResult:
     yaml_level: int | None
 
 
-def compute_daily_eligibility(
-    *,
+def _validate_inputs_present(
     day: date,
-    window_start: date,
-    window_end: date,
-    delegates: Sequence[Delegate],
+    active_names: list[str],
     daily_ranks: Mapping[str, int],
     metrics_input: Mapping[str, DelegateMetricsInput],
-) -> DailyEligibility:
-    """Compute eligibility and slot assignment for every active delegate on `day`.
-
-    `window_start` and `window_end` bound the trailing metric window.
-    For a finalize run the same window is usually passed for every day
-    in the period - the 6-month metric is a track record, not a
-    per-day rolling calculation.
-
-    Active delegate are those where `is_active_during(day, day)`
-    holds. Inactive delegates are silently excluded from the result,
-    even if present in `daily_ranks` or `metrics_input` - callers may
-    reuse one metrics dict across many days. Every active delegate
-    must have both a rank and a metrics entry.
-
-    Returns:
-        DailyEligibility with one entry per active delegate.
+) -> None:
+    """Raise ValueError if any active delegate lacks a rank or metrics entry.
 
     Raises:
-        ValueError: if an active delegate is missing from daily_ranks
-            or metrics_input, or if a tie crosses the L3 slot cutoff.
+        ValueError: when any active delegate has no rank or no metrics entry.
     """
-    active_delegates = [d for d in delegates if d.is_active_during(day, day)]
-    active_names = [d.name for d in active_delegates]
-
     missing_ranks = [n for n in active_names if n not in daily_ranks]
     if missing_ranks:
         msg = f"daily_ranks is missing for active delegates on {day}: {missing_ranks}"
         raise ValueError(msg)
-
     missing_metrics = [n for n in active_names if n not in metrics_input]
     if missing_metrics:
         msg = f"metrics_input is missing entries for active delegates on {day}: {missing_metrics}"
         raise ValueError(msg)
 
-    # First pass: compute metrics + eligibility + provisional level (L1/L2 only)
+
+def _compute_partial_results(
+    day: date,
+    window: tuple[date, date],
+    active_delegates: Sequence[Delegate],
+    daily_ranks: Mapping[str, int],
+    metrics_input: Mapping[str, DelegateMetricsInput],
+) -> dict[str, _PartialResult]:
+    """Compute metrics + provisional yaml_level for each active delegate.
+
+    Returns:
+        Mapping of delegate name to _PartialResult.
+    """
+    window_start, window_end = window
     per_delegate_partial: dict[str, _PartialResult] = {}
     for delegate in active_delegates:
         m = metrics_input[delegate.name]
@@ -149,21 +140,30 @@ def compute_daily_eligibility(
             eligible=eligible,
             yaml_level=delegate.level_at(day),
         )
+    return per_delegate_partial
 
-    # L3 slot capacity: total minus L1/L2 governance assignments
+
+def _assign_l3_slots(
+    day: date,
+    per_delegate_partial: Mapping[str, _PartialResult],
+) -> tuple[int, set[str]]:
+    """Determine L3 slot capacity and which candidates get slots.
+
+    Returns:
+        (l3_slots_available, set of delegate names assigned an L3 slot).
+
+    Raises:
+        ValueError: if a rank tie spans the L3 slot cutoff.
+    """
     l1_count = sum(1 for r in per_delegate_partial.values() if r.yaml_level == 1)
     l2_count = sum(1 for r in per_delegate_partial.values() if r.yaml_level == 2)  # noqa: PLR2004
     l3_slots_available = max(TOTAL_SLOTS - l1_count - l2_count, 0)
 
-    # L3 candidates: active, eligible, no YAML-assigned level. Sort by rank asc
     l3_candidates = sorted(
         ((name, r) for name, r in per_delegate_partial.items() if r.yaml_level is None and r.eligible),
         key=lambda item: item[1].rank,
     )
 
-    # Tie-at-cutoff detection. Only matters when more candidates than slots:
-    # a tie within the granted set is fine (everyone tied gets a slot); a
-    # tie spanning the cutoff isn't (script can't decide).
     if 0 < l3_slots_available < len(l3_candidates):
         last_in_rank = l3_candidates[l3_slots_available - 1][1].rank
         first_out_rank = l3_candidates[l3_slots_available][1].rank
@@ -176,9 +176,43 @@ def compute_daily_eligibility(
             )
             raise ValueError(msg)
 
-    l3_assigned_names = {name for name, _ in l3_candidates[:l3_slots_available]}
+    return l3_slots_available, {name for name, _ in l3_candidates[:l3_slots_available]}
 
-    # Second pass: materialize final results with assigned_level filled in.
+
+def compute_daily_eligibility(
+    *,
+    day: date,
+    window: tuple[date, date],
+    delegates: Sequence[Delegate],
+    daily_ranks: Mapping[str, int],
+    metrics_input: Mapping[str, DelegateMetricsInput],
+) -> DailyEligibility:
+    """Compute eligibility and slot assignment for every active delegate on `day`.
+
+    `window` is (start, end) bounding the trailing metric window.
+    For a finalize run the same window is usually passed for every day
+    in the period - the 6-month metric is a track record, not a
+    per-day rolling calculation.
+
+    Active delegate are those where `is_active_during(day, day)`
+    holds. Inactive delegates are silently excluded from the result,
+    even if present in `daily_ranks` or `metrics_input` - callers may
+    reuse one metrics dict across many days. Every active delegate
+    must have both a rank and a metrics entry. ValueError propagates
+    from validation (missing rank/metrics) or from L3 slot assignment
+    (a rank tie spanning the slot cutoff).
+
+    Returns:
+        DailyEligibility with one entry per active delegate.
+    """
+    active_delegates = [d for d in delegates if d.is_active_during(day, day)]
+    _validate_inputs_present(day, [d.name for d in active_delegates], daily_ranks, metrics_input)
+
+    per_delegate_partial = _compute_partial_results(
+        day, window, active_delegates, daily_ranks, metrics_input
+    )
+    l3_slots_available, l3_assigned_names = _assign_l3_slots(day, per_delegate_partial)
+
     per_delegate: dict[str, DelegateEligibility] = {}
     for name, r in per_delegate_partial.items():
         if r.yaml_level is not None:
