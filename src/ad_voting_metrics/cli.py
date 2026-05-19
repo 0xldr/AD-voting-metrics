@@ -19,7 +19,7 @@ import pandas as pd
 from dotenv import load_dotenv
 
 from . import sheets
-from . import sky_dao as sky
+from . import sky_protocol as sky
 from .compensation import CompensationConfig, PeriodCompensation, compute_period_compensation
 from .eligibility import DailyEligibility, DelegateMetricsInput, compute_daily_eligibility
 from .period import MonthPeriod
