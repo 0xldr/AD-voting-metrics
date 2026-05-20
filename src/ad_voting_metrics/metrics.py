@@ -54,6 +54,11 @@ from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from datetime import date
 
+# Spell-vote default for the (delegate participated) + (not yet verified)
+# case. Shared across sheets, sky_executive, and sky_executive_onchain so
+# the string only lives in one place.
+PENDING_VERIFICATION = "Pending verification"
+
 # Status sets. Frozensets for 0(1) membership and immutability - adding
 # a new status (e.g. a new exclusion category) means updating one of these.
 PARTICIPATED = frozenset({"Yes"})
@@ -66,7 +71,7 @@ DISCOUNTED = frozenset({
     "Voting Open",
     "No Delegated SKY",
     "Not included",
-    "Pending verification",
+    PENDING_VERIFICATION,
     "Did not vote",
 })
 

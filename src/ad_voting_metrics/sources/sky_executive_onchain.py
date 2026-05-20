@@ -23,6 +23,9 @@ import pandas as pd
 from eth_utils.crypto import keccak
 from web3 import Web3
 from web3.exceptions import BadFunctionCallOutput, ContractLogicError, Web3RPCError
+from web3.types import BlockData, FilterParams, HexStr
+
+from ad_voting_metrics.metrics import PENDING_VERIFICATION
 
 logger = logging.getLogger(__name__)
 
@@ -41,7 +44,11 @@ SECONDS_PER_BLOCK = 12
 ONE_DAY_BLOCKS = 86_400 // SECONDS_PER_BLOCK
 
 # `Vote(address,bytes32)` event signature topic.
-VOTE_EVENT_TOPIC = "0x" + keccak(text="Vote(address,bytes32)").hex()
+VOTE_EVENT_TOPIC = HexStr("0x" + keccak(text="Vote(address,bytes32)").hex())
+
+# Sentinel returned by `slates(slate, i)` for some chiefs that don't revert
+# on out-of-bounds access; treated as end-of-list.
+ZERO_ADDRESS = "0x" + "0" * 40
 
 # Minimal ABI: only the `slates` getter, used for slate -> address-list resolution.
 _CHIEF_SLATES_ABI = [
@@ -59,8 +66,6 @@ _CHIEF_SLATES_ABI = [
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 DEFAULT_SLATE_CACHE_PATH = REPO_ROOT / "output_data" / "slate_cache.json"
-
-PENDING_VERIFICATION = "Pending verification"
 
 
 # ---------------------------------------------------------------------------
@@ -93,8 +98,23 @@ def _save_slate_cache(cache: dict[str, list[str]], path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
+def _as_block(block: BlockData) -> dict[str, Any]:
+    """Narrow a web3 BlockData TypedDict to a plain dict for runtime access.
+
+    Returns:
+        The same mapping, typed as dict[str, Any].
+    """
+    return cast("dict[str, Any]", block)
+
+
 def _resolve_slate(w3: Web3, slate_hash: str) -> list[str]:
     """Walk chief.slates(slate, i) until it reverts; return the address list.
+
+    Each exception in the catch corresponds to one end-of-list signal:
+      - ContractLogicError: Solidity 0.8+ panic on out-of-bounds index
+      - BadFunctionCallOutput: empty return data (older chiefs revert this way)
+      - Web3RPCError: provider rejected the call
+      - ValueError: web3 raised on undecodable return data
 
     Returns:
         Lowercased executive addresses, in slate order. Empty list if
@@ -112,7 +132,7 @@ def _resolve_slate(w3: Web3, slate_hash: str) -> list[str]:
             addr: str = contract.functions.slates(slate_bytes, i).call()
         except (BadFunctionCallOutput, ContractLogicError, Web3RPCError, ValueError):
             break
-        if int(addr, 16) == 0:
+        if addr.lower() == ZERO_ADDRESS:
             break
         addresses.append(addr.lower())
     return addresses
@@ -128,7 +148,7 @@ def _approx_block_from_date(w3: Web3, target: date) -> int:
     Returns:
         A non-negative block number to start the log search from.
     """
-    latest = cast("dict[str, Any]", w3.eth.get_block("latest"))
+    latest = _as_block(w3.eth.get_block("latest"))
     latest_ts: int = latest["timestamp"]
     latest_number: int = latest["number"]
     target_ts = int(datetime.combine(target, datetime.min.time(), tzinfo=UTC).timestamp())
@@ -137,13 +157,14 @@ def _approx_block_from_date(w3: Web3, target: date) -> int:
     return max(0, latest_number - blocks_back)
 
 
-def _voter_topic(voter_address: str) -> str:
+def _voter_topic(voter_address: str) -> HexStr:
     """Pad a 20-byte address into a 32-byte log topic.
 
     Returns:
-        Lowercased hex string with the 0x prefix.
+        Lowercased hex string with the 0x prefix, typed as HexStr so it
+        slots into web3's FilterParams.topics without a cast.
     """
-    return "0x" + voter_address.removeprefix("0x").lower().zfill(64)
+    return HexStr("0x" + voter_address.removeprefix("0x").lower().zfill(64))
 
 
 def _fetch_vote_events(
@@ -159,7 +180,7 @@ def _fetch_vote_events(
     Returns:
         List of (slate_hash, event_date) tuples, one per Vote log.
     """
-    filter_params: Any = {
+    filter_params: FilterParams = {
         "fromBlock": from_block,
         "toBlock": "latest",
         "address": Web3.to_checksum_address(CHIEF_ADDRESS),
@@ -174,8 +195,7 @@ def _fetch_vote_events(
         slate = "0x" + slate_hex.removeprefix("0x").lower()
         block_number = log["blockNumber"]
         if block_number not in block_ts_cache:
-            block = cast("dict[str, Any]", w3.eth.get_block(block_number))
-            block_ts_cache[block_number] = block["timestamp"]
+            block_ts_cache[block_number] = _as_block(w3.eth.get_block(block_number))["timestamp"]
         event_date = datetime.fromtimestamp(block_ts_cache[block_number], tz=UTC).date()
         events.append((slate, event_date))
     return events
@@ -208,21 +228,15 @@ def _identify_pending_pairs(
 
 def _gather_events(
     w3: Web3,
-    df: pd.DataFrame,
-    pending: dict[str, list[int]],
+    voters: set[str],
     from_block: int,
 ) -> dict[str, list[tuple[str, date]]]:
-    """Fetch chief Vote events for every delegate that has a Pending cell.
+    """Fetch chief Vote events for each voter.
 
     Returns:
         voter address -> list of (slate, event_date) tuples.
     """
-    voters_to_check: set[str] = {
-        str(df.at[idx, "Delegate Contract"])  # noqa: PD008 — .at is correct for scalar access
-        for indices in pending.values()
-        for idx in indices
-    }
-    return {voter: _fetch_vote_events(w3, voter, from_block) for voter in voters_to_check}
+    return {voter: _fetch_vote_events(w3, voter, from_block) for voter in voters}
 
 
 def _delegate_voted_for_spell(
@@ -240,6 +254,31 @@ def _delegate_voted_for_spell(
         if spell_address in slate_cache.get(slate, []):
             return True
     return False
+
+
+def _flip_eligible_cells(
+    df: pd.DataFrame,
+    spell_info: list[dict],
+    pending: dict[str, list[int]],
+    events_by_voter: dict[str, list[tuple[str, date]]],
+    slate_cache: dict[str, list[str]],
+) -> int:
+    """Mutate df: set Pending cells to "Yes" where a slate confirms the vote.
+
+    Returns:
+        The count of cells flipped.
+    """
+    flipped = 0
+    for spell in spell_info:
+        spell_addr = spell["address"]
+        start = spell["startDate"]
+        deadline = start + timedelta(days=VOTE_DEADLINE_DAYS)
+        for idx in pending.get(spell_addr, []):
+            voter = str(df.at[idx, "Delegate Contract"])  # noqa: PD008
+            if _delegate_voted_for_spell(events_by_voter.get(voter, []), spell_addr, start, deadline, slate_cache):
+                df.at[idx, spell_addr] = "Yes"  # noqa: PD008
+                flipped += 1
+    return flipped
 
 
 def resolve_pending_executive_votes(
@@ -291,22 +330,18 @@ def resolve_pending_executive_votes(
     from_block = _approx_block_from_date(w3, earliest_start)
     logger.info("Verifying executive votes on-chain from block %d onwards", from_block)
 
-    events_by_voter = _gather_events(w3, df, pending, from_block)
+    voters: set[str] = {
+        str(df.at[idx, "Delegate Contract"])  # noqa: PD008 — .at is correct for scalar access
+        for indices in pending.values()
+        for idx in indices
+    }
+    events_by_voter = _gather_events(w3, voters, from_block)
 
     seen_slates = {slate for events in events_by_voter.values() for slate, _ in events}
     for slate in seen_slates - slate_cache.keys():
         slate_cache[slate] = _resolve_slate(w3, slate)
 
-    flipped = 0
-    for spell in spell_info:
-        spell_addr = spell["address"]
-        start = spell["startDate"]
-        deadline = start + timedelta(days=VOTE_DEADLINE_DAYS)
-        for idx in pending.get(spell_addr, []):
-            voter = str(df.at[idx, "Delegate Contract"])  # noqa: PD008
-            if _delegate_voted_for_spell(events_by_voter.get(voter, []), spell_addr, start, deadline, slate_cache):
-                df.at[idx, spell_addr] = "Yes"  # noqa: PD008
-                flipped += 1
+    flipped = _flip_eligible_cells(df, spell_info, pending, events_by_voter, slate_cache)
 
     if len(slate_cache) > initial_cache_size:
         _save_slate_cache(slate_cache, cache_path)

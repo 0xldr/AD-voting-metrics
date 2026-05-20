@@ -23,7 +23,7 @@ from google.oauth2.service_account import Credentials
 from gspread_dataframe import get_as_dataframe, set_with_dataframe
 
 from .compensation import CompensationConfig
-from .metrics import DISCOUNTED, NOT_PARTICIPATED, PARTICIPATED
+from .metrics import DISCOUNTED, NOT_PARTICIPATED, PARTICIPATED, PENDING_VERIFICATION
 from .period import MonthPeriod
 
 if TYPE_CHECKING:
@@ -505,7 +505,6 @@ def write_participation_raw_data(
 
 
 COMMUNICATION_MASTER_TAB_TITLE = "Communication Master"
-COMMUNICATION_PENDING_DEFAULT = "Pending verification"
 
 
 def _apply_cross_reference_rule(participation: str) -> str:
@@ -515,7 +514,7 @@ def _apply_cross_reference_rule(participation: str) -> str:
     if participation in DISCOUNTED:
         return participation
     if participation in PARTICIPATED:
-        return COMMUNICATION_PENDING_DEFAULT
+        return PENDING_VERIFICATION
     return ""
 
 
