@@ -15,6 +15,7 @@ dependencies = [
     "pyyaml>=6.0,<7",
     "dune-client>=1.10,<2",
     "gspread>=6.0,<7",
+    "gspread-dataframe>=4.0,<5",
     "google-auth>=2.0,<3",
 ]
 
@@ -162,6 +163,8 @@ ignore = [
     "RUF069",  # float equality fine in tests; values are exact, not approximations
     "S108",    # /tmp paths in tests are not a real risk
     "PLC2701", # tests legitimately exercise private helpers
+    "DOC",     # docstring sections (returns/yields) not required on test helpers
+    "PLC1901", # `== ""` is clearer than implicit-falsiness in assertions
     ]
 
 [tool.ruff.lint.pydocstyle]
@@ -209,3 +212,7 @@ warn_unused_ignores = true
 warn_return_any = true
 strict_equality = true
 check_untyped_defs = true
+
+[[tool.mypy.overrides]]
+module = ["gspread_dataframe"]
+ignore_missing_imports = true

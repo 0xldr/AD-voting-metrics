@@ -15,6 +15,7 @@ dependencies = [
     { name = "dune-client" },
     { name = "google-auth" },
     { name = "gspread" },
+    { name = "gspread-dataframe" },
     { name = "pandas" },
     { name = "pydantic" },
     { name = "python-dotenv" },
@@ -38,6 +39,7 @@ requires-dist = [
     { name = "dune-client", specifier = ">=1.10,<2" },
     { name = "google-auth", specifier = ">=2.0,<3" },
     { name = "gspread", specifier = ">=6.0,<7" },
+    { name = "gspread-dataframe", specifier = ">=4.0,<5" },
     { name = "pandas", specifier = ">=2.2,<3" },
     { name = "pydantic", specifier = ">=2.0,<3" },
     { name = "python-dotenv", specifier = ">=1.2,<2" },
@@ -658,6 +660,20 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/91/83/42d1d813822ed016d77aabadc99b09de3b5bd68532fd6bae23fd62347c41/gspread-6.2.1.tar.gz", hash = "sha256:2c7c99f7c32ebea6ec0d36f2d5cbe8a2be5e8f2a48bde87ad1ea203eff32bd03", size = 82590 }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/27/76/563fb20dedd0e12794d9a12cfe0198458cc0501fdc7b034eee2166d035d5/gspread-6.2.1-py3-none-any.whl", hash = "sha256:6d4ec9f1c23ae3c704a9219026dac01f2b328ac70b96f1495055d453c4c184db", size = 59977 },
+]
+
+[[package]]
+name = "gspread-dataframe"
+version = "4.0.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "gspread" },
+    { name = "pandas" },
+    { name = "six" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/b4/bc/82a1a8a850468b5db7f894f2f73f690a927a5bf59a67581317c00c0a86d8/gspread-dataframe-4.0.0.tar.gz", hash = "sha256:5ca5493478ecae49b833664a06bac8e17b5b4ed0bdf77f551c948f30545860e6", size = 27400 }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/c9/2f/ffb71b19208cf3d3e1e1323716de07bdb46e24c850f2c5627cb8157d9687/gspread_dataframe-4.0.0-py2.py3-none-any.whl", hash = "sha256:19a3c6cd95bf85f8d6c3657227bb921ef36110174d365cc576defe4ed45b6f7d", size = 9046 },
 ]
 
 [[package]]

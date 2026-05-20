@@ -8,7 +8,7 @@ import gspread
 import pandas as pd
 import pytest
 
-from ad_voting_metrics import pipeline
+from ad_voting_metrics import pipeline, sheets
 from ad_voting_metrics.compensation import CompensationConfig, PeriodCompensation
 from ad_voting_metrics.period import MonthPeriod
 from ad_voting_metrics.pipeline import (
@@ -20,6 +20,22 @@ from ad_voting_metrics.pipeline import (
     run_finalize,
 )
 from ad_voting_metrics.roster import Delegate
+
+
+def _empty_daily_df() -> pd.DataFrame:
+    return pd.DataFrame(columns=list(sheets.DAILY_DATA_COLUMNS))
+
+
+def _empty_participation_df() -> pd.DataFrame:
+    return pd.DataFrame(
+        columns=["Delegate", "Poll Id", "Start Date", "End Date", "Title", "Participation Status"],
+    )
+
+
+def _empty_communication_df() -> pd.DataFrame:
+    return pd.DataFrame(
+        columns=["Delegate", "Poll Id", "Start Date", "End Date", "Title", "Communication Status"],
+    )
 
 # ---------------------------------------------------------------------------
 # _window_start_for_period
@@ -107,8 +123,11 @@ def test_run_finalize_communication_master_missing_exits():
         patch("ad_voting_metrics.pipeline.sheets.get_workbook", return_value=workbook),
         patch("ad_voting_metrics.pipeline.sheets.read_config", return_value=config),
         patch("ad_voting_metrics.pipeline.build_roster_for_period") as mock_roster,
-        patch("ad_voting_metrics.pipeline.sheets.read_daily_data", return_value={date(2026, 4, 1): {}}),
-        patch("ad_voting_metrics.pipeline.sheets.read_participation_for_window", return_value={}),
+        patch("ad_voting_metrics.pipeline.sheets.read_daily_data", return_value=_empty_daily_df()),
+        patch(
+            "ad_voting_metrics.pipeline.sheets.read_participation_for_window",
+            return_value=_empty_participation_df(),
+        ),
         patch(
             "ad_voting_metrics.pipeline.sheets.read_communication_master",
             side_effect=RuntimeError("Communication Master missing"),
@@ -140,10 +159,16 @@ def test_run_finalize_compensation_write_failure_exits():
         patch("ad_voting_metrics.pipeline.build_roster_for_period") as mock_roster,
         patch(
             "ad_voting_metrics.pipeline.sheets.read_daily_data",
-            return_value={date(2026, 4, d): {} for d in range(1, 31)},
+            return_value=_empty_daily_df(),
         ),
-        patch("ad_voting_metrics.pipeline.sheets.read_participation_for_window", return_value={}),
-        patch("ad_voting_metrics.pipeline.sheets.read_communication_master", return_value={}),
+        patch(
+            "ad_voting_metrics.pipeline.sheets.read_participation_for_window",
+            return_value=_empty_participation_df(),
+        ),
+        patch(
+            "ad_voting_metrics.pipeline.sheets.read_communication_master",
+            return_value=_empty_communication_df(),
+        ),
         patch(
             "ad_voting_metrics.pipeline.sheets.write_compensation_tab",
             side_effect=RuntimeError("API error"),
@@ -173,10 +198,16 @@ def test_run_finalize_happy_path_empty_roster_writes_comp_tab():
         patch("ad_voting_metrics.pipeline.build_roster_for_period") as mock_roster,
         patch(
             "ad_voting_metrics.pipeline.sheets.read_daily_data",
-            return_value={date(2026, 4, d): {} for d in range(1, 31)},
+            return_value=_empty_daily_df(),
         ),
-        patch("ad_voting_metrics.pipeline.sheets.read_participation_for_window", return_value={}),
-        patch("ad_voting_metrics.pipeline.sheets.read_communication_master", return_value={}),
+        patch(
+            "ad_voting_metrics.pipeline.sheets.read_participation_for_window",
+            return_value=_empty_participation_df(),
+        ),
+        patch(
+            "ad_voting_metrics.pipeline.sheets.read_communication_master",
+            return_value=_empty_communication_df(),
+        ),
         patch("ad_voting_metrics.pipeline.sheets.write_compensation_tab", write_mock),
         patch("ad_voting_metrics.pipeline.write_entry"),
     ):
@@ -221,16 +252,33 @@ def test_run_finalize_eligibility_tie_at_cutoff_exits():
     config = CompensationConfig(l1_usds=33333.0, l2_usds=14583.0, l3_usds=4000.0, total_slots=6)
     period = MonthPeriod(year=2026, month=4)
     # All ranked 6 → tie crossing the 6-slot cutoff
-    ranks_per_day = {date(2026, 4, d): {f"D{i}": 6 for i in range(7)} for d in range(1, 31)}
+    ranks_df = pd.DataFrame([
+        {"Date": date(2026, 4, d), "Delegate": f"D{i}", "Total Delegation": 100.0, "Rank": 6}
+        for d in range(1, 31) for i in range(7)
+    ])
     # Give everyone perfect participation history so they're all eligible
-    participation = {f"D{i}": [(f"poll_{j}", date(2026, 2, 1), "Yes") for j in range(10)] for i in range(7)}
-    communication = {f"D{i}": {f"poll_{j}": "Yes" for j in range(10)} for i in range(7)}
+    participation = pd.DataFrame([
+        {
+            "Delegate": f"D{i}", "Poll Id": f"poll_{j}",
+            "Start Date": date(2026, 2, 1), "End Date": date(2026, 2, 2),
+            "Title": "", "Participation Status": "Yes",
+        }
+        for i in range(7) for j in range(10)
+    ])
+    communication = pd.DataFrame([
+        {
+            "Delegate": f"D{i}", "Poll Id": f"poll_{j}",
+            "Start Date": date(2026, 2, 1), "End Date": date(2026, 2, 2),
+            "Title": "", "Communication Status": "Yes",
+        }
+        for i in range(7) for j in range(10)
+    ])
 
     with (
         patch("ad_voting_metrics.pipeline.sheets.get_workbook", return_value=workbook),
         patch("ad_voting_metrics.pipeline.sheets.read_config", return_value=config),
         patch("ad_voting_metrics.pipeline.build_roster_for_period") as mock_roster,
-        patch("ad_voting_metrics.pipeline.sheets.read_daily_data", return_value=ranks_per_day),
+        patch("ad_voting_metrics.pipeline.sheets.read_daily_data", return_value=ranks_df),
         patch(
             "ad_voting_metrics.pipeline.sheets.read_participation_for_window",
             return_value=participation,
@@ -260,10 +308,16 @@ def test_run_finalize_logs_drift_warnings():
         patch("ad_voting_metrics.pipeline.build_roster_for_period") as mock_roster,
         patch(
             "ad_voting_metrics.pipeline.sheets.read_daily_data",
-            return_value={date(2026, 4, d): {} for d in range(1, 31)},
+            return_value=_empty_daily_df(),
         ),
-        patch("ad_voting_metrics.pipeline.sheets.read_participation_for_window", return_value={}),
-        patch("ad_voting_metrics.pipeline.sheets.read_communication_master", return_value={}),
+        patch(
+            "ad_voting_metrics.pipeline.sheets.read_participation_for_window",
+            return_value=_empty_participation_df(),
+        ),
+        patch(
+            "ad_voting_metrics.pipeline.sheets.read_communication_master",
+            return_value=_empty_communication_df(),
+        ),
         patch("ad_voting_metrics.pipeline.sheets.write_compensation_tab"),
         patch("ad_voting_metrics.pipeline.write_entry"),
         patch.object(pipeline.logger, "warning") as warning_mock,
