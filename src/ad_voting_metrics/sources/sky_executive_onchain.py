@@ -20,10 +20,11 @@ from pathlib import Path
 from typing import Any, cast
 
 import pandas as pd
+from eth_typing import HexStr
 from eth_utils.crypto import keccak
 from web3 import Web3
 from web3.exceptions import BadFunctionCallOutput, ContractLogicError, Web3RPCError
-from web3.types import BlockData, FilterParams, HexStr
+from web3.types import BlockData, FilterParams
 
 from ad_voting_metrics.metrics import PENDING_VERIFICATION
 
