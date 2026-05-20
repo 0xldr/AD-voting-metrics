@@ -1,0 +1,502 @@
+"""Tests for the on-chain executive-vote verifier.
+
+All w3 calls are mocked — no real RPC traffic. The slate cache uses a
+tmp_path file in each test that needs it.
+"""
+
+import json
+from datetime import UTC, date, datetime
+from unittest.mock import MagicMock
+
+import pandas as pd
+from web3.exceptions import ContractLogicError
+
+from ad_voting_metrics.sources import sky_executive_onchain as onchain
+
+PENDING = "Pending verification"
+
+
+def _ts(d: date) -> int:
+    """Unix timestamp for midnight UTC on `d`."""
+    return int(datetime(d.year, d.month, d.day, tzinfo=UTC).timestamp())
+
+
+# ---------------------------------------------------------------------------
+# Slate cache I/O
+# ---------------------------------------------------------------------------
+
+
+def test_load_slate_cache_missing_file_returns_empty(tmp_path):
+    assert onchain._load_slate_cache(tmp_path / "nope.json") == {}
+
+
+def test_load_slate_cache_lowercases_keys_and_addresses(tmp_path):
+    cache_path = tmp_path / "slate_cache.json"
+    cache_path.write_text(json.dumps({
+        "0xABCDEF": ["0x1111", "0x2222"],
+        "0xBEEF": ["0x3333"],
+    }))
+    out = onchain._load_slate_cache(cache_path)
+    assert out == {
+        "0xabcdef": ["0x1111", "0x2222"],
+        "0xbeef": ["0x3333"],
+    }
+
+
+def test_save_slate_cache_round_trip(tmp_path):
+    cache_path = tmp_path / "nested" / "slate_cache.json"  # parent doesn't exist
+    cache = {"0xabc": ["0x111", "0x222"], "0xdef": ["0x333"]}
+    onchain._save_slate_cache(cache, cache_path)
+    assert cache_path.exists()
+    loaded = onchain._load_slate_cache(cache_path)
+    assert loaded == cache
+
+
+# ---------------------------------------------------------------------------
+# _voter_topic
+# ---------------------------------------------------------------------------
+
+
+def test_voter_topic_pads_to_32_bytes():
+    voter = "0xaaBBccDDeeFF00112233445566778899AABBCCDD"
+    topic = onchain._voter_topic(voter)
+    assert topic.startswith("0x")
+    assert len(topic) == 66  # 0x + 64 hex chars = 32 bytes
+    assert topic == "0x000000000000000000000000aabbccddeeff00112233445566778899aabbccdd"
+
+
+def test_voter_topic_handles_already_padded_input():
+    voter = "0x" + "00" * 12 + "aa" * 20  # 32-byte hex string with prefix
+    topic = onchain._voter_topic(voter)
+    assert len(topic) == 66
+
+
+# ---------------------------------------------------------------------------
+# _resolve_slate
+# ---------------------------------------------------------------------------
+
+
+def _make_w3_with_slates(slate_addresses: list[str]) -> MagicMock:
+    """Build a fake w3 whose chief.slates(slate, i) returns slate_addresses[i],
+    raising ContractLogicError when i >= len(slate_addresses).
+    """
+    w3 = MagicMock()
+    contract = MagicMock()
+
+    def _slates_call(_slate, i):
+        call = MagicMock()
+        if i < len(slate_addresses):
+            call.call.return_value = slate_addresses[i]
+        else:
+            call.call.side_effect = ContractLogicError("array out of bounds")
+        return call
+
+    contract.functions.slates.side_effect = _slates_call
+    w3.eth.contract.return_value = contract
+    return w3
+
+
+def test_resolve_slate_walks_until_revert():
+    w3 = _make_w3_with_slates([
+        "0x1111111111111111111111111111111111111111",
+        "0x2222222222222222222222222222222222222222",
+        "0x3333333333333333333333333333333333333333",
+    ])
+    out = onchain._resolve_slate(w3, "0xabcd")
+    assert out == [
+        "0x1111111111111111111111111111111111111111",
+        "0x2222222222222222222222222222222222222222",
+        "0x3333333333333333333333333333333333333333",
+    ]
+
+
+def test_resolve_slate_stops_at_zero_address():
+    """Some chiefs sentinel-terminate with the zero address rather than reverting."""
+    w3 = _make_w3_with_slates([
+        "0x1111111111111111111111111111111111111111",
+        "0x0000000000000000000000000000000000000000",  # sentinel
+        "0xshouldNotReachHere",
+    ])
+    out = onchain._resolve_slate(w3, "0xabcd")
+    assert out == ["0x1111111111111111111111111111111111111111"]
+
+
+def test_resolve_slate_returns_lowercased_addresses():
+    w3 = _make_w3_with_slates(["0xAABBccDDeeFF00112233445566778899AABBCCDD"])
+    out = onchain._resolve_slate(w3, "0xabcd")
+    assert out == ["0xaabbccddeeff00112233445566778899aabbccdd"]
+
+
+def test_resolve_slate_safety_cap_on_runaway():
+    """MAX_SLATE_LENGTH bounds the walk if the contract never reverts."""
+    w3 = _make_w3_with_slates(["0x1111111111111111111111111111111111111111"] * 100)
+    out = onchain._resolve_slate(w3, "0xabcd")
+    assert len(out) == onchain.MAX_SLATE_LENGTH
+
+
+# ---------------------------------------------------------------------------
+# _approx_block_from_date
+# ---------------------------------------------------------------------------
+
+
+def test_approx_block_from_date_subtracts_seconds_then_buffer():
+    """latest_block - seconds_back/12 - one_day_blocks."""
+    w3 = MagicMock()
+    w3.eth.get_block.return_value = {"timestamp": _ts(date(2026, 5, 20)), "number": 22_000_000}
+
+    # Target 7 days earlier.
+    out = onchain._approx_block_from_date(w3, date(2026, 5, 13))
+    # 7 days = 604_800s; 50_400 blocks at 12s; minus another day buffer = 7_200.
+    expected = 22_000_000 - 50_400 - 7_200
+    assert abs(out - expected) <= 1
+
+
+def test_approx_block_from_date_clamps_at_zero():
+    w3 = MagicMock()
+    w3.eth.get_block.return_value = {"timestamp": 100, "number": 5}
+    out = onchain._approx_block_from_date(w3, date(2024, 1, 1))
+    assert out == 0
+
+
+# ---------------------------------------------------------------------------
+# _fetch_vote_events
+# ---------------------------------------------------------------------------
+
+
+def _make_log(slate_hex: str, block_number: int) -> dict:
+    """Build a minimal log dict matching what w3.eth.get_logs returns."""
+    slate_bytes = bytes.fromhex(slate_hex.removeprefix("0x").zfill(64))
+    return {
+        "topics": [
+            MagicMock(),  # event sig — unused
+            MagicMock(),  # voter — unused
+            MagicMock(hex=lambda b=slate_bytes: b.hex()),
+        ],
+        "blockNumber": block_number,
+    }
+
+
+def test_fetch_vote_events_extracts_slate_and_date():
+    w3 = MagicMock()
+    w3.eth.get_logs.return_value = [
+        _make_log("0xabcd", 1000),
+    ]
+    w3.eth.get_block.return_value = {"timestamp": _ts(date(2026, 5, 20))}
+    out = onchain._fetch_vote_events(w3, "0xdeadbeef", from_block=500)
+    assert len(out) == 1
+    slate, event_date = out[0]
+    assert slate.endswith("abcd")
+    assert event_date == date(2026, 5, 20)
+
+
+def test_fetch_vote_events_caches_block_timestamps():
+    """Same block number across multiple logs => one get_block call."""
+    w3 = MagicMock()
+    w3.eth.get_logs.return_value = [
+        _make_log("0xabcd", 1000),
+        _make_log("0xbeef", 1000),
+        _make_log("0xcafe", 1000),
+    ]
+    w3.eth.get_block.return_value = {"timestamp": _ts(date(2026, 5, 20))}
+    onchain._fetch_vote_events(w3, "0xdeadbeef", from_block=500)
+    assert w3.eth.get_block.call_count == 1
+
+
+# ---------------------------------------------------------------------------
+# _identify_pending_pairs
+# ---------------------------------------------------------------------------
+
+
+def test_identify_pending_pairs_only_flags_pending_cells():
+    df = pd.DataFrame({
+        "Delegate Contract": ["0xa", "0xb", "0xc"],
+        "0xspell1": ["Yes", PENDING, "No"],
+        "0xspell2": [PENDING, PENDING, "Yes"],
+        "0xspell3": ["Yes", "Yes", "Yes"],
+    })
+    out = onchain._identify_pending_pairs(df, ["0xspell1", "0xspell2", "0xspell3"])
+    assert out == {"0xspell1": [1], "0xspell2": [0, 1]}
+
+
+def test_identify_pending_pairs_skips_missing_columns():
+    df = pd.DataFrame({"Delegate Contract": ["0xa"], "0xspell1": [PENDING]})
+    out = onchain._identify_pending_pairs(df, ["0xspell1", "0xspell_missing"])
+    assert "0xspell_missing" not in out
+    assert out == {"0xspell1": [0]}
+
+
+# ---------------------------------------------------------------------------
+# _delegate_voted_for_spell
+# ---------------------------------------------------------------------------
+
+
+def _slate_with(spell_addr: str) -> dict:
+    return {"0xabcd": [spell_addr]}
+
+
+def test_delegate_voted_for_spell_no_events():
+    assert onchain._delegate_voted_for_spell(
+        events=[], spell_address="0xspell", start_date=date(2026, 4, 1),
+        deadline=date(2026, 4, 8), slate_cache={},
+    ) is False
+
+
+def test_delegate_voted_for_spell_event_in_window_with_matching_slate():
+    assert onchain._delegate_voted_for_spell(
+        events=[("0xabcd", date(2026, 4, 3))],
+        spell_address="0xspell", start_date=date(2026, 4, 1),
+        deadline=date(2026, 4, 8), slate_cache=_slate_with("0xspell"),
+    ) is True
+
+
+def test_delegate_voted_for_spell_event_before_start_date_ignored():
+    assert onchain._delegate_voted_for_spell(
+        events=[("0xabcd", date(2026, 3, 31))],
+        spell_address="0xspell", start_date=date(2026, 4, 1),
+        deadline=date(2026, 4, 8), slate_cache=_slate_with("0xspell"),
+    ) is False
+
+
+def test_delegate_voted_for_spell_event_past_deadline_ignored():
+    """7-day cutoff: an otherwise-matching vote on day 8+ does not count."""
+    assert onchain._delegate_voted_for_spell(
+        events=[("0xabcd", date(2026, 4, 9))],  # 8 days after start
+        spell_address="0xspell", start_date=date(2026, 4, 1),
+        deadline=date(2026, 4, 8), slate_cache=_slate_with("0xspell"),
+    ) is False
+
+
+def test_delegate_voted_for_spell_slate_missing_spell_ignored():
+    assert onchain._delegate_voted_for_spell(
+        events=[("0xabcd", date(2026, 4, 3))],
+        spell_address="0xspell", start_date=date(2026, 4, 1),
+        deadline=date(2026, 4, 8),
+        slate_cache={"0xabcd": ["0xother"]},
+    ) is False
+
+
+def test_delegate_voted_for_spell_address_case_insensitive():
+    assert onchain._delegate_voted_for_spell(
+        events=[("0xabcd", date(2026, 4, 3))],
+        spell_address="0xSPELL", start_date=date(2026, 4, 1),
+        deadline=date(2026, 4, 8), slate_cache={"0xabcd": ["0xspell"]},
+    ) is True
+
+
+def test_delegate_voted_for_spell_unknown_slate_ignored():
+    """A slate not in the cache is treated as containing nothing."""
+    assert onchain._delegate_voted_for_spell(
+        events=[("0xunknown", date(2026, 4, 3))],
+        spell_address="0xspell", start_date=date(2026, 4, 1),
+        deadline=date(2026, 4, 8), slate_cache={},
+    ) is False
+
+
+# ---------------------------------------------------------------------------
+# resolve_pending_executive_votes — orchestrator
+# ---------------------------------------------------------------------------
+
+
+def _make_df(rows: list[tuple[str, str, str]]) -> pd.DataFrame:
+    """(delegate_contract, spell1_status, spell2_status) per row."""
+    return pd.DataFrame({
+        "Delegate Contract": [r[0] for r in rows],
+        "0xspell1": [r[1] for r in rows],
+        "0xspell2": [r[2] for r in rows],
+    })
+
+
+def _spell(addr: str, start: date) -> dict:
+    return {"address": addr, "startDate": start, "title": "x"}
+
+
+def test_resolve_pending_no_op_when_spell_info_empty():
+    df = pd.DataFrame({"Delegate Contract": ["0xa"], "0xspell1": [PENDING]})
+    result = onchain.resolve_pending_executive_votes(df, spell_info=[])
+    assert result is df  # mutated in place; nothing to do
+
+
+def test_resolve_pending_no_op_when_no_pending_cells():
+    df = _make_df([("0xa", "Yes", "No")])
+    spell_info = [_spell("0xspell1", date(2026, 4, 1))]
+    # No w3 should be needed; pass a sentinel and assert it isn't touched.
+    sentinel_w3 = MagicMock()
+    result = onchain.resolve_pending_executive_votes(df, spell_info, w3=sentinel_w3)
+    sentinel_w3.eth.get_block.assert_not_called()
+    assert result.equals(df)
+
+
+def test_resolve_pending_skips_when_rpc_url_missing(monkeypatch, caplog):
+    monkeypatch.delenv("SKY_RPC_URL", raising=False)
+    df = _make_df([("0xa", PENDING, "Yes")])
+    spell_info = [_spell("0xspell1", date(2026, 4, 1))]
+    with caplog.at_level("WARNING"):
+        result = onchain.resolve_pending_executive_votes(df, spell_info)
+    assert "SKY_RPC_URL is not set" in caplog.text
+    assert result.loc[0, "0xspell1"] == PENDING
+
+
+def _w3_for_resolver(
+    *,
+    events: list[dict] | None = None,
+    block_ts: int = 1_779_148_800,  # 2026-05-20 UTC
+    slate_addresses: dict[str, list[str]] | None = None,
+) -> MagicMock:
+    """Build a w3 mock that returns the given events from get_logs and resolves slates."""
+    w3 = MagicMock()
+    w3.eth.get_block.return_value = {"timestamp": block_ts, "number": 22_000_000}
+    w3.eth.get_logs.return_value = events or []
+
+    contract = MagicMock()
+
+    def _slates_factory(slate_bytes, i):
+        slate_hex = "0x" + slate_bytes.hex()
+        addresses = (slate_addresses or {}).get(slate_hex, [])
+        call = MagicMock()
+        if i < len(addresses):
+            call.call.return_value = addresses[i]
+        else:
+            call.call.side_effect = ContractLogicError("oob")
+        return call
+
+    contract.functions.slates.side_effect = _slates_factory
+    w3.eth.contract.return_value = contract
+    return w3
+
+
+def test_resolve_pending_flips_cell_when_slate_contains_spell(tmp_path):
+    """Happy path: a delegate's in-window vote for a slate containing the spell."""
+    spell_addr = "0x" + "11" * 20
+    spell_start = date(2026, 4, 1)
+    df = pd.DataFrame({
+        "Delegate Contract": ["0xvoter1"],
+        spell_addr: [PENDING],
+    })
+
+    slate = "0x" + "ab" * 32
+    events = [_make_log(slate, 1000)]
+    w3 = _w3_for_resolver(events=events, slate_addresses={slate: [spell_addr]})
+    # Make the block timestamp fall on 2026-04-03 (within 7-day window).
+    w3.eth.get_block.side_effect = [
+        {"timestamp": _ts(date(2026, 5, 20)), "number": 22_000_000},  # latest, for from-block calc
+        {"timestamp": _ts(date(2026, 4, 3))},                          # the log's block
+    ]
+
+    result = onchain.resolve_pending_executive_votes(
+        df, [_spell(spell_addr, spell_start)],
+        w3=w3, cache_path=tmp_path / "slate_cache.json",
+    )
+    assert result.loc[0, spell_addr] == "Yes"
+
+
+def test_resolve_pending_late_vote_stays_pending(tmp_path):
+    """A vote 8 days after spell start does not flip the cell."""
+    spell_addr = "0x" + "22" * 20
+    spell_start = date(2026, 4, 1)
+    df = pd.DataFrame({
+        "Delegate Contract": ["0xvoter1"],
+        spell_addr: [PENDING],
+    })
+
+    slate = "0x" + "cd" * 32
+    events = [_make_log(slate, 1000)]
+    w3 = _w3_for_resolver(events=events, slate_addresses={slate: [spell_addr]})
+    # 2026-04-09 — one day past the 7-day window.
+    w3.eth.get_block.side_effect = [
+        {"timestamp": _ts(date(2026, 5, 20)), "number": 22_000_000},
+        {"timestamp": _ts(date(2026, 4, 9))},
+    ]
+
+    result = onchain.resolve_pending_executive_votes(
+        df, [_spell(spell_addr, spell_start)],
+        w3=w3, cache_path=tmp_path / "slate_cache.json",
+    )
+    assert result.loc[0, spell_addr] == PENDING
+
+
+def test_resolve_pending_persists_cache_growth(tmp_path):
+    """Newly resolved slates are written back to the cache file."""
+    spell_addr = "0x" + "33" * 20
+    spell_start = date(2026, 4, 1)
+    df = pd.DataFrame({
+        "Delegate Contract": ["0xvoter1"],
+        spell_addr: [PENDING],
+    })
+
+    slate = "0x" + "ef" * 32
+    events = [_make_log(slate, 1000)]
+    w3 = _w3_for_resolver(events=events, slate_addresses={slate: [spell_addr]})
+    w3.eth.get_block.side_effect = [
+        {"timestamp": _ts(date(2026, 5, 20)), "number": 22_000_000},
+        {"timestamp": _ts(date(2026, 4, 3))},
+    ]
+
+    cache_path = tmp_path / "slate_cache.json"
+    onchain.resolve_pending_executive_votes(
+        df, [_spell(spell_addr, spell_start)],
+        w3=w3, cache_path=cache_path,
+    )
+
+    assert cache_path.exists()
+    written = onchain._load_slate_cache(cache_path)
+    assert slate.lower() in written
+    assert written[slate.lower()] == [spell_addr]
+
+
+def test_resolve_pending_reuses_cached_slate(tmp_path):
+    """If the slate is already cached, no contract call is made."""
+    spell_addr = "0x" + "44" * 20
+    spell_start = date(2026, 4, 1)
+    slate = "0x" + "ef" * 32
+    df = pd.DataFrame({
+        "Delegate Contract": ["0xvoter1"],
+        spell_addr: [PENDING],
+    })
+
+    cache_path = tmp_path / "slate_cache.json"
+    onchain._save_slate_cache({slate.lower(): [spell_addr]}, cache_path)
+
+    events = [_make_log(slate, 1000)]
+    w3 = _w3_for_resolver(events=events)  # no slate_addresses configured
+    w3.eth.get_block.side_effect = [
+        {"timestamp": _ts(date(2026, 5, 20)), "number": 22_000_000},
+        {"timestamp": _ts(date(2026, 4, 3))},
+    ]
+
+    result = onchain.resolve_pending_executive_votes(
+        df, [_spell(spell_addr, spell_start)],
+        w3=w3, cache_path=cache_path,
+    )
+    # Should still flip the cell using the cached slate.
+    assert result.loc[0, spell_addr] == "Yes"
+    # contract.functions.slates was never invoked.
+    w3.eth.contract.return_value.functions.slates.assert_not_called()
+
+
+def test_resolve_pending_no_cache_write_when_no_new_slates(tmp_path):
+    """If the on-chain events reveal only already-cached slates, the file is left alone."""
+    spell_addr = "0x" + "55" * 20
+    spell_start = date(2026, 4, 1)
+    slate = "0x" + "ef" * 32
+    df = pd.DataFrame({
+        "Delegate Contract": ["0xvoter1"],
+        spell_addr: [PENDING],
+    })
+
+    cache_path = tmp_path / "slate_cache.json"
+    onchain._save_slate_cache({slate.lower(): [spell_addr]}, cache_path)
+    original_mtime = cache_path.stat().st_mtime_ns
+
+    events = [_make_log(slate, 1000)]
+    w3 = _w3_for_resolver(events=events)
+    w3.eth.get_block.side_effect = [
+        {"timestamp": _ts(date(2026, 5, 20)), "number": 22_000_000},
+        {"timestamp": _ts(date(2026, 4, 3))},
+    ]
+
+    onchain.resolve_pending_executive_votes(
+        df, [_spell(spell_addr, spell_start)],
+        w3=w3, cache_path=cache_path,
+    )
+    # File untouched (mtime unchanged).
+    assert cache_path.stat().st_mtime_ns == original_mtime
