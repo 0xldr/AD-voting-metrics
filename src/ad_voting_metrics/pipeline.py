@@ -25,7 +25,7 @@ from .eligibility import DailyEligibility, DelegateMetricsInput, compute_daily_e
 from .period import MonthPeriod
 from .reconciliation import build_entry, write_entry
 from .roster import Delegate, build_roster_for_period, to_dataframe
-from .sources import dune, sky_executive, sky_polling
+from .sources import dune, sky_executive, sky_executive_onchain, sky_polling
 from .sources.delegates import fetch_aligned_delegates
 
 logger = logging.getLogger(__name__)
@@ -257,6 +257,12 @@ def run_fetch(args: argparse.Namespace) -> None:
     spell_info = sky_executive.get_executive_ids(period)
     logger.info("Getting VOTE FROM SPELL...")
     df = sky_executive.get_vote_executive_ids(spell_info, df, df_sky)
+
+    logger.info("Verifying Pending executive votes on-chain...")
+    try:
+        df = sky_executive_onchain.resolve_pending_executive_votes(df, spell_info)
+    except Exception:
+        logger.exception("On-chain executive-vote verification failed; leaving Pending cells as-is")
 
     output_files = _write_fetch_csvs(df, df_sky, poll_info, spell_info)
     _write_fetch_workbook_tabs(period, df, df_ranking, poll_info, spell_info)

@@ -17,6 +17,7 @@ dependencies = [
     "gspread>=6.0,<7",
     "gspread-dataframe>=4.0,<5",
     "google-auth>=2.0,<3",
+    "web3>=6,<8",
 ]
 
 [dependency-groups]
