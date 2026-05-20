@@ -10,7 +10,6 @@ Imports are wired so that:
 """
 
 import argparse
-import csv
 import logging
 from collections.abc import Callable
 from datetime import UTC, date, datetime
@@ -33,13 +32,9 @@ logger = logging.getLogger(__name__)
 
 T = TypeVar("T")
 
-# Per-period workbook state read out of the Compensation Sheet for `finalize`:
-# (daily_ranks_by_day, participation_by_delegate, communication_by_delegate).
-_WorkbookData: TypeAlias = tuple[
-    dict[date, dict[str, int]],
-    dict[str, list[tuple[str, date, str]]],
-    dict[str, dict[str, str]],
-]
+# Per-period workbook state read out of the Compensation Sheet for `finalize`.
+# All three DataFrames are read directly from the workbook by sheets.read_*.
+_WorkbookData: TypeAlias = tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]
 
 # Locate data and output directories relative to the repo root.
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
@@ -66,24 +61,63 @@ def _required_step(description: str, fn: Callable[..., T], *args: object, **kwar
 
 def _build_metrics_input(
     delegates: list[Delegate],
-    participation_by_delegate: dict[str, list[tuple[str, date, str]]],
-    communication_by_delegate: dict[str, dict[str, str]],
+    participation_df: pd.DataFrame,
+    communication_df: pd.DataFrame,
 ) -> dict[str, DelegateMetricsInput]:
-    """Build per-delegate metrics input from workbook participation + communication data.
+    """Build per-delegate metrics input from window participation + communication DataFrames.
+
+    `participation_df` has one row per (delegate, poll) with Start Date
+    and Participation Status; `communication_df` has one row per
+    (delegate, poll) with Communication Status. They are merged on
+    (Delegate, Poll Id); polls absent from communication get a blank
+    communication status.
 
     Returns:
         Mapping of delegate name to DelegateMetricsInput.
     """
+    if participation_df.empty:
+        return {
+            delegate.name: DelegateMetricsInput(
+                poll_starts=[], participation_statuses=[], communication_statuses=[],
+            )
+            for delegate in delegates
+        }
+
+    merged = participation_df.merge(
+        communication_df[["Delegate", "Poll Id", "Communication Status"]]
+        if not communication_df.empty
+        else pd.DataFrame(columns=["Delegate", "Poll Id", "Communication Status"]),
+        on=["Delegate", "Poll Id"],
+        how="left",
+    )
+    merged["Communication Status"] = merged["Communication Status"].fillna("")
+
     metrics_input: dict[str, DelegateMetricsInput] = {}
     for delegate in delegates:
-        entries = participation_by_delegate.get(delegate.name, [])
-        comm_map = communication_by_delegate.get(delegate.name, {})
+        rows = merged[merged["Delegate"] == delegate.name]
         metrics_input[delegate.name] = DelegateMetricsInput(
-            poll_starts=[poll_start for _, poll_start, _ in entries],
-            participation_statuses=[p_status for _, _, p_status in entries],
-            communication_statuses=[comm_map.get(poll_id, "") for poll_id, _, _ in entries],
+            poll_starts=rows["Start Date"].tolist(),
+            participation_statuses=rows["Participation Status"].tolist(),
+            communication_statuses=rows["Communication Status"].tolist(),
         )
     return metrics_input
+
+
+def _ranks_by_day(daily_ranks_df: pd.DataFrame) -> dict[date, dict[str, int]]:
+    """Pivot the long Daily Data DataFrame into {day: {delegate: rank}}.
+
+    Returns:
+        Mapping from each day present in the DataFrame to its
+        {delegate: rank} for the day.
+    """
+    if daily_ranks_df.empty:
+        return {}
+    out: dict[date, dict[str, int]] = {}
+    for day_key, group in daily_ranks_df.groupby("Date"):
+        # groupby's key is typed as Hashable; the column actually holds date objects.
+        day = day_key if isinstance(day_key, date) else date.fromisoformat(str(day_key))
+        out[day] = dict(zip(group["Delegate"], group["Rank"].astype(int), strict=False))
+    return out
 
 
 def _compute_daily_results(
@@ -91,7 +125,7 @@ def _compute_daily_results(
     window: tuple[date, date],
     *,
     delegates: list[Delegate],
-    daily_ranks_by_day: dict[date, dict[str, int]],
+    daily_ranks_df: pd.DataFrame,
     metrics_input: dict[str, DelegateMetricsInput],
 ) -> list[DailyEligibility]:
     """Compute eligibility for each day in the period.
@@ -102,12 +136,13 @@ def _compute_daily_results(
     Returns:
         List of DailyEligibility, one per day in period.start..period.end inclusive.
     """
+    ranks_by_day = _ranks_by_day(daily_ranks_df)
     return [
         compute_daily_eligibility(
             day=day,
             window=window,
             delegates=delegates,
-            daily_ranks=daily_ranks_by_day.get(day, {}),
+            daily_ranks=ranks_by_day.get(day, {}),
             metrics_input=metrics_input,
         )
         for day in pd.date_range(period.start, period.end, freq="D").date
@@ -158,10 +193,8 @@ def _write_fetch_csvs(
     logger.info("SKY data by date saved to %s", sky_csv)
 
     participation_csv = OUTPUT_DIR / "vote_participation.csv"
-    with participation_csv.open("w", newline="") as f:
-        csv.writer(f).writerows(
-            sheets.build_participation_values(df, poll_info, spell_info),
-        )
+    participation_df = sheets.build_participation_dataframe(df, poll_info, spell_info)
+    participation_df.to_csv(participation_csv, index=False)
     logger.info("Participation vote data saved to %s", participation_csv)
     return [sky_csv, participation_csv]
 
@@ -254,24 +287,24 @@ def _read_finalize_workbook_data(
     """Read Daily Data, window participation, and Communication Master from the workbook.
 
     Returns:
-        Tuple of (daily_ranks_by_day, participation_by_delegate, communication_by_delegate).
+        Tuple of (daily_df, participation_df, communication_df).
     """
-    daily_ranks_by_day = _required_step("read Daily Data", sheets.read_daily_data, workbook, period)
-    logger.info("Daily Data has rank rows for %d days in %s", len(daily_ranks_by_day), period)
+    daily_df = _required_step("read Daily Data", sheets.read_daily_data, workbook, period)
+    logger.info("Daily Data has rank rows for %d days in %s", daily_df["Date"].nunique(), period)
 
-    participation_by_delegate = sheets.read_participation_for_window(workbook, window[0], window[1])
+    participation_df = sheets.read_participation_for_window(workbook, window[0], window[1])
     logger.info(
-        "Window participation: %d total (delegate, poll) entries across %d delegates",
-        sum(len(v) for v in participation_by_delegate.values()),
-        len(participation_by_delegate),
+        "Window participation: %d (delegate, poll) entries across %d delegates",
+        len(participation_df),
+        participation_df["Delegate"].nunique() if not participation_df.empty else 0,
     )
 
-    communication_by_delegate = _required_step(
+    communication_df = _required_step(
         "read Communication Master",
         sheets.read_communication_master,
         workbook,
     )
-    return daily_ranks_by_day, participation_by_delegate, communication_by_delegate
+    return daily_df, participation_df, communication_df
 
 
 def _compute_period_compensation_for_window(
@@ -286,15 +319,15 @@ def _compute_period_compensation_for_window(
     Returns:
         The PeriodCompensation for the given period and inputs.
     """
-    daily_ranks_by_day, participation_by_delegate, communication_by_delegate = workbook_data
-    metrics_input = _build_metrics_input(delegates, participation_by_delegate, communication_by_delegate)
+    daily_df, participation_df, communication_df = workbook_data
+    metrics_input = _build_metrics_input(delegates, participation_df, communication_df)
     daily_results = _required_step(
         "compute eligibility",
         _compute_daily_results,
         period,
         window,
         delegates=delegates,
-        daily_ranks_by_day=daily_ranks_by_day,
+        daily_ranks_df=daily_df,
         metrics_input=metrics_input,
     )
     final_metrics: dict[str, tuple[float | None, float | None]] = {
