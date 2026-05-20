@@ -6,6 +6,7 @@ from datetime import date, datetime
 
 import pandas as pd
 
+from ad_voting_metrics.metrics import PENDING_VERIFICATION
 from ad_voting_metrics.period import MonthPeriod
 
 from .dune import build_sky_lookup
@@ -93,7 +94,7 @@ def get_vote_executive_ids(spell_info: list[dict], df: pd.DataFrame, df_sky: pd.
 
             voted: str
             if sky_on_start != 0:
-                voted = "Yes" if address in supporter_set else "Pending verification"
+                voted = "Yes" if address in supporter_set else PENDING_VERIFICATION
             else:
                 voted = "No Delegated SKY"
 
