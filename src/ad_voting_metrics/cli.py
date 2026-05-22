@@ -180,7 +180,7 @@ def main(argv: list[str] | None = None) -> None:
         format="%(asctime)s %(levelname)s %(message)s",
         datefmt="%Y-%m-%d %H:%M:%S",
     )
-    logging.getLogger("dune-client").setLevel(logging.WARNING)
+    logging.getLogger("dune_client").setLevel(logging.WARNING)
     load_dotenv()
     parser = build_arg_parser()
     args = parser.parse_args(argv)
