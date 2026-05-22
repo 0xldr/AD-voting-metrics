@@ -9,6 +9,7 @@ from datetime import UTC, date, datetime
 from unittest.mock import MagicMock
 
 import pandas as pd
+from hexbytes import HexBytes
 from web3.exceptions import ContractLogicError
 
 from ad_voting_metrics.sources import sky_executive_onchain as onchain
@@ -50,25 +51,6 @@ def test_save_slate_cache_round_trip(tmp_path):
     assert cache_path.exists()
     loaded = onchain._load_slate_cache(cache_path)
     assert loaded == cache
-
-
-# ---------------------------------------------------------------------------
-# _voter_topic
-# ---------------------------------------------------------------------------
-
-
-def test_voter_topic_pads_to_32_bytes():
-    voter = "0xaaBBccDDeeFF00112233445566778899AABBCCDD"
-    topic = onchain._voter_topic(voter)
-    assert topic.startswith("0x")
-    assert len(topic) == 66  # 0x + 64 hex chars = 32 bytes
-    assert topic == "0x000000000000000000000000aabbccddeeff00112233445566778899aabbccdd"
-
-
-def test_voter_topic_handles_already_padded_input():
-    voter = "0x" + "00" * 12 + "aa" * 20  # 32-byte hex string with prefix
-    topic = onchain._voter_topic(voter)
-    assert len(topic) == 66
 
 
 # ---------------------------------------------------------------------------
@@ -163,42 +145,85 @@ def test_approx_block_from_date_clamps_at_zero():
 # ---------------------------------------------------------------------------
 
 
-def _make_log(slate_hex: str, block_number: int) -> dict:
-    """Build a minimal log dict matching what w3.eth.get_logs returns."""
-    slate_bytes = bytes.fromhex(slate_hex.removeprefix("0x").zfill(64))
+_VOTER_1 = "0x" + "01" * 20
+_VOTER_2 = "0x" + "02" * 20
+
+
+def _make_event(slate_hex: str, block_number: int, voter: str = _VOTER_1) -> dict:
+    """Build a decoded EventData dict matching what contract.events.Vote.get_logs returns."""
+    from web3 import Web3 as _Web3
+
     return {
-        "topics": [
-            MagicMock(),  # event sig — unused
-            MagicMock(),  # voter — unused
-            MagicMock(hex=lambda b=slate_bytes: b.hex()),
-        ],
+        "args": {
+            "usr": _Web3.to_checksum_address(voter),
+            "slate": HexBytes(bytes.fromhex(slate_hex.removeprefix("0x").zfill(64))),
+        },
         "blockNumber": block_number,
     }
 
 
-def test_fetch_vote_events_extracts_slate_and_date():
+def _patch_contract_events(w3: MagicMock, events: list[dict]) -> None:
+    """Configure w3.eth.contract(...).events.Vote().get_logs to return `events`."""
+    contract = w3.eth.contract.return_value
+    vote_event = contract.events.Vote.return_value
+    vote_event.get_logs.return_value = events
+
+
+def test_fetch_vote_events_makes_one_get_logs_call_for_n_voters():
+    """The bulk fetch passes voters as an OR'd argument filter, not one call per voter."""
     w3 = MagicMock()
-    w3.eth.get_logs.return_value = [
-        _make_log("0xabcd", 1000),
-    ]
+    _patch_contract_events(w3, events=[])
+    onchain._fetch_vote_events(w3, {_VOTER_1, _VOTER_2}, from_block=500)
+    vote_event = w3.eth.contract.return_value.events.Vote.return_value
+    assert vote_event.get_logs.call_count == 1
+    # `usr` filter is a list of two checksum addresses.
+    kwargs = vote_event.get_logs.call_args.kwargs
+    usr_filter = kwargs["argument_filters"]["usr"]
+    assert isinstance(usr_filter, list)
+    assert len(usr_filter) == 2
+
+
+def test_fetch_vote_events_groups_results_by_voter():
+    w3 = MagicMock()
+    _patch_contract_events(w3, events=[
+        _make_event("0xabcd", 1000, voter=_VOTER_1),
+        _make_event("0xbeef", 1001, voter=_VOTER_2),
+    ])
     w3.eth.get_block.return_value = {"timestamp": _ts(date(2026, 5, 20))}
-    out = onchain._fetch_vote_events(w3, "0xdeadbeef", from_block=500)
-    assert len(out) == 1
-    slate, event_date = out[0]
-    assert slate.endswith("abcd")
-    assert event_date == date(2026, 5, 20)
+    out = onchain._fetch_vote_events(w3, {_VOTER_1, _VOTER_2}, from_block=500)
+    assert _VOTER_1 in out
+    assert _VOTER_2 in out
+    assert out[_VOTER_1][0][0].endswith("abcd")
+    assert out[_VOTER_2][0][0].endswith("beef")
+
+
+def test_fetch_vote_events_voters_with_no_events_get_empty_list():
+    w3 = MagicMock()
+    _patch_contract_events(w3, events=[
+        _make_event("0xabcd", 1000, voter=_VOTER_1),
+    ])
+    w3.eth.get_block.return_value = {"timestamp": _ts(date(2026, 5, 20))}
+    out = onchain._fetch_vote_events(w3, {_VOTER_1, _VOTER_2}, from_block=500)
+    assert out[_VOTER_2] == []
+
+
+def test_fetch_vote_events_empty_voter_set_skips_rpc():
+    w3 = MagicMock()
+    out = onchain._fetch_vote_events(w3, set(), from_block=500)
+    assert out == {}
+    w3.eth.contract.assert_not_called()
 
 
 def test_fetch_vote_events_caches_block_timestamps():
     """Same block number across multiple logs => one get_block call."""
     w3 = MagicMock()
-    w3.eth.get_logs.return_value = [
-        _make_log("0xabcd", 1000),
-        _make_log("0xbeef", 1000),
-        _make_log("0xcafe", 1000),
-    ]
+    _patch_contract_events(w3, events=[
+        _make_event("0xabcd", 1000, voter=_VOTER_1),
+        _make_event("0xbeef", 1000, voter=_VOTER_1),
+        _make_event("0xcafe", 1000, voter=_VOTER_2),
+    ])
     w3.eth.get_block.return_value = {"timestamp": _ts(date(2026, 5, 20))}
-    onchain._fetch_vote_events(w3, "0xdeadbeef", from_block=500)
+    onchain._fetch_vote_events(w3, {_VOTER_1, _VOTER_2}, from_block=500)
     assert w3.eth.get_block.call_count == 1
 
 
@@ -342,12 +367,12 @@ def _w3_for_resolver(
     block_ts: int = 1_779_148_800,  # 2026-05-20 UTC
     slate_addresses: dict[str, list[str]] | None = None,
 ) -> MagicMock:
-    """Build a w3 mock that returns the given events from get_logs and resolves slates."""
+    """Build a w3 mock that returns the given events and resolves slates."""
     w3 = MagicMock()
     w3.eth.get_block.return_value = {"timestamp": block_ts, "number": 22_000_000}
-    w3.eth.get_logs.return_value = events or []
 
     contract = MagicMock()
+    contract.events.Vote.return_value.get_logs.return_value = events or []
 
     def _slates_factory(slate_bytes, i):
         slate_hex = "0x" + slate_bytes.hex()
@@ -369,12 +394,12 @@ def test_resolve_pending_flips_cell_when_slate_contains_spell(tmp_path):
     spell_addr = "0x" + "11" * 20
     spell_start = date(2026, 4, 1)
     df = pd.DataFrame({
-        "Delegate Contract": ["0xvoter1"],
+        "Delegate Contract": [_VOTER_1],
         spell_addr: [PENDING],
     })
 
     slate = "0x" + "ab" * 32
-    events = [_make_log(slate, 1000)]
+    events = [_make_event(slate, 1000)]
     w3 = _w3_for_resolver(events=events, slate_addresses={slate: [spell_addr]})
     # Make the block timestamp fall on 2026-04-03 (within 7-day window).
     w3.eth.get_block.side_effect = [
@@ -394,12 +419,12 @@ def test_resolve_pending_late_vote_stays_pending(tmp_path):
     spell_addr = "0x" + "22" * 20
     spell_start = date(2026, 4, 1)
     df = pd.DataFrame({
-        "Delegate Contract": ["0xvoter1"],
+        "Delegate Contract": [_VOTER_1],
         spell_addr: [PENDING],
     })
 
     slate = "0x" + "cd" * 32
-    events = [_make_log(slate, 1000)]
+    events = [_make_event(slate, 1000)]
     w3 = _w3_for_resolver(events=events, slate_addresses={slate: [spell_addr]})
     # 2026-04-09 — one day past the 7-day window.
     w3.eth.get_block.side_effect = [
@@ -419,12 +444,12 @@ def test_resolve_pending_persists_cache_growth(tmp_path):
     spell_addr = "0x" + "33" * 20
     spell_start = date(2026, 4, 1)
     df = pd.DataFrame({
-        "Delegate Contract": ["0xvoter1"],
+        "Delegate Contract": [_VOTER_1],
         spell_addr: [PENDING],
     })
 
     slate = "0x" + "ef" * 32
-    events = [_make_log(slate, 1000)]
+    events = [_make_event(slate, 1000)]
     w3 = _w3_for_resolver(events=events, slate_addresses={slate: [spell_addr]})
     w3.eth.get_block.side_effect = [
         {"timestamp": _ts(date(2026, 5, 20)), "number": 22_000_000},
@@ -449,14 +474,14 @@ def test_resolve_pending_reuses_cached_slate(tmp_path):
     spell_start = date(2026, 4, 1)
     slate = "0x" + "ef" * 32
     df = pd.DataFrame({
-        "Delegate Contract": ["0xvoter1"],
+        "Delegate Contract": [_VOTER_1],
         spell_addr: [PENDING],
     })
 
     cache_path = tmp_path / "slate_cache.json"
     onchain._save_slate_cache({slate.lower(): [spell_addr]}, cache_path)
 
-    events = [_make_log(slate, 1000)]
+    events = [_make_event(slate, 1000)]
     w3 = _w3_for_resolver(events=events)  # no slate_addresses configured
     w3.eth.get_block.side_effect = [
         {"timestamp": _ts(date(2026, 5, 20)), "number": 22_000_000},
@@ -479,7 +504,7 @@ def test_resolve_pending_no_cache_write_when_no_new_slates(tmp_path):
     spell_start = date(2026, 4, 1)
     slate = "0x" + "ef" * 32
     df = pd.DataFrame({
-        "Delegate Contract": ["0xvoter1"],
+        "Delegate Contract": [_VOTER_1],
         spell_addr: [PENDING],
     })
 
@@ -487,7 +512,7 @@ def test_resolve_pending_no_cache_write_when_no_new_slates(tmp_path):
     onchain._save_slate_cache({slate.lower(): [spell_addr]}, cache_path)
     original_mtime = cache_path.stat().st_mtime_ns
 
-    events = [_make_log(slate, 1000)]
+    events = [_make_event(slate, 1000)]
     w3 = _w3_for_resolver(events=events)
     w3.eth.get_block.side_effect = [
         {"timestamp": _ts(date(2026, 5, 20)), "number": 22_000_000},
