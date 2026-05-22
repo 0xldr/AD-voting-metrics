@@ -21,10 +21,10 @@ from typing import Any, cast
 
 import pandas as pd
 from eth_typing import HexStr
-from eth_utils.crypto import keccak
 from web3 import Web3
+from web3.constants import ADDRESS_ZERO
 from web3.exceptions import BadFunctionCallOutput, ContractLogicError, Web3RPCError
-from web3.types import BlockData, FilterParams
+from web3.types import BlockData
 
 from ad_voting_metrics.metrics import PENDING_VERIFICATION
 
@@ -44,15 +44,10 @@ MAX_SLATE_LENGTH = 50
 SECONDS_PER_BLOCK = 12
 ONE_DAY_BLOCKS = 86_400 // SECONDS_PER_BLOCK
 
-# `Vote(address,bytes32)` event signature topic.
-VOTE_EVENT_TOPIC = HexStr("0x" + keccak(text="Vote(address,bytes32)").hex())
-
-# Sentinel returned by `slates(slate, i)` for some chiefs that don't revert
-# on out-of-bounds access; treated as end-of-list.
-ZERO_ADDRESS = "0x" + "0" * 40
-
-# Minimal ABI: only the `slates` getter, used for slate -> address-list resolution.
-_CHIEF_SLATES_ABI = [
+# Minimal chief ABI: the `slates` getter for slate -> address-list
+# resolution, and the `Vote` event so contract.events.Vote can encode
+# argument filters and decode log topics for us.
+_CHIEF_ABI = [
     {
         "name": "slates",
         "type": "function",
@@ -62,6 +57,15 @@ _CHIEF_SLATES_ABI = [
             {"name": "", "type": "uint256"},
         ],
         "outputs": [{"name": "yays", "type": "address"}],
+    },
+    {
+        "name": "Vote",
+        "type": "event",
+        "anonymous": False,
+        "inputs": [
+            {"name": "usr", "type": "address", "indexed": True},
+            {"name": "slate", "type": "bytes32", "indexed": True},
+        ],
     },
 ]
 
@@ -124,16 +128,16 @@ def _resolve_slate(w3: Web3, slate_hash: str) -> list[str]:
     """
     contract = w3.eth.contract(
         address=Web3.to_checksum_address(CHIEF_ADDRESS),
-        abi=_CHIEF_SLATES_ABI,
+        abi=_CHIEF_ABI,
     )
-    slate_bytes = bytes.fromhex(slate_hash.removeprefix("0x"))
+    slate_bytes = Web3.to_bytes(hexstr=HexStr(slate_hash))
     addresses: list[str] = []
     for i in range(MAX_SLATE_LENGTH):
         try:
             addr: str = contract.functions.slates(slate_bytes, i).call()
         except (BadFunctionCallOutput, ContractLogicError, Web3RPCError, ValueError):
             break
-        if addr.lower() == ZERO_ADDRESS:
+        if addr.lower() == ADDRESS_ZERO:
             break
         addresses.append(addr.lower())
     return addresses
@@ -158,48 +162,45 @@ def _approx_block_from_date(w3: Web3, target: date) -> int:
     return max(0, latest_number - blocks_back)
 
 
-def _voter_topic(voter_address: str) -> HexStr:
-    """Pad a 20-byte address into a 32-byte log topic.
-
-    Returns:
-        Lowercased hex string with the 0x prefix, typed as HexStr so it
-        slots into web3's FilterParams.topics without a cast.
-    """
-    return HexStr("0x" + voter_address.removeprefix("0x").lower().zfill(64))
-
-
 def _fetch_vote_events(
     w3: Web3,
-    voter_address: str,
+    voters: set[str],
     from_block: int,
-) -> list[tuple[str, date]]:
-    """Fetch (slate_hash, event_date) for one voter's chief vote events.
+) -> dict[str, list[tuple[str, date]]]:
+    """Fetch chief Vote events for every voter in one eth_getLogs call.
 
-    Filters server-side by indexed `usr` topic, then resolves each
-    event's block timestamp client-side to a UTC date.
+    Passes the voter set as an OR-filter on the indexed `usr` argument
+    so a single RPC roundtrip returns events for all voters together,
+    then groups them client-side by lowercased voter address. Voters
+    with no events in the window get an empty list. web3's
+    contract.events handles topic encoding and decoding.
 
     Returns:
-        List of (slate_hash, event_date) tuples, one per Vote log.
+        Lowercased voter address -> list of (slate_hash, event_date) tuples.
     """
-    filter_params: FilterParams = {
-        "fromBlock": from_block,
-        "toBlock": "latest",
-        "address": Web3.to_checksum_address(CHIEF_ADDRESS),
-        "topics": [VOTE_EVENT_TOPIC, _voter_topic(voter_address)],
-    }
-    logs = w3.eth.get_logs(filter_params)
+    result: dict[str, list[tuple[str, date]]] = {v.lower(): [] for v in voters}
+    if not voters:
+        return result
 
-    events: list[tuple[str, date]] = []
+    contract = w3.eth.contract(
+        address=Web3.to_checksum_address(CHIEF_ADDRESS),
+        abi=_CHIEF_ABI,
+    )
+    entries = contract.events.Vote().get_logs(
+        from_block=from_block,
+        argument_filters={"usr": [Web3.to_checksum_address(v) for v in voters]},
+    )
+
     block_ts_cache: dict[int, int] = {}
-    for log in logs:
-        slate_hex = log["topics"][2].hex()
-        slate = "0x" + slate_hex.removeprefix("0x").lower()
-        block_number = log["blockNumber"]
+    for entry in entries:
+        voter = entry["args"]["usr"].lower()
+        slate = Web3.to_hex(entry["args"]["slate"])
+        block_number = entry["blockNumber"]
         if block_number not in block_ts_cache:
             block_ts_cache[block_number] = _as_block(w3.eth.get_block(block_number))["timestamp"]
         event_date = datetime.fromtimestamp(block_ts_cache[block_number], tz=UTC).date()
-        events.append((slate, event_date))
-    return events
+        result.setdefault(voter, []).append((slate, event_date))
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -225,19 +226,6 @@ def _identify_pending_pairs(
         if mask.any():
             pending[spell_addr] = df.index[mask].tolist()
     return pending
-
-
-def _gather_events(
-    w3: Web3,
-    voters: set[str],
-    from_block: int,
-) -> dict[str, list[tuple[str, date]]]:
-    """Fetch chief Vote events for each voter.
-
-    Returns:
-        voter address -> list of (slate, event_date) tuples.
-    """
-    return {voter: _fetch_vote_events(w3, voter, from_block) for voter in voters}
 
 
 def _delegate_voted_for_spell(
@@ -336,7 +324,7 @@ def resolve_pending_executive_votes(
         for indices in pending.values()
         for idx in indices
     }
-    events_by_voter = _gather_events(w3, voters, from_block)
+    events_by_voter = _fetch_vote_events(w3, voters, from_block)
 
     seen_slates = {slate for events in events_by_voter.values() for slate, _ in events}
     for slate in seen_slates - slate_cache.keys():
