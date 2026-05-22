@@ -149,7 +149,6 @@ ignore = [
     "D203",   # Pydocstyle - one blank line required before class docstring
     "D212",   # Pydocstyle - summary line should be immediately after the opening quotes.
     "S311",   # Flake8-bandit - Standard pseudo-random generators are not suitable for security/cryptographic purposes
-    "RET504", # Flake8-return - Checks for variable assignments that immediately precede a return of the assigned variable.
     "FA102",  # Flake8-future-annotations - Missing `from __future__ import annotations`, but uses PEP 604 union
     "TRY003", # Tryceratops - Checks for long exception messages that are not defined in the exception class itself.
     "EM101",  # Flake8-errmsg - Checks for the use of string literals in exception constructors.

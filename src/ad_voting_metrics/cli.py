@@ -135,9 +135,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
         required=True,
         type=parse_month,
         metavar="MONTH",
-        help=(
-            "Month to finalize, e.g. 'April 2026' or '2026-04'. Must match a month previously processed by `fetch`."
-        ),
+        help=("Month to finalize, e.g. 'April 2026' or '2026-04'. Must match a month previously processed by `fetch`."),
     )
 
     return parser

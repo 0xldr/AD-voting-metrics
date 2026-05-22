@@ -90,12 +90,7 @@ def get_delegate_list_sky(
     }
 
     target = pd.MultiIndex.from_product([contracts, days], names=["delegation_contract", "dt"])
-    filled = (
-        all_sky_delegated["running_total_balance"]
-        .reindex(target, fill_value=0.0)
-        .astype(float)
-        .reset_index()
-    )
+    filled = all_sky_delegated["running_total_balance"].reindex(target, fill_value=0.0).astype(float).reset_index()
 
     return pd.DataFrame({
         "contract": filled["delegation_contract"],

@@ -37,6 +37,7 @@ def _empty_communication_df() -> pd.DataFrame:
         columns=["Delegate", "Poll Id", "Start Date", "End Date", "Title", "Communication Status"],
     )
 
+
 # ---------------------------------------------------------------------------
 # _window_start_for_period
 # ---------------------------------------------------------------------------
@@ -254,24 +255,33 @@ def test_run_finalize_eligibility_tie_at_cutoff_exits():
     # All ranked 6 → tie crossing the 6-slot cutoff
     ranks_df = pd.DataFrame([
         {"Date": date(2026, 4, d), "Delegate": f"D{i}", "Total Delegation": 100.0, "Rank": 6}
-        for d in range(1, 31) for i in range(7)
+        for d in range(1, 31)
+        for i in range(7)
     ])
     # Give everyone perfect participation history so they're all eligible
     participation = pd.DataFrame([
         {
-            "Delegate": f"D{i}", "Poll Id": f"poll_{j}",
-            "Start Date": date(2026, 2, 1), "End Date": date(2026, 2, 2),
-            "Title": "", "Participation Status": "Yes",
+            "Delegate": f"D{i}",
+            "Poll Id": f"poll_{j}",
+            "Start Date": date(2026, 2, 1),
+            "End Date": date(2026, 2, 2),
+            "Title": "",
+            "Participation Status": "Yes",
         }
-        for i in range(7) for j in range(10)
+        for i in range(7)
+        for j in range(10)
     ])
     communication = pd.DataFrame([
         {
-            "Delegate": f"D{i}", "Poll Id": f"poll_{j}",
-            "Start Date": date(2026, 2, 1), "End Date": date(2026, 2, 2),
-            "Title": "", "Communication Status": "Yes",
+            "Delegate": f"D{i}",
+            "Poll Id": f"poll_{j}",
+            "Start Date": date(2026, 2, 1),
+            "End Date": date(2026, 2, 2),
+            "Title": "",
+            "Communication Status": "Yes",
         }
-        for i in range(7) for j in range(10)
+        for i in range(7)
+        for j in range(10)
     ])
 
     with (
@@ -497,9 +507,7 @@ def _make_fetch_args(
 def _canned_dune_outputs(period: MonthPeriod, contract: str, name: str) -> pd.DataFrame:
     """Return a sky_protocol-shaped DataFrame covering one delegate for every day in period."""
     days = list(pd.date_range(period.start, period.end, freq="D").date)
-    return pd.DataFrame([
-        {"contract": contract, "name": name, "date": d, "sky": 100.0} for d in days
-    ])
+    return pd.DataFrame([{"contract": contract, "name": name, "date": d, "sky": 100.0} for d in days])
 
 
 def test_run_fetch_writes_csvs_and_workbook_tabs(tmp_path, monkeypatch):

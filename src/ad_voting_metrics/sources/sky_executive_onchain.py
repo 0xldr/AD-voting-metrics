@@ -338,6 +338,7 @@ def resolve_pending_executive_votes(
 
     logger.info(
         "On-chain verification flipped %d of %d Pending Verification cell(s) to 'Yes'",
-        flipped, sum(len(v) for v in pending.values()),
+        flipped,
+        sum(len(v) for v in pending.values()),
     )
     return df

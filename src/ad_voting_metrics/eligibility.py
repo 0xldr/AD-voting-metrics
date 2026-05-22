@@ -208,9 +208,7 @@ def compute_daily_eligibility(
     active_delegates = [d for d in delegates if d.is_active_during(day, day)]
     _validate_inputs_present(day, [d.name for d in active_delegates], daily_ranks, metrics_input)
 
-    per_delegate_partial = _compute_partial_results(
-        day, window, active_delegates, daily_ranks, metrics_input
-    )
+    per_delegate_partial = _compute_partial_results(day, window, active_delegates, daily_ranks, metrics_input)
     l3_slots_available, l3_assigned_names = _assign_l3_slots(day, per_delegate_partial)
 
     per_delegate: dict[str, DelegateEligibility] = {}

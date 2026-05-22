@@ -78,7 +78,9 @@ def _build_metrics_input(
     if participation_df.empty:
         return {
             delegate.name: DelegateMetricsInput(
-                poll_starts=[], participation_statuses=[], communication_statuses=[],
+                poll_starts=[],
+                participation_statuses=[],
+                communication_statuses=[],
             )
             for delegate in delegates
         }
