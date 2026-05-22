@@ -146,12 +146,8 @@ def test_full_period_l1_perfect_metrics():
 
 def test_partial_period_l3():
     """15 days L3 out of 30 → half the L3 amount."""
-    half_l3 = [
-        _daily(date(2026, 4, d), {"Alice": _delegate_eligibility(assigned_level=3)}) for d in range(1, 16)
-    ]
-    half_none = [
-        _daily(date(2026, 4, d), {"Alice": _delegate_eligibility(assigned_level=None)}) for d in range(16, 31)
-    ]
+    half_l3 = [_daily(date(2026, 4, d), {"Alice": _delegate_eligibility(assigned_level=3)}) for d in range(1, 16)]
+    half_none = [_daily(date(2026, 4, d), {"Alice": _delegate_eligibility(assigned_level=None)}) for d in range(16, 31)]
     result = compute_period_compensation(
         period=PERIOD,
         daily_eligibility=half_l3 + half_none,
@@ -167,9 +163,7 @@ def test_partial_period_l3():
 def test_mid_period_promotion_l3_to_l1():
     """15 days L3 + 15 days L1 → (15/30)*4000 + (15/30)*33333 = 2000 + 16666.5."""
     days = [_daily(date(2026, 4, d), {"Alice": _delegate_eligibility(assigned_level=3)}) for d in range(1, 16)]
-    days.extend(
-        _daily(date(2026, 4, d), {"Alice": _delegate_eligibility(assigned_level=1)}) for d in range(16, 31)
-    )
+    days.extend(_daily(date(2026, 4, d), {"Alice": _delegate_eligibility(assigned_level=1)}) for d in range(16, 31))
     result = compute_period_compensation(
         period=PERIOD,
         daily_eligibility=days,

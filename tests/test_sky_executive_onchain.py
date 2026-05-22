@@ -33,10 +33,12 @@ def test_load_slate_cache_missing_file_returns_empty(tmp_path):
 
 def test_load_slate_cache_lowercases_keys_and_addresses(tmp_path):
     cache_path = tmp_path / "slate_cache.json"
-    cache_path.write_text(json.dumps({
-        "0xABCDEF": ["0x1111", "0x2222"],
-        "0xBEEF": ["0x3333"],
-    }))
+    cache_path.write_text(
+        json.dumps({
+            "0xABCDEF": ["0x1111", "0x2222"],
+            "0xBEEF": ["0x3333"],
+        })
+    )
     out = onchain._load_slate_cache(cache_path)
     assert out == {
         "0xabcdef": ["0x1111", "0x2222"],
@@ -185,10 +187,13 @@ def test_fetch_vote_events_makes_one_get_logs_call_for_n_voters():
 
 def test_fetch_vote_events_groups_results_by_voter():
     w3 = MagicMock()
-    _patch_contract_events(w3, events=[
-        _make_event("0xabcd", 1000, voter=_VOTER_1),
-        _make_event("0xbeef", 1001, voter=_VOTER_2),
-    ])
+    _patch_contract_events(
+        w3,
+        events=[
+            _make_event("0xabcd", 1000, voter=_VOTER_1),
+            _make_event("0xbeef", 1001, voter=_VOTER_2),
+        ],
+    )
     w3.eth.get_block.return_value = {"timestamp": _ts(date(2026, 5, 20))}
     out = onchain._fetch_vote_events(w3, {_VOTER_1, _VOTER_2}, from_block=500)
     assert _VOTER_1 in out
@@ -199,9 +204,12 @@ def test_fetch_vote_events_groups_results_by_voter():
 
 def test_fetch_vote_events_voters_with_no_events_get_empty_list():
     w3 = MagicMock()
-    _patch_contract_events(w3, events=[
-        _make_event("0xabcd", 1000, voter=_VOTER_1),
-    ])
+    _patch_contract_events(
+        w3,
+        events=[
+            _make_event("0xabcd", 1000, voter=_VOTER_1),
+        ],
+    )
     w3.eth.get_block.return_value = {"timestamp": _ts(date(2026, 5, 20))}
     out = onchain._fetch_vote_events(w3, {_VOTER_1, _VOTER_2}, from_block=500)
     assert out[_VOTER_2] == []
@@ -217,11 +225,14 @@ def test_fetch_vote_events_empty_voter_set_skips_rpc():
 def test_fetch_vote_events_caches_block_timestamps():
     """Same block number across multiple logs => one get_block call."""
     w3 = MagicMock()
-    _patch_contract_events(w3, events=[
-        _make_event("0xabcd", 1000, voter=_VOTER_1),
-        _make_event("0xbeef", 1000, voter=_VOTER_1),
-        _make_event("0xcafe", 1000, voter=_VOTER_2),
-    ])
+    _patch_contract_events(
+        w3,
+        events=[
+            _make_event("0xabcd", 1000, voter=_VOTER_1),
+            _make_event("0xbeef", 1000, voter=_VOTER_1),
+            _make_event("0xcafe", 1000, voter=_VOTER_2),
+        ],
+    )
     w3.eth.get_block.return_value = {"timestamp": _ts(date(2026, 5, 20))}
     onchain._fetch_vote_events(w3, {_VOTER_1, _VOTER_2}, from_block=500)
     assert w3.eth.get_block.call_count == 1
@@ -260,61 +271,96 @@ def _slate_with(spell_addr: str) -> dict:
 
 
 def test_delegate_voted_for_spell_no_events():
-    assert onchain._delegate_voted_for_spell(
-        events=[], spell_address="0xspell", start_date=date(2026, 4, 1),
-        deadline=date(2026, 4, 8), slate_cache={},
-    ) is False
+    assert (
+        onchain._delegate_voted_for_spell(
+            events=[],
+            spell_address="0xspell",
+            start_date=date(2026, 4, 1),
+            deadline=date(2026, 4, 8),
+            slate_cache={},
+        )
+        is False
+    )
 
 
 def test_delegate_voted_for_spell_event_in_window_with_matching_slate():
-    assert onchain._delegate_voted_for_spell(
-        events=[("0xabcd", date(2026, 4, 3))],
-        spell_address="0xspell", start_date=date(2026, 4, 1),
-        deadline=date(2026, 4, 8), slate_cache=_slate_with("0xspell"),
-    ) is True
+    assert (
+        onchain._delegate_voted_for_spell(
+            events=[("0xabcd", date(2026, 4, 3))],
+            spell_address="0xspell",
+            start_date=date(2026, 4, 1),
+            deadline=date(2026, 4, 8),
+            slate_cache=_slate_with("0xspell"),
+        )
+        is True
+    )
 
 
 def test_delegate_voted_for_spell_event_before_start_date_ignored():
-    assert onchain._delegate_voted_for_spell(
-        events=[("0xabcd", date(2026, 3, 31))],
-        spell_address="0xspell", start_date=date(2026, 4, 1),
-        deadline=date(2026, 4, 8), slate_cache=_slate_with("0xspell"),
-    ) is False
+    assert (
+        onchain._delegate_voted_for_spell(
+            events=[("0xabcd", date(2026, 3, 31))],
+            spell_address="0xspell",
+            start_date=date(2026, 4, 1),
+            deadline=date(2026, 4, 8),
+            slate_cache=_slate_with("0xspell"),
+        )
+        is False
+    )
 
 
 def test_delegate_voted_for_spell_event_past_deadline_ignored():
     """7-day cutoff: an otherwise-matching vote on day 8+ does not count."""
-    assert onchain._delegate_voted_for_spell(
-        events=[("0xabcd", date(2026, 4, 9))],  # 8 days after start
-        spell_address="0xspell", start_date=date(2026, 4, 1),
-        deadline=date(2026, 4, 8), slate_cache=_slate_with("0xspell"),
-    ) is False
+    assert (
+        onchain._delegate_voted_for_spell(
+            events=[("0xabcd", date(2026, 4, 9))],  # 8 days after start
+            spell_address="0xspell",
+            start_date=date(2026, 4, 1),
+            deadline=date(2026, 4, 8),
+            slate_cache=_slate_with("0xspell"),
+        )
+        is False
+    )
 
 
 def test_delegate_voted_for_spell_slate_missing_spell_ignored():
-    assert onchain._delegate_voted_for_spell(
-        events=[("0xabcd", date(2026, 4, 3))],
-        spell_address="0xspell", start_date=date(2026, 4, 1),
-        deadline=date(2026, 4, 8),
-        slate_cache={"0xabcd": ["0xother"]},
-    ) is False
+    assert (
+        onchain._delegate_voted_for_spell(
+            events=[("0xabcd", date(2026, 4, 3))],
+            spell_address="0xspell",
+            start_date=date(2026, 4, 1),
+            deadline=date(2026, 4, 8),
+            slate_cache={"0xabcd": ["0xother"]},
+        )
+        is False
+    )
 
 
 def test_delegate_voted_for_spell_address_case_insensitive():
-    assert onchain._delegate_voted_for_spell(
-        events=[("0xabcd", date(2026, 4, 3))],
-        spell_address="0xSPELL", start_date=date(2026, 4, 1),
-        deadline=date(2026, 4, 8), slate_cache={"0xabcd": ["0xspell"]},
-    ) is True
+    assert (
+        onchain._delegate_voted_for_spell(
+            events=[("0xabcd", date(2026, 4, 3))],
+            spell_address="0xSPELL",
+            start_date=date(2026, 4, 1),
+            deadline=date(2026, 4, 8),
+            slate_cache={"0xabcd": ["0xspell"]},
+        )
+        is True
+    )
 
 
 def test_delegate_voted_for_spell_unknown_slate_ignored():
     """A slate not in the cache is treated as containing nothing."""
-    assert onchain._delegate_voted_for_spell(
-        events=[("0xunknown", date(2026, 4, 3))],
-        spell_address="0xspell", start_date=date(2026, 4, 1),
-        deadline=date(2026, 4, 8), slate_cache={},
-    ) is False
+    assert (
+        onchain._delegate_voted_for_spell(
+            events=[("0xunknown", date(2026, 4, 3))],
+            spell_address="0xspell",
+            start_date=date(2026, 4, 1),
+            deadline=date(2026, 4, 8),
+            slate_cache={},
+        )
+        is False
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -404,12 +450,14 @@ def test_resolve_pending_flips_cell_when_slate_contains_spell(tmp_path):
     # Make the block timestamp fall on 2026-04-03 (within 7-day window).
     w3.eth.get_block.side_effect = [
         {"timestamp": _ts(date(2026, 5, 20)), "number": 22_000_000},  # latest, for from-block calc
-        {"timestamp": _ts(date(2026, 4, 3))},                          # the log's block
+        {"timestamp": _ts(date(2026, 4, 3))},  # the log's block
     ]
 
     result = onchain.resolve_pending_executive_votes(
-        df, [_spell(spell_addr, spell_start)],
-        w3=w3, cache_path=tmp_path / "slate_cache.json",
+        df,
+        [_spell(spell_addr, spell_start)],
+        w3=w3,
+        cache_path=tmp_path / "slate_cache.json",
     )
     assert result.loc[0, spell_addr] == "Yes"
 
@@ -433,8 +481,10 @@ def test_resolve_pending_late_vote_stays_pending(tmp_path):
     ]
 
     result = onchain.resolve_pending_executive_votes(
-        df, [_spell(spell_addr, spell_start)],
-        w3=w3, cache_path=tmp_path / "slate_cache.json",
+        df,
+        [_spell(spell_addr, spell_start)],
+        w3=w3,
+        cache_path=tmp_path / "slate_cache.json",
     )
     assert result.loc[0, spell_addr] == PENDING
 
@@ -458,8 +508,10 @@ def test_resolve_pending_persists_cache_growth(tmp_path):
 
     cache_path = tmp_path / "slate_cache.json"
     onchain.resolve_pending_executive_votes(
-        df, [_spell(spell_addr, spell_start)],
-        w3=w3, cache_path=cache_path,
+        df,
+        [_spell(spell_addr, spell_start)],
+        w3=w3,
+        cache_path=cache_path,
     )
 
     assert cache_path.exists()
@@ -489,8 +541,10 @@ def test_resolve_pending_reuses_cached_slate(tmp_path):
     ]
 
     result = onchain.resolve_pending_executive_votes(
-        df, [_spell(spell_addr, spell_start)],
-        w3=w3, cache_path=cache_path,
+        df,
+        [_spell(spell_addr, spell_start)],
+        w3=w3,
+        cache_path=cache_path,
     )
     # Should still flip the cell using the cached slate.
     assert result.loc[0, spell_addr] == "Yes"
@@ -520,8 +574,10 @@ def test_resolve_pending_no_cache_write_when_no_new_slates(tmp_path):
     ]
 
     onchain.resolve_pending_executive_votes(
-        df, [_spell(spell_addr, spell_start)],
-        w3=w3, cache_path=cache_path,
+        df,
+        [_spell(spell_addr, spell_start)],
+        w3=w3,
+        cache_path=cache_path,
     )
     # File untouched (mtime unchanged).
     assert cache_path.stat().st_mtime_ns == original_mtime
