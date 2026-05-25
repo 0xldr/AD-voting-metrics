@@ -76,43 +76,27 @@ class _PartialResult:
     yaml_level: int | None
 
 
-def _validate_inputs_present(
-    day: date,
-    active_names: list[str],
-    daily_ranks: Mapping[str, int],
-    metrics_input: Mapping[str, DelegateMetricsInput],
-) -> None:
-    """Raise ValueError if any active delegate lacks a rank or metrics entry.
-
-    Raises:
-        ValueError: when any active delegate has no rank or no metrics entry.
-    """
-    missing_ranks = [n for n in active_names if n not in daily_ranks]
-    if missing_ranks:
-        msg = f"daily_ranks is missing for active delegates on {day}: {missing_ranks}"
-        raise ValueError(msg)
-    missing_metrics = [n for n in active_names if n not in metrics_input]
-    if missing_metrics:
-        msg = f"metrics_input is missing entries for active delegates on {day}: {missing_metrics}"
-        raise ValueError(msg)
-
-
-def _compute_partial_results(
-    day: date,
+def compute_period_metrics(
     window: tuple[date, date],
-    active_delegates: Sequence[Delegate],
-    daily_ranks: Mapping[str, int],
+    delegates: Sequence[Delegate],
     metrics_input: Mapping[str, DelegateMetricsInput],
-) -> dict[str, _PartialResult]:
-    """Compute metrics + provisional yaml_level for each active delegate.
+) -> dict[str, tuple[float | None, float | None]]:
+    """Compute (participation_pct, communication_pct) per delegate for the given window.
+
+    These percentages are period-level facts, not per-day facts: the 6-month track-record window is constant across
+    every day in the period being finalized. Computing them once at the period level avoids redoing the same poll-list
+    filtering for every day.
 
     Returns:
-        Mapping of delegate name to _PartialResult.
+        Mapping of delegate name to (participation_pct, communication_pct). Either component may be None when no
+        in-window polls fall into the votable (Yes/No) bucket.
     """
     window_start, window_end = window
-    per_delegate_partial: dict[str, _PartialResult] = {}
-    for delegate in active_delegates:
-        m = metrics_input[delegate.name]
+    out: dict[str, tuple[float | None, float | None]] = {}
+    for delegate in delegates:
+        m = metrics_input.get(delegate.name)
+        if m is None:
+            continue
         p = participation_pct_for_window(
             poll_starts=m.poll_starts,
             statuses=m.participation_statuses,
@@ -126,6 +110,45 @@ def _compute_partial_results(
             window_start=window_start,
             window_end=window_end,
         )
+        out[delegate.name] = (p, c)
+    return out
+
+
+def _validate_inputs_present(
+    day: date,
+    active_names: list[str],
+    daily_ranks: Mapping[str, int],
+    period_metrics: Mapping[str, tuple[float | None, float | None]],
+) -> None:
+    """Raise ValueError if any active delegate lacks a rank or metrics entry.
+
+    Raises:
+        ValueError: when any active delegate has no rank or no metrics entry.
+    """
+    missing_ranks = [n for n in active_names if n not in daily_ranks]
+    if missing_ranks:
+        msg = f"daily_ranks is missing for active delegates on {day}: {missing_ranks}"
+        raise ValueError(msg)
+    missing_metrics = [n for n in active_names if n not in period_metrics]
+    if missing_metrics:
+        msg = f"metrics_input is missing entries for active delegates on {day}: {missing_metrics}"
+        raise ValueError(msg)
+
+
+def _compute_partial_results(
+    day: date,
+    active_delegates: Sequence[Delegate],
+    daily_ranks: Mapping[str, int],
+    period_metrics: Mapping[str, tuple[float | None, float | None]],
+) -> dict[str, _PartialResult]:
+    """Combine each active delegate's precomputed period metrics with today's rank and YAML level.
+
+    Returns:
+        Mapping of delegate name to _PartialResult.
+    """
+    per_delegate_partial: dict[str, _PartialResult] = {}
+    for delegate in active_delegates:
+        p, c = period_metrics[delegate.name]
         eligible = p is not None and p >= ELIGIBILITY_THRESHOLD and c is not None and c >= ELIGIBILITY_THRESHOLD
         per_delegate_partial[delegate.name] = _PartialResult(
             rank=daily_ranks[delegate.name],
@@ -176,28 +199,27 @@ def _assign_l3_slots(
 def compute_daily_eligibility(
     *,
     day: date,
-    window: tuple[date, date],
     delegates: Sequence[Delegate],
     daily_ranks: Mapping[str, int],
-    metrics_input: Mapping[str, DelegateMetricsInput],
+    period_metrics: Mapping[str, tuple[float | None, float | None]],
 ) -> DailyEligibility:
     """Compute eligibility and slot assignment for every active delegate on `day`.
 
-    `window` is (start, end) bounding the trailing metric window. For a finalize run the same window is usually passed
-    for every day in the period - the 6-month metric is a track record, not a per-day rolling calculation.
+    `period_metrics` is the precomputed (p_pct, c_pct) per delegate for the 6-month window — period-level, not per-day.
+    Callers build it once via `compute_period_metrics` and reuse it across every day in the period.
 
-    Active delegate are those where `is_active_during(day, day)` holds. Inactive delegates are silently excluded from
-    the result, even if present in `daily_ranks` or `metrics_input` - callers may reuse one metrics dict across many
-    days. Every active delegate must have both a rank and a metrics entry. ValueError propagates from validation
+    Active delegates are those where `is_active_during(day, day)` holds. Inactive delegates are silently excluded from
+    the result, even if present in `daily_ranks` or `period_metrics` - callers reuse the same maps across many days.
+    Every active delegate must have both a rank and a period_metrics entry. ValueError propagates from validation
     (missing rank/metrics) or from L3 slot assignment (a rank tie spanning the slot cutoff).
 
     Returns:
         DailyEligibility with one entry per active delegate.
     """
     active_delegates = [d for d in delegates if d.is_active_during(day, day)]
-    _validate_inputs_present(day, [d.name for d in active_delegates], daily_ranks, metrics_input)
+    _validate_inputs_present(day, [d.name for d in active_delegates], daily_ranks, period_metrics)
 
-    per_delegate_partial = _compute_partial_results(day, window, active_delegates, daily_ranks, metrics_input)
+    per_delegate_partial = _compute_partial_results(day, active_delegates, daily_ranks, period_metrics)
     l3_slots_available, l3_assigned_names = _assign_l3_slots(day, per_delegate_partial)
 
     per_delegate: dict[str, DelegateEligibility] = {}

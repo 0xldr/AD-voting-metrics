@@ -558,12 +558,12 @@ def _build_comm_defaults(
                 row[col] = ""
         rows[poll_id] = row
 
-    out = pd.DataFrame.from_dict(rows, orient="index", columns=columns).fillna("")
+    out = pd.DataFrame.from_dict(rows, orient="index", columns=columns)
     out.index.name = "Poll Id"
     return out
 
 
-def write_communication_master(  # noqa: PLR0914 — DataFrame merge is one logical operation
+def write_communication_master(
     workbook: gspread.Spreadsheet,
     df: pd.DataFrame,
     poll_info: list[dict],
@@ -639,21 +639,22 @@ def write_communication_master(  # noqa: PLR0914 — DataFrame merge is one logi
     columns = list(existing.columns)
     defaults = _build_comm_defaults(df, columns, poll_columns, poll_info, spell_info)
 
-    new_ids = defaults.index.difference(existing.index)
-    if len(new_ids) > 0:
-        empty = pd.DataFrame("", index=new_ids, columns=columns)
-        existing = pd.concat([existing, empty])
-
-    aligned_defaults = defaults.reindex(index=existing.index, columns=columns).fillna("")
-    is_blank = existing.astype(str).map(str.strip) == ""  # noqa: PLC1901
-    merged = existing.where(~is_blank, aligned_defaults)
-
-    sort_key = pd.to_datetime(merged["Start Date"], errors="coerce")
+    # Merge rule: keep any operator-entered cell (non-blank); for blank cells
+    # (and rows that are in this fetch but not yet in the tab), fall back to
+    # defaults. `combine_first` does the cell-level fill + index/column union
+    # in one shot once empty/whitespace cells are treated as null.
     merged = (
-        merged
-        .assign(_sort_key=sort_key)
-        .sort_values("_sort_key", ascending=False, na_position="last")
-        .drop(columns="_sort_key")
+        existing.map(str.strip)
+        .replace("", pd.NA)
+        .combine_first(defaults)
+        .fillna("")
+    )
+
+    merged = merged.sort_values(
+        "Start Date",
+        key=lambda c: pd.to_datetime(c, errors="coerce"),
+        ascending=False,
+        na_position="last",
     )
 
     out = merged.reset_index()

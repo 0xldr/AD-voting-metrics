@@ -418,11 +418,11 @@ def test_run_fetch_writes_csvs_and_workbook_tabs(tmp_path, monkeypatch):
         patch("ad_voting_metrics.pipeline.sky_executive.get_executive_ids", return_value=[]),
         patch(
             "ad_voting_metrics.pipeline.sky_polling.get_vote_poll_ids",
-            side_effect=lambda _poll_info, df, _df_sky, current_datetime: df,  # noqa: ARG005
+            side_effect=lambda _poll_info, df, _sky_lookup, current_datetime: df,  # noqa: ARG005
         ),
         patch(
             "ad_voting_metrics.pipeline.sky_executive.get_vote_executive_ids",
-            side_effect=lambda _spell_info, df, _df_sky: df,
+            side_effect=lambda _spell_info, df, _sky_lookup: df,
         ),
         patch("ad_voting_metrics.pipeline.sheets.get_workbook", return_value=MagicMock()),
         patch("ad_voting_metrics.pipeline.sheets.write_participation_raw_data") as p_mock,
@@ -466,11 +466,11 @@ def test_run_fetch_logs_drift_warnings(tmp_path, monkeypatch):
         patch("ad_voting_metrics.pipeline.sky_executive.get_executive_ids", return_value=[]),
         patch(
             "ad_voting_metrics.pipeline.sky_polling.get_vote_poll_ids",
-            side_effect=lambda _poll_info, df, _df_sky, current_datetime: df,  # noqa: ARG005
+            side_effect=lambda _poll_info, df, _sky_lookup, current_datetime: df,  # noqa: ARG005
         ),
         patch(
             "ad_voting_metrics.pipeline.sky_executive.get_vote_executive_ids",
-            side_effect=lambda _spell_info, df, _df_sky: df,
+            side_effect=lambda _spell_info, df, _sky_lookup: df,
         ),
         patch("ad_voting_metrics.pipeline.sheets.get_workbook", side_effect=RuntimeError("no workbook")),
         patch("ad_voting_metrics.pipeline.write_entry"),

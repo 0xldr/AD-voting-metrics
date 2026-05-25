@@ -19,7 +19,7 @@ import pandas as pd
 
 from . import sheets
 from .compensation import CompensationConfig, PeriodCompensation, compute_period_compensation
-from .eligibility import DailyEligibility, DelegateMetricsInput, compute_daily_eligibility
+from .eligibility import DailyEligibility, DelegateMetricsInput, compute_daily_eligibility, compute_period_metrics
 from .period import MonthPeriod
 from .reconciliation import build_entry, write_entry
 from .roster import Delegate, build_roster_for_period, to_dataframe
@@ -127,19 +127,21 @@ def _compute_daily_results(
 ) -> list[DailyEligibility]:
     """Compute eligibility for each day in the period.
 
-    window is the (start, end) of the trailing metrics window, applied identically on each day.
+    The 6-month metric window is constant across the period, so we compute (p_pct, c_pct) per delegate once via
+    `compute_period_metrics` and reuse it across every day. The only per-day inputs are the rank table and the
+    day's L3 slot competition.
 
     Returns:
         List of DailyEligibility, one per day in period.start..period.end inclusive.
     """
     ranks_by_day = _ranks_by_day(daily_ranks_df)
+    period_metrics = compute_period_metrics(window, delegates, metrics_input)
     return [
         compute_daily_eligibility(
             day=day,
-            window=window,
             delegates=delegates,
             daily_ranks=ranks_by_day.get(day, {}),
-            metrics_input=metrics_input,
+            period_metrics=period_metrics,
         )
         for day in pd.date_range(period.start, period.end, freq="D").date
     ]
@@ -243,16 +245,17 @@ def run_fetch(args: argparse.Namespace) -> None:
 
     logger.info("Getting RANKING...")
     df_sky, df_ranking = _build_sky_and_ranking_frames(df, period, args.cache_hours)
+    sky_lookup = dune.build_sky_lookup(df_sky)
 
     logger.info("Getting POLL IDS...")
     poll_info = sky_polling.get_poll_ids(period)
     logger.info("Getting VOTE FROM POLLS...")
-    df = sky_polling.get_vote_poll_ids(poll_info, df, df_sky, current_datetime=datetime.now(UTC))
+    df = sky_polling.get_vote_poll_ids(poll_info, df, sky_lookup, current_datetime=datetime.now(UTC))
 
     logger.info("Getting SPELL addresses...")
     spell_info = sky_executive.get_executive_ids(period)
     logger.info("Getting VOTE FROM SPELL...")
-    df = sky_executive.get_vote_executive_ids(spell_info, df, df_sky)
+    df = sky_executive.get_vote_executive_ids(spell_info, df, sky_lookup)
 
     logger.info("Verifying Pending executive votes on-chain...")
     try:
