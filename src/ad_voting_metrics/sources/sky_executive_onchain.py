@@ -14,14 +14,12 @@ import logging
 import os
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
-from typing import Any, cast
 
 import pandas as pd
 from eth_typing import HexStr
 from web3 import Web3
 from web3.constants import ADDRESS_ZERO
 from web3.exceptions import BadFunctionCallOutput, ContractLogicError, Web3RPCError
-from web3.types import BlockData
 
 from ad_voting_metrics.metrics import PENDING_VERIFICATION
 from ad_voting_metrics.sources.http import HEADERS, HTTP_TIMEOUT, get_session
@@ -98,15 +96,6 @@ def _save_slate_cache(cache: dict[str, list[str]], path: Path) -> None:
 # ---------------------------------------------------------------------------
 # Web3 calls
 # ---------------------------------------------------------------------------
-
-
-def _as_block(block: BlockData) -> dict[str, Any]:
-    """Narrow a web3 BlockData TypedDict to a plain dict for runtime access.
-
-    Returns:
-        The same mapping, typed as dict[str, Any].
-    """
-    return cast("dict[str, Any]", block)
 
 
 def _resolve_slate(w3: Web3, slate_hash: str) -> list[str]:
@@ -198,7 +187,7 @@ def _fetch_vote_events(
         slate = Web3.to_hex(entry["args"]["slate"])
         block_number = entry["blockNumber"]
         if block_number not in block_ts_cache:
-            block_ts_cache[block_number] = _as_block(w3.eth.get_block(block_number))["timestamp"]
+            block_ts_cache[block_number] = w3.eth.get_block(block_number)["timestamp"]
         event_date = datetime.fromtimestamp(block_ts_cache[block_number], tz=UTC).date()
         result.setdefault(voter, []).append((slate, event_date))
     return result

@@ -137,21 +137,34 @@ def participation_pct_for_window(
 ) -> float | None:
     """Participation percentage filtered to polls within the given window.
 
-    poll_starts and statuses are parallel, one entry per poll.
+    poll_starts and statuses are parallel, one entry per poll; mismatched lengths surface through zip's strict mode.
 
     Returns:
         Participation percentage for in-window polls, or None.
-
-    Raises:
-        ValueError: if the two sequences have different lengths.
     """
-    if len(poll_starts) != len(statuses):
-        msg = f"poll_starts and statuses must be the same length got {len(poll_starts)} and {len(statuses)}"
-        raise ValueError(msg)
     in_window_statuses = [
         s for ps, s in zip(poll_starts, statuses, strict=True) if is_in_window(ps, window_start, window_end)
     ]
     return participation_pct(in_window_statuses)
+
+
+def cross_reference_one(participation: str) -> str | None:
+    """Return the implied communication value for a participation status, or None for passthrough.
+
+    Encodes the rule that callers (sheets default-fill, metrics list-wise apply) share:
+
+      - participation in NOT_PARTICIPATED → "Did not vote"
+      - participation in DISCOUNTED → mirror the participation status
+      - participation in PARTICIPATED or unknown → None (caller chooses passthrough or default)
+
+    Returns:
+        The override value, or None when the caller should keep its existing communication value.
+    """
+    if participation in NOT_PARTICIPATED:
+        return "Did not vote"
+    if participation in DISCOUNTED:
+        return participation
+    return None
 
 
 def apply_participation_cross_reference(
@@ -169,30 +182,15 @@ def apply_participation_cross_reference(
       - Unknown status → communication passes through (don't silently drop unrecognized statuses; count_statuses
         surfaces them).
 
+    Mismatched sequence lengths surface through zip's strict mode.
+
     Returns:
         New list of cross-referenced communication statuses; inputs not mutated.
-
-    Raises:
-        ValueError: if the two sequences have different lengths.
     """
-    if len(participation_statuses) != len(communication_statuses):
-        msg = (
-            f"participation_statuses and communication_statuses must be the "
-            f"same length (got {len(participation_statuses)}) and "
-            f"{len(communication_statuses)}"
-        )
-        raise ValueError(msg)
-    result = []
-    for p, c in zip(participation_statuses, communication_statuses, strict=True):
-        if p in NOT_PARTICIPATED:
-            result.append("Did not vote")
-        elif p in DISCOUNTED:
-            result.append(p)
-        else:
-            # "Yes" or unknown: passthrough.
-            result.append(c)
-
-    return result
+    return [
+        override if (override := cross_reference_one(p)) is not None else c
+        for p, c in zip(participation_statuses, communication_statuses, strict=True)
+    ]
 
 
 def communication_pct(
@@ -223,23 +221,16 @@ def communication_pct_for_window(
 ) -> float | None:
     """Communication percentage filtered to polls within the given window.
 
-    The three sequences are parallel, one entry per poll.
+    The three sequences are parallel, one entry per poll; mismatched lengths surface through zip's strict mode.
 
     Returns:
         Communication percentage for in-window polls, or None.
-
-    Raises:
-        ValueError: if the three sequences have different lengths.
     """
-    n = len(poll_starts)
-    if len(participation_statuses) != n or len(communication_statuses) != n:
-        msg = (
-            f"poll_starts, participation_statuses, and communication_statuses "
-            f"must all be the same length (got {n}, "
-            f"{len(participation_statuses)}, {len(communication_statuses)})"
-        )
-        raise ValueError(msg)
-    in_window_indices = [i for i, ps in enumerate(poll_starts) if is_in_window(ps, window_start, window_end)]
-    p_filtered = [participation_statuses[i] for i in in_window_indices]
-    c_filtered = [communication_statuses[i] for i in in_window_indices]
+    in_window = [
+        (p, c)
+        for ps, p, c in zip(poll_starts, participation_statuses, communication_statuses, strict=True)
+        if is_in_window(ps, window_start, window_end)
+    ]
+    p_filtered = [p for p, _ in in_window]
+    c_filtered = [c for _, c in in_window]
     return communication_pct(p_filtered, c_filtered)

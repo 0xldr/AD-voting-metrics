@@ -349,11 +349,11 @@ def test_write_entry_handles_unicode(tmp_path):
     assert parsed["drift_warnings"] == ["✓ verified: Cüstom Délégate"]
 
 
-def test_write_entry_filename_strips_microseconds(tmp_path):
-    """Even if the run_timestamp has microseconds, the filename uses second precision."""
+def test_write_entry_filename_sanitizes_iso_timestamp(tmp_path):
+    """ISO timestamp is preserved with colons replaced by hyphens and +00:00 collapsed to Z."""
     period = _sample_period()
     entry = _make_entry(run_timestamp="2026-05-06T15:32:08.123456+00:00")
 
     path = write_entry(tmp_path, period, entry)
     assert path is not None
-    assert path.name == "2026-04_2026-05-06T15-32-08Z.json"
+    assert path.name == "2026-04_2026-05-06T15-32-08.123456Z.json"

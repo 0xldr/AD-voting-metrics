@@ -260,7 +260,7 @@ def test_pct_for_window_only_discounted_in_window_returns_none():
 
 def test_pct_for_window_mismatched_lengths_raises():
     """Bug-prone caller error fails fast rather than silently truncating."""
-    with pytest.raises(ValueError, match="same length"):
+    with pytest.raises(ValueError, match=r"zip\(\) argument"):
         participation_pct_for_window(
             [date(2026, 4, 1)],
             ["Yes", "No"],
@@ -329,7 +329,7 @@ def test_cross_ref_empty_inputs_returns_empty():
 
 
 def test_cross_ref_mismatched_lengths_raises():
-    with pytest.raises(ValueError, match="same length"):
+    with pytest.raises(ValueError, match=r"zip\(\) argument"):
         apply_participation_cross_reference(["Yes", "No"], ["Yes"])
 
 
@@ -419,7 +419,7 @@ def test_communication_pct_empty_inputs_returns_none():
 
 
 def test_communication_pct_mismatched_lengths_raises():
-    with pytest.raises(ValueError, match="same length"):
+    with pytest.raises(ValueError, match=r"zip\(\) argument"):
         communication_pct(["Yes", "No"], ["Yes"])
 
 
@@ -483,7 +483,7 @@ def test_communication_pct_for_window_unbounded_back():
 
 
 def test_communication_pct_for_window_mismatched_lengths_raises():
-    with pytest.raises(ValueError, match="same length"):
+    with pytest.raises(ValueError, match=r"zip\(\) argument"):
         communication_pct_for_window(
             [date(2026, 4, 1)],
             ["Yes", "No"],

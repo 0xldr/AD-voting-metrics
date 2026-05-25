@@ -99,16 +99,15 @@ def build_entry(
 def _filename(period: MonthPeriod, run_timestamp_iso: str) -> str:
     """Build a filesystem-safe, sortable filename for a single run.
 
-    Format: <YYYY-MM>_<YYYY-MM-DDTHH-MM-SSZ>.json (e.g. "2026-04_2026-05-06T15-32-08Z.json). Colons are replaced with
-    hyphens because they're illegal on Windows filesystems
+    Format: <YYYY-MM>_<sanitized-iso-timestamp>.json. Colons are replaced with hyphens because they're illegal on
+    Windows filesystems; the trailing +00:00 offset is collapsed to Z so the result is compact.
 
     Returns:
         The composed filename.
     """
     period_iso = period.start.strftime("%Y-%m")
-    dt = datetime.fromisoformat(run_timestamp_iso)
-    timestamp = dt.strftime("%Y-%m-%dT%H-%M-%SZ")
-    return f"{period_iso}_{timestamp}.json"
+    sanitized = run_timestamp_iso.replace("+00:00", "Z").replace(":", "-")
+    return f"{period_iso}_{sanitized}.json"
 
 
 def write_entry(directory: Path, period: MonthPeriod, entry: ReconciliationEntry) -> Path | None:
