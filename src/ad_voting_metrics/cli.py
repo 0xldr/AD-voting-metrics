@@ -1,9 +1,7 @@
 """Command-line entry point with `fetch` and `finalize` subcommands.
 
-`fetch` pulls SKY delegations from Dune and poll/spell vote data from
-vote.sky.money, then writes the raw participation tabs to the workbook.
-`finalize` reads the operator-reviewed Communication Master tab and
-writes the Compensation tab.
+`fetch` pulls SKY delegations from Dune and poll/spell vote data from vote.sky.money, then writes the raw participation
+tabs to the workbook. `finalize` reads the operator-reviewed Communication Master tab and writes the Compensation tab.
 """
 
 import argparse
@@ -144,13 +142,9 @@ def build_arg_parser() -> argparse.ArgumentParser:
 def check_period_has_ended(period: MonthPeriod, today: date) -> None:
     """Raise SystemExit if the period hasn't ended on or before today.
 
-    Metrics for an in-progress period are unreliable: poll close-day rules
-    can't be applied to polls still in their voting window, and the
-    SKY-ranking snapshot is incomplete.
-
-    `today` should be the current UTC date, not local - periods are
-    UTC-anchored (polls close at 16:00 UTC). Pass
-    `datetime.now(UTC).date()`, not `date.today()`.
+    Metrics for an in-progress period are unreliable: poll close-day rules can't be applied to polls still in their
+    voting window, and the SKY-ranking snapshot is incomplete. `today` should be the current UTC date, not local -
+    periods are UTC-anchored (polls close at 16:00 UTC). Pass `datetime.now(UTC).date()`, not `date.today()`.
 
     Takes `today` as a parameter so tests can pin a deterministic clock.
 

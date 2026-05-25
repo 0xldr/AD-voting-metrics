@@ -2,12 +2,10 @@
 
 Public entry points:
   - get_all_sky_delegated: fetch the underlying daily-balances table
-  - get_delegate_list_sky: project that table onto the (delegate, day) grid
-    for a period, zero-filling missing days
+  - get_delegate_list_sky: project that table onto the (delegate, day) grid for a period, zero-filling missing days
 
-Also exposes `build_sky_lookup`, a helper used by the Sky vote-status
-modules to turn a per-day balance DataFrame into an O(1) (contract, date)
-dict.
+Also exposes `build_sky_lookup`, a helper used by the Sky vote-status modules to turn a per-day balance DataFrame into
+an O(1) (contract, date) dict.
 """
 
 import logging
@@ -28,14 +26,12 @@ DUNE_SKY_QUERY_ID = 6604139
 def get_all_sky_delegated(cache_max_age_hours: int | None = None) -> pd.DataFrame:
     """Fetch daily SKY delegations from Dune, indexed on (contract, date).
 
-    With cache_max_age_hours set, uses Dune's get_latest_result and reuses
-    a cached execution if it's within the threshold; otherwise executes
-    fresh. Useful during development to avoid burning Dune credits.
+    With cache_max_age_hours set, uses Dune's get_latest_result and reuses  a cached execution if it's within the
+    threshold; otherwise executes fresh. Useful during development to avoid burning Dune credits.
 
     Returns:
-        DataFrame indexed on (delegation_contract, dt) with one
-        running_total_balance column. delegation_contract is lowercased;
-        dt is a datetime.date.
+        DataFrame indexed on (delegation_contract, dt) with one running_total_balance column. delegation_contract is
+        lowercased; dt is a datetime.date.
 
     Raises:
         RuntimeError: if DUNE_API_KEY is unset.
@@ -77,8 +73,7 @@ def get_delegate_list_sky(
     Missing daily rows from Dune are filled with zero.
 
     Returns:
-        DataFrame with columns: contract, name, date, sky. One row per
-        (delegate, day) covering every day in the period.
+        DataFrame with columns: contract, name, date, sky. One row per (delegate, day) covering every day in the period.
     """
     all_sky_delegated = get_all_sky_delegated(cache_max_age_hours=cache_max_age_hours)
 

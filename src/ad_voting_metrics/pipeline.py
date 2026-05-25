@@ -1,12 +1,10 @@
 """Orchestration for the `fetch` and `finalize` subcommands.
 
 Imports are wired so that:
-  - `fetch` pulls SKY balances from Dune + poll/spell vote data from
-    vote.sky.money, writes CSV outputs to OUTPUT_DIR, and (best-effort)
-    writes the Participation/Communication/Daily tabs to the workbook.
-  - `finalize` reads the operator-reviewed Communication Master + the
-    other workbook tabs, computes eligibility and compensation, and
-    writes the Compensation tab.
+  - `fetch` pulls SKY balances from Dune + poll/spell vote data from vote.sky.money, writes CSV outputs to OUTPUT_DIR,
+    and (best-effort) writes the Participation/Communication/Daily tabs to the workbook.
+  - `finalize` reads the operator-reviewed Communication Master + the other workbook tabs, computes eligibility and
+    compensation, and writes the Compensation tab.
 """
 
 import argparse
@@ -66,11 +64,9 @@ def _build_metrics_input(
 ) -> dict[str, DelegateMetricsInput]:
     """Build per-delegate metrics input from window participation + communication DataFrames.
 
-    `participation_df` has one row per (delegate, poll) with Start Date
-    and Participation Status; `communication_df` has one row per
-    (delegate, poll) with Communication Status. They are merged on
-    (Delegate, Poll Id); polls absent from communication get a blank
-    communication status.
+    `participation_df` has one row per (delegate, poll) with Start Date and Participation Status; `communication_df` has
+    one row per (delegate, poll) with Communication Status. They are merged on (Delegate, Poll Id); polls absent from
+    communication get a blank communication status.
 
     Returns:
         Mapping of delegate name to DelegateMetricsInput.
@@ -109,8 +105,7 @@ def _ranks_by_day(daily_ranks_df: pd.DataFrame) -> dict[date, dict[str, int]]:
     """Pivot the long Daily Data DataFrame into {day: {delegate: rank}}.
 
     Returns:
-        Mapping from each day present in the DataFrame to its
-        {delegate: rank} for the day.
+        Mapping from each day present in the DataFrame to its {delegate: rank} for the day.
     """
     if daily_ranks_df.empty:
         return {}
@@ -132,8 +127,7 @@ def _compute_daily_results(
 ) -> list[DailyEligibility]:
     """Compute eligibility for each day in the period.
 
-    window is the (start, end) of the trailing metrics window, applied
-    identically on each day.
+    window is the (start, end) of the trailing metrics window, applied identically on each day.
 
     Returns:
         List of DailyEligibility, one per day in period.start..period.end inclusive.

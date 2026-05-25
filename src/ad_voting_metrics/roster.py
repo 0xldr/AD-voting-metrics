@@ -6,13 +6,11 @@ The YAML is the source of truth. Each entry:
 - vote_delegate_address: on-chain vote delegate contract (lowercase 0x...)
 - start_date: when AD compensation begins (not the contract creation date)
 - end_date: optional, inclusive last day of alignment
-- levels: optional L1/L2 governance assignments (sequences allowed, no
-  overlaps). Level 3 is computed daily from rank plus eligibility, never
-  set in the YAML.
+- levels: optional L1/L2 governance assignments (sequences allowed, no overlaps). Level 3 is computed daily from rank
+  plus eligibility, never set in the YAML.
 
-Drift detection: every YAML entry with end_date=None should be in the API's
-currently-aligned response, and vice-versa. Mismatches produce warnings -
-typically the YAML needs updating after a new alignment or an exit.
+Drift detection: every YAML entry with end_date=None should be in the API's currently-aligned response, and vice-versa.
+Mismatches produce warnings - typically the YAML needs updating after a new alignment or an exit.
 """
 
 import logging
@@ -34,10 +32,9 @@ logger = logging.getLogger(__name__)
 class LevelAssignment(BaseModel):
     """A single L1 or L2 governance assignment.
 
-    A delegate may have a sequence of level assignments over their lifetime
-    (e.g. promoted from L2 to L1) but never two concurrent levels -
-    see Delegate validation for the no-overlap enforcement. Level 3 is
-    never represented here; it's computed daily.
+    A delegate may have a sequence of level assignments over their lifetime (e.g. promoted from L2 to L1) but never two
+    concurrent levels - see Delegate validation for the no-overlap enforcement. Level 3 is never represented here; it's
+    computed daily.
     """
 
     level: int
@@ -172,8 +169,8 @@ class Delegate(BaseModel):
     def level_at(self, d: date) -> int | None:
         """Return the governance level (1 or 2) on date d, or None if unassigned.
 
-        Used by the L3 daily computation to determine whether a delegate
-        is governance-assigned (and therefore not eligible for an L3 slot).
+        Used by the L3 daily computation to determine whether a delegate is governance-assigned (and therefore not
+        eligible for an L3 slot).
         """
         for la in self.levels:
             if la.covers(d):
@@ -210,8 +207,7 @@ def load_delegates(path: Path) -> DelegatesConfig:
         ValueError: if YAML is empty.
 
     Notes:
-        The function may raise FileNotFoundError, yaml.YAMLError, or
-            pydantic.ValidationError from validation.
+        The function may raise FileNotFoundError, yaml.YAMLError, or pydantic.ValidationError from validation.
     """
     with Path(path).open(encoding="utf-8") as f:
         raw = yaml.safe_load(f)
@@ -233,12 +229,11 @@ def merge_with_api(
     - YAML exited, API present -> warn (date mismatch)
     - API present, not in YAML -> warn (new delegate missing from YAML)
 
-    Comparisons are by vote delegate address (lowercased); names that
-    differ but addresses match are not flagged.
+    Comparisons are by vote delegate address (lowercased); names that differ but addresses match are not flagged.
 
     Returns:
-        (canonical_roster, warnings). canonical_roster is the YAML's
-        delegate list unchanged - the API never adds anyone.
+        (canonical_roster, warnings). canonical_roster is the YAML's delegate list unchanged - the API never adds
+        anyone.
     """
     warnings: list[str] = []
 
@@ -294,16 +289,13 @@ def build_roster_for_period(
 ) -> RosterResult:
     """Load YAML, optionally fetch API, run drift detection, filter to active-during-period.
 
-    Drift detection compares the YAML against the live vote.sky.money
-    listing. It's most useful at fetch time; finalize works on a
-    closed historical period where renaming after the fact would be
-    counterproductive, so finalize callers should pass
-    skip_api_check=True.
+    Drift detection compares the YAML against the live vote.sky.money listing. It's most useful at fetch time; finalize
+    works on a closed historical period where renaming after the fact would be counterproductive, so finalize callers
+    should pass skip_api_check=True.
 
     Returns:
-        RosterResult with active delegates, drift warnings (empty when
-        skip_api_check=True), the full YAML config, and API-fetch
-        metadata.
+        RosterResult with active delegates, drift warnings (empty when skip_api_check=True), the full YAML config, and
+        API-fetch metadata.
     """
     yaml_config = load_delegates(yaml_path)
 
@@ -339,9 +331,8 @@ def build_roster_for_period(
 def to_dataframe(delegates: list["Delegate"]) -> pd.DataFrame:
     """Build the per-delegate Dataframe consumed by sky_protocol.
 
-    Columns:'Delegate Name', 'Delegate Contract', 'Start Date'.
-    Start Date is formatted '%Y-%m-%d - sky_protocol parses it back with
-    date.fromisoformat, so the format matters.
+    Columns:'Delegate Name', 'Delegate Contract', 'Start Date'. Start Date is formatted '%Y-%m-%d - sky_protocol parses
+    it back with date.fromisoformat, so the format matters.
 
     Returns:
         Three-column DataFrame, one row per delegate.

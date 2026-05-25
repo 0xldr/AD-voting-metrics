@@ -1,53 +1,41 @@
 """Pure functions for computing participation and communication metrics.
 
-These metrics drive the Level 3 eligibility check (a candidate is ineligible
-on a given day if either participation or communication is below 75%) and
-inform the Compensation tab's modifier column.
+These metrics drive the Level 3 eligibility check (a candidate is ineligible on a given day if either participation or
+communication is below 75%) and inform the Compensation tab's modifier column.
 
-The functions take parsed status lists and return numeric results - no IO,
-no knowledge of the workbook structure.
+The functions take parsed status lists and return numeric results - no IO, no knowledge of the workbook structure.
 
 ## Status vocabulary
 
-Each status is per-(poll, delegate). The same poll can have different
-statuses for different delegates depending on alignment timing and SKY
-balance during the voting window:
+Each status is per-(poll, delegate). The same poll can have different statuses for different delegates depending on
+alignment timing and SKY balance during the voting window:
 
-  - "Yes": delegate had SKY delegated at some point during the voting
-    window and cast a vote.
-  - "No": delegate had SKY delegated at some point during the voting
-    window but did not vote.
-  - "Not Started": the delegate's alignment start_date is after this
-    poll's end date - they weren't aligned yet when the poll closed,
-    so non-participation isn't held against them.
-  - "Exited": the delegate's alignment endDate is before this poll's
-    start_date - they had already exited when the poll opened.
-    Symmetric to "Not Started" on the other temporal boundary.
-  - "Voting Open": the poll's voting window had not yet closed at the
-    time metrics were computed. Goes in DISCOUNTED so non-voters aren't
-    penalized until the poll closes and the data is re-run.
-  - "No Delegated SKY": the delegate had zero SKY delegated to them on
-    every day of the poll's voting window.
-  - "Not included": operator-flagged poll to exclude (governance
-    exception, data error) - set manually, not by the script.
-  - "Pending verification": spell vote recorded but not yet verified;
-    also used in Communication Master for cells awaiting operator review.
-  - "Did Not Vote": derived value used in communication when
-    participation = "No". Discountedfrom the communication
+  - "Yes": delegate had SKY delegated at some point during the voting window and cast a vote.
+  - "No": delegate had SKY delegated at some point during the voting window but did not vote.
+  - "Not Started": the delegate's alignment start_date is after this poll's end date - they weren't aligned yet when the
+    poll closed, so non-participation isn't held against them.
+  - "Exited": the delegate's alignment endDate is before this poll's start_date - they had already exited when the poll
+    opened. Symmetric to "Not Started" on the other temporal boundary.
+  - "Voting Open": the poll's voting window had not yet closed at the time metrics were computed. Goes in DISCOUNTED so
+    non-voters aren't penalized until the poll closes and the data is re-run.
+  - "No Delegated SKY": the delegate had zero SKY delegated to them on every day of the poll's voting window.
+  - "Not included": operator-flagged poll to exclude (governance exception, data error) - set manually, not by the
+    script.
+  - "Pending verification": spell vote recorded but not yet verified; also used in Communication Master for cells
+    awaiting operator review.
+  - "Did Not Vote": derived value used in communication when participation = "No". Discountedfrom the communication
     percentage. Only appears in communication contexts.
 
 ## Participation Percentage
 
   participation_pct = participated / (participated + not_participated)
 
-where "participated" counts statuses in PARTICIPATED ("Yes") and
-"not_participated" counts NOT_PARTICIPATED ("No"). All other statuses
-are discounted from both numerator and denominator. Zero denominator
-returns None - callers map this to "No Data".
+where "participated" counts statuses in PARTICIPATED ("Yes") and "not_participated" counts NOT_PARTICIPATED ("No"). All
+other statuses are discounted from both numerator and denominator. Zero denominator returns None - callers map this to
+"No Data".
 
-The metric window is the last 6 months including the month being queried,
-keyed on poll start date. is_in_window accepts an optional lower bound
-(None means unbounded back).
+The metric window is the last 6 months including the month being queried, keyed on poll start date. is_in_window accepts
+an optional lower bound (None means unbounded back).
 """
 
 from collections.abc import Iterable, Sequence
@@ -89,9 +77,8 @@ class ParticipationCounts:
 def count_statuses(statuses: Iterable[str]) -> ParticipationCounts:
     """Bucket statuses into participated / not / discounted / unknown.
 
-    A non-zero 'unknown' count means the workbook has a status the
-    script doesn't know how to handle. Callers should flag it; silent
-    fallthrough to discounted could mask a bug.
+    A non-zero 'unknown' count means the workbook has a status the script doesn't know how to handle. Callers should
+    flag it; silent fallthrough to discounted could mask a bug.
 
     Returns:
         ParticipationCounts with one count per bucket.
@@ -112,9 +99,8 @@ def count_statuses(statuses: Iterable[str]) -> ParticipationCounts:
 def participation_pct(statuses: Iterable[str]) -> float | None:
     """Yes / (Yes + No), or None if the denominator is zero.
 
-    None maps to the workbook's "No Data" sentinel - used for delegates
-    with no participatable polls in the window. Unknown statuses are
-    silently ignored; use count_statuses to detect them.
+    None maps to the workbook's "No Data" sentinel - used for delegates with no participatable polls in the window.
+    Unknown statuses are silently ignored; use count_statuses to detect them.
 
     Returns:
         Participation percentage as a float in [0.0, 1.0], or None.
@@ -133,8 +119,7 @@ def is_in_window(
 ) -> bool:
     """Return True if poll_start falls within [window_start, window_end] inclusive.
 
-    window_start may be None for an unbounded-back window. Window
-    membership is keyed on the poll's start date.
+    window_start may be None for an unbounded-back window. Window membership is keyed on the poll's start date.
 
     Returns:
         True if the poll start date is in the window, False otherwise.
@@ -179,14 +164,13 @@ def apply_participation_cross_reference(
 
       - participation = "Yes" → communication passes through unchanged.
       - participation = "No" → communication becomes "Did not vote".
-      - participation in DISCOUNTED -> communication mirrors the
-        participation status (keeps both metric denominators in sync).
-      - Unknown status → communication passes through (don't silently
-        drop unrecognized statuses; count_statuses surfaces them).
+      - participation in DISCOUNTED -> communication mirrors the participation status (keeps both metric denominators in
+        sync).
+      - Unknown status → communication passes through (don't silently drop unrecognized statuses; count_statuses
+        surfaces them).
 
     Returns:
-        New list of cross-referenced communication statuses; inputs
-        not mutated.
+        New list of cross-referenced communication statuses; inputs not mutated.
 
     Raises:
         ValueError: if the two sequences have different lengths.
@@ -217,17 +201,14 @@ def communication_pct(
 ) -> float | None:
     """Communication percentage: Yes / (Yes + No) on cross-referenced statuses.
 
-    Applies apply_participation_cross_reference first (overriding "No"
-    participation to "Did not vote"), then runs the same Yes/(Yes+No)
-    calculation as participation_pct.
+    Applies apply_participation_cross_reference first (overriding "No" participation to "Did not vote"), then runs the
+    same Yes/(Yes+No) calculation as participation_pct.
 
-    The "communication must be within 7 days of poll end date" rule is
-    followed by the operator at data entry - they only record "Yes" for
-    in-window communications. The script trusts what's in the workbook.
+    The "communication must be within 7 days of poll end date" rule is followed by the operator at data entry - they
+    only record "Yes" for in-window communications. The script trusts what's in the workbook.
 
     Returns:
-        Communication percentage in [0.0, 1.0], or None for an empty
-        denominator.
+        Communication percentage in [0.0, 1.0], or None for an empty denominator.
     """
     effective = apply_participation_cross_reference(participation_statuses, communication_statuses)
     return participation_pct(effective)

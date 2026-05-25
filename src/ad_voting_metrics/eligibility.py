@@ -1,24 +1,19 @@
 """Daily eligibility and L1/L2/L3 slot assignment.
 
-Pure function. Given the active roster, daily ranks, and per-delegate
-metric history, returns each active delegate's participation %,
-communication %, eligibility flag, and assigned level for one day.
+Pure function. Given the active roster, daily ranks, and per-delegate metric history, returns each active delegate's
+participation %, communication %, eligibility flag, and assigned level for one day.
 
 Slot model:
   - L1/L2 come from the YAML roster (`Delegate.levels`).
-  - L3 slots = TOTAL_SLOTS - active_L1 - active_L2_, recomputed daily.
-    A mid-period promotion shrinks L3 capacity, dropping the lowest-
-    ranked L3 candidate.
-  - L3 slots go to eligible delegates with the best ranks. Ties that
-    cross the slot cutoff raise ValueError.
+  - L3 slots = TOTAL_SLOTS - active_L1 - active_L2_, recomputed daily. A mid-period promotion shrinks L3 capacity,
+    dropping the lowest-ranked L3 candidate.
+  - L3 slots go to eligible delegates with the best ranks. Ties that cross the slot cutoff raise ValueError.
 
-A delegate is eligible if participation_pct >= 0.75 AND
-communication_pct >= 0.75 over the trailing 6-month window. A new
-delegate with no votable polls in the window is not eligible.
+A delegate is eligible if participation_pct >= 0.75 AND communication_pct >= 0.75 over the trailing 6-month window. A
+new delegate with no votable polls in the window is not eligible.
 
-L1/L2 keep their slot regardless of metrics - the YAML is the source
-of truth. Metrics are still computed for them; the compensation step
-uses the recorded percentages to apply modifiers.
+L1/L2 keep their slot regardless of metrics - the YAML is the source of truth. Metrics are still computed for them; the
+compensation step uses the recorded percentages to apply modifiers.
 """
 
 from collections.abc import Mapping, Sequence
@@ -36,8 +31,8 @@ ELIGIBILITY_THRESHOLD = 0.75
 class DelegateMetricsInput:
     """Per-delegate poll/spell history feeding the eligibility computation.
 
-    The three sequences are parallel - one entry per poll or spell.
-    The eligibility computation drops anything outside the window.
+    The three sequences are parallel - one entry per poll or spell. The eligibility computation drops anything outside
+    the window.
     """
 
     poll_starts: Sequence[date]
@@ -49,10 +44,9 @@ class DelegateMetricsInput:
 class DelegateEligibility:
     """Per-delegate result for one day.
 
-    participation_pct and communication_pct are None when no polls in
-    the window are in the votable (Yes/No) bucket; None -> eligible = False.
-    assigned_level: 1 or 2 from the YAML, 3 from the daily L3 assignment,
-    or None for unassigned L3 candidates.
+    participation_pct and communication_pct are None when no polls in the window are in the votable (Yes/No) bucket;
+    None -> eligible = False.
+    assigned_level: 1 or 2 from the YAML, 3 from the daily L3 assignment, or None for unassigned L3 candidates.
     """
 
     rank: int
@@ -189,18 +183,12 @@ def compute_daily_eligibility(
 ) -> DailyEligibility:
     """Compute eligibility and slot assignment for every active delegate on `day`.
 
-    `window` is (start, end) bounding the trailing metric window.
-    For a finalize run the same window is usually passed for every day
-    in the period - the 6-month metric is a track record, not a
-    per-day rolling calculation.
+    `window` is (start, end) bounding the trailing metric window. For a finalize run the same window is usually passed for every day in the period - the 6-month metric is a track record, not a per-day rolling calculation.
 
-    Active delegate are those where `is_active_during(day, day)`
-    holds. Inactive delegates are silently excluded from the result,
-    even if present in `daily_ranks` or `metrics_input` - callers may
-    reuse one metrics dict across many days. Every active delegate
-    must have both a rank and a metrics entry. ValueError propagates
-    from validation (missing rank/metrics) or from L3 slot assignment
-    (a rank tie spanning the slot cutoff).
+    Active delegate are those where `is_active_during(day, day)` holds. Inactive delegates are silently excluded from
+    the result, even if present in `daily_ranks` or `metrics_input` - callers may reuse one metrics dict across many
+    days. Every active delegate must have both a rank and a metrics entry. ValueError propagates from validation
+    (missing rank/metrics) or from L3 slot assignment (a rank tie spanning the slot cutoff).
 
     Returns:
         DailyEligibility with one entry per active delegate.
