@@ -116,19 +116,20 @@ def _aggregate_daily_eligibility(
     return day_counts, end_state
 
 
-def _build_delegate_compensation(
+def _build_delegate_compensation(  # noqa: PLR0913 — six narrow args read cleaner than a context object
     name: str,
     counts: dict[int, int],
     end_state_entry: tuple[int | None, int | None],
     metrics_entry: tuple[float | None, float | None],
-    context: tuple[int, CompensationConfig],
+    *,
+    days_in_period: int,
+    config: CompensationConfig,
 ) -> DelegateCompensation:
     """Build a single DelegateCompensation row from aggregated inputs.
 
     Returns:
         The DelegateCompensation row for `name`.
     """
-    days_in_period, config = context
     d1, d2, d3 = counts[1], counts[2], counts[3]
     entitlement = (
         (d1 / days_in_period) * config.l1_usds
@@ -197,14 +198,14 @@ def compute_period_compensation(
         msg_0 = f"final_metrics is missing entries for active delegates: {missing_metrics}"
         raise ValueError(msg_0)
 
-    context = (days_in_period, config)
     rows = [
         _build_delegate_compensation(
             name,
             day_counts[name],
             end_state.get(name, (None, None)),
             final_metrics[name],
-            context,
+            days_in_period=days_in_period,
+            config=config,
         )
         for name in sorted(day_counts)
     ]

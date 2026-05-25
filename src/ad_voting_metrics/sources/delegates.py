@@ -27,9 +27,8 @@ def fetch_aligned_delegates() -> list[dict]:
     """
     session = get_session()
     delegates: list[dict] = []
-    page = 1
 
-    while page <= _MAX_PAGES:
+    for page in range(1, _MAX_PAGES + 1):
         params: dict[str, str | int] = {
             "network": "mainnet",
             "pageSize": PAGE_SIZE,
@@ -43,7 +42,6 @@ def fetch_aligned_delegates() -> list[dict]:
         data = response.json()
 
         page_delegates = data.get("delegates", [])
-
         if not page_delegates:
             break
 
@@ -52,10 +50,8 @@ def fetch_aligned_delegates() -> list[dict]:
         pagination = data.get("paginationInfo", {})
         if not pagination.get("hasNextPage"):
             break
-
-        page += 1
     else:
-        # while-else: fires only if the loop exhausts without breaking, -
+        # for-else: fires only if the loop exhausts without breaking,
         # i.e. we hit the page cap with hasNextPage still true.
         logger.warning(
             "fetch_aligned_delegates hit page cap of %d with hasNextPage still true; results may be incomplete",

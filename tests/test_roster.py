@@ -516,8 +516,7 @@ def test_merge_no_drift():
         ],
     )
     api = [_api_entry("Active", addr)]
-    delegates, warnings = merge_with_api(yaml_config, api)
-    assert len(delegates) == 1
+    warnings = merge_with_api(yaml_config, api)
     assert warnings == []
 
 
@@ -529,7 +528,7 @@ def test_merge_yaml_active_api_absent_warns():
         ],
     )
     api: list[dict] = []  # API doesn't return this delegate
-    _, warnings = merge_with_api(yaml_config, api)
+    warnings = merge_with_api(yaml_config, api)
     assert len(warnings) == 1
     assert "GhostlyActive" in warnings[0]
     assert "active in YAML" in warnings[0]
@@ -549,7 +548,7 @@ def test_merge_yaml_exited_api_absent_no_warn():
         ],
     )
     api: list[dict] = []
-    _, warnings = merge_with_api(yaml_config, api)
+    warnings = merge_with_api(yaml_config, api)
     assert warnings == []
 
 
@@ -566,7 +565,7 @@ def test_merge_yaml_exited_api_present_warns():
         ],
     )
     api = [_api_entry("ExitedButReappearing", addr)]
-    _, warnings = merge_with_api(yaml_config, api)
+    warnings = merge_with_api(yaml_config, api)
     assert len(warnings) == 1
     assert "exited in YAML" in warnings[0]
 
@@ -574,7 +573,7 @@ def test_merge_yaml_exited_api_present_warns():
 def test_merge_api_present_not_in_yaml_warns():
     yaml_config = DelegatesConfig(delegates=[])
     api = [_api_entry("NewlyAligned", "0x0f23de72e1581857eacd6308aebb69cf3a49cc86")]
-    _, warnings = merge_with_api(yaml_config, api)
+    warnings = merge_with_api(yaml_config, api)
     assert len(warnings) == 1
     assert "NewlyAligned" in warnings[0]
     assert "not in delegates.yaml" in warnings[0]
@@ -590,7 +589,7 @@ def test_merge_address_case_insensitive():
         ],
     )
     api = [_api_entry("X", addr_mixed)]
-    _, warnings = merge_with_api(yaml_config, api)
+    warnings = merge_with_api(yaml_config, api)
     assert warnings == []
 
 
@@ -603,12 +602,12 @@ def test_merge_names_differ_addresses_match_no_warn():
         ],
     )
     api = [_api_entry("Bonapublica", addr)]  # different casing
-    _, warnings = merge_with_api(yaml_config, api)
+    warnings = merge_with_api(yaml_config, api)
     assert warnings == []
 
 
-def test_merge_returns_yaml_delegates():
-    """The roster returned is the YAML's; API doesn't add anyone."""
+def test_merge_only_returns_warnings_not_delegates():
+    """The YAML is the canonical roster; merge_with_api does not return it. API-only entries surface as a warning."""
     addr_in_yaml = "0xfc48fbca739079aab08216c4d5e506b96593753d"
     addr_in_api_only = "0x0f23de72e1581857eacd6308aebb69cf3a49cc86"
     yaml_config = DelegatesConfig(
@@ -621,10 +620,8 @@ def test_merge_returns_yaml_delegates():
         ],
     )
     api = [_api_entry("OnlyInApi", addr_in_api_only)]
-    delegates, _ = merge_with_api(yaml_config, api)
-    # API-only entry produces a warning but is NOT added to the returned roster
-    assert len(delegates) == 1
-    assert delegates[0].name == "OnlyInYaml"
+    warnings = merge_with_api(yaml_config, api)
+    assert any("OnlyInApi" in w for w in warnings)
 
 
 # ---------------------------------------------------------------------------

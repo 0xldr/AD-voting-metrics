@@ -21,7 +21,7 @@ from google.oauth2.service_account import Credentials
 from gspread_dataframe import get_as_dataframe, set_with_dataframe
 
 from .compensation import CompensationConfig
-from .metrics import DISCOUNTED, NOT_PARTICIPATED, PARTICIPATED, PENDING_VERIFICATION
+from .metrics import PARTICIPATED, PENDING_VERIFICATION, cross_reference_one
 from .period import MonthPeriod
 
 if TYPE_CHECKING:
@@ -493,11 +493,15 @@ COMMUNICATION_MASTER_TAB_TITLE = "Communication Master"
 
 
 def _apply_cross_reference_rule(participation: str) -> str:
-    """Return the default communication status for a given participation status."""
-    if participation in NOT_PARTICIPATED:
-        return "Did not vote"
-    if participation in DISCOUNTED:
-        return participation
+    """Return the default communication status for a given participation status.
+
+    Wraps the shared `cross_reference_one` rule with the sheets-specific defaults
+    for participation values it leaves as passthrough: PARTICIPATED becomes the
+    "Pending verification" sentinel (operator must confirm), unknown becomes blank.
+    """
+    override = cross_reference_one(participation)
+    if override is not None:
+        return override
     if participation in PARTICIPATED:
         return PENDING_VERIFICATION
     return ""
@@ -645,7 +649,7 @@ def write_communication_master(  # noqa: PLR0914 — DataFrame merge is one logi
         existing = pd.concat([existing, empty])
 
     aligned_defaults = defaults.reindex(index=existing.index, columns=columns).fillna("")
-    is_blank = existing.apply(lambda col: col.astype(str).str.strip() == "")  # noqa: PLC1901
+    is_blank = existing.astype(str).map(str.strip) == ""  # noqa: PLC1901
     merged = existing.where(~is_blank, aligned_defaults)
 
     sort_key = pd.to_datetime(merged["Start Date"], errors="coerce")
@@ -858,19 +862,16 @@ def read_config(workbook: gspread.Spreadsheet) -> "CompensationConfig":
     )
 
 
+_LEVEL_LABELS: dict[int | None, str] = {1: "Level 1", 2: "Level 2", 3: "Level 3"}
+
+
 def _level_label(level: int | None) -> str:
     """Map an assigned_level (1/2/3/None) to the workbook's H-column label.
 
     Returns:
         "Level 1", "Level 2", "Level 3", or "No".
     """
-    if level == 1:
-        return "Level 1"
-    if level == 2:  # noqa: PLR2004
-        return "Level 2"
-    if level == 3:  # noqa: PLR2004
-        return "Level 3"
-    return "No"
+    return _LEVEL_LABELS.get(level, "No")
 
 
 def _format_pct(pct: float | None) -> str | float:

@@ -101,4 +101,4 @@ def build_sky_lookup(df_sky: pd.DataFrame) -> dict[tuple[str, date], float]:
     Returns:
         Mapping of (contract, date) to that day's SKY balance.
     """
-    return {(r["contract"], r["date"]): float(r["sky"]) for r in df_sky.to_dict(orient="records")}
+    return df_sky.set_index(["contract", "date"])["sky"].astype(float).to_dict()

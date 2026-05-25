@@ -165,9 +165,8 @@ def check_period_has_ended(period: MonthPeriod, today: date) -> None:
 def main(argv: list[str] | None = None) -> None:
     """Entry point: configure logging, parse argv, dispatch to the chosen subcommand.
 
-    Raises:
-        SystemExit: if the period hasn't ended, on workbook or compute
-            errors during `finalize`, or if argparse rejects the command line.
+    SystemExit propagates from `check_period_has_ended`, from argparse on a bad command line, and from `run_fetch` /
+    `run_finalize` when a required step (workbook open, compute, etc.) fails.
     """
     logging.basicConfig(
         level=logging.INFO,
@@ -185,7 +184,3 @@ def main(argv: list[str] | None = None) -> None:
         run_fetch(args)
     elif args.command == "finalize":
         run_finalize(args)
-    else:
-        # argparse should already have rejected this; defensive fallback
-        msg = f"Unknown command: {args.command!r}"
-        raise SystemExit(msg)

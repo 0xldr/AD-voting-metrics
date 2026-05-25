@@ -220,8 +220,8 @@ def load_delegates(path: Path) -> DelegatesConfig:
 def merge_with_api(
     yaml_config: DelegatesConfig,
     api_response: list[dict],
-) -> tuple[list["Delegate"], list[str]]:
-    """Verify the YAML roster against the API response.
+) -> list[str]:
+    """Verify the YAML roster against the API response and return drift warnings.
 
     Drift rules:
     - YAML active, API absent -> warn (likely missed an exit update)
@@ -229,11 +229,11 @@ def merge_with_api(
     - YAML exited, API present -> warn (date mismatch)
     - API present, not in YAML -> warn (new delegate missing from YAML)
 
-    Comparisons are by vote delegate address (lowercased); names that differ but addresses match are not flagged.
+    Comparisons are by vote delegate address (lowercased); names that differ but addresses match are not flagged. The
+    YAML is the canonical roster — the API never adds anyone — so the delegate list itself is not returned.
 
     Returns:
-        (canonical_roster, warnings). canonical_roster is the YAML's delegate list unchanged - the API never adds
-        anyone.
+        List of drift-warning strings; empty if no drift.
     """
     warnings: list[str] = []
 
@@ -263,7 +263,7 @@ def merge_with_api(
                 "aligned but is not in delegates.yaml. Add an entry.",
             )
 
-    return list(yaml_config.delegates), warnings
+    return warnings
 
 
 @dataclass
@@ -308,7 +308,7 @@ def build_roster_for_period(
         try:
             api_response = api_fetcher()
             api_fetch_succeeded = True
-            _, warnings = merge_with_api(yaml_config, api_response)
+            warnings = merge_with_api(yaml_config, api_response)
         except Exception as e:  # noqa: BLE001 — api_fetcher is caller-supplied; any failure degrades to YAML-only
             warnings = [
                 (
