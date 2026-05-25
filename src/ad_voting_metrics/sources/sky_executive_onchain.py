@@ -24,6 +24,7 @@ from web3.exceptions import BadFunctionCallOutput, ContractLogicError, Web3RPCEr
 from web3.types import BlockData
 
 from ad_voting_metrics.metrics import PENDING_VERIFICATION
+from ad_voting_metrics.sources.http import HEADERS, HTTP_TIMEOUT, get_session
 
 logger = logging.getLogger(__name__)
 
@@ -36,10 +37,9 @@ VOTE_DEADLINE_DAYS = 7
 # Defensive cap; no real slate has approached this length.
 MAX_SLATE_LENGTH = 50
 
-# Approximate Ethereum block time. Used only to seed an `eth_getLogs`
-# fromBlock — events are subsequently filtered exactly by timestamp.
-SECONDS_PER_BLOCK = 12
-ONE_DAY_BLOCKS = 86_400 // SECONDS_PER_BLOCK
+# Blockscout's Etherscan-compatible endpoint for resolving a unix
+# timestamp to a block number. Used to seed `eth_getLogs`'s fromBlock.
+BLOCKSCOUT_API_URL = "https://eth.blockscout.com/api"
 
 # Minimal chief ABI: the `slates` getter for slate -> address-list
 # resolution, and the `Vote` event so contract.events.Vote can encode
@@ -140,22 +140,29 @@ def _resolve_slate(w3: Web3, slate_hash: str) -> list[str]:
     return addresses
 
 
-def _approx_block_from_date(w3: Web3, target: date) -> int:
-    """Estimate the block number near midnight UTC on `target`.
+def _block_from_date(target: date) -> int:
+    """Return the first block number at or after midnight UTC on `target`.
 
-    Used to seed `eth_getLogs`'s fromBlock — not the actual time filter (the timestamp check is applied per-event after
-    the fact). One day of safety buffer is subtracted so the estimate undershoots.
+    Used to seed `eth_getLogs`'s fromBlock — events are still filtered per-event by exact date afterwards, so the only
+    requirement is that the block is no later than the earliest event we care about.
 
     Returns:
-        A non-negative block number to start the log search from.
+        The block number returned by Blockscout's getblocknobytime endpoint.
     """
-    latest = _as_block(w3.eth.get_block("latest"))
-    latest_ts: int = latest["timestamp"]
-    latest_number: int = latest["number"]
     target_ts = int(datetime.combine(target, datetime.min.time(), tzinfo=UTC).timestamp())
-    seconds_back = max(0, latest_ts - target_ts)
-    blocks_back = seconds_back // SECONDS_PER_BLOCK + ONE_DAY_BLOCKS
-    return max(0, latest_number - blocks_back)
+    response = get_session().get(
+        BLOCKSCOUT_API_URL,
+        params={
+            "module": "block",
+            "action": "getblocknobytime",
+            "timestamp": target_ts,
+            "closest": "after",
+        },
+        headers=HEADERS,
+        timeout=HTTP_TIMEOUT,
+    )
+    response.raise_for_status()
+    return int(response.json()["result"])
 
 
 def _fetch_vote_events(
@@ -165,9 +172,9 @@ def _fetch_vote_events(
 ) -> dict[str, list[tuple[str, date]]]:
     """Fetch chief Vote events for every voter in one eth_getLogs call.
 
-    Passes the voter set as an OR-filter on the indexed `usr` argument     so a single RPC roundtrip returns events for
-    all voters together, then groups them client-side by lowercased voter address. Voters with no events in the window
-    get an empty list. web3's contract.events handles topic encoding and decoding.
+    Passes the voter set as an OR-filter on the indexed `usr` argument so a single RPC roundtrip returns events for all
+    voters together, then groups them client-side by lowercased voter address. Voters with no events in the window get
+    an empty list. web3's contract.events handles topic encoding and decoding.
 
     Returns:
         Lowercased voter address -> list of (slate_hash, event_date) tuples.
@@ -308,7 +315,7 @@ def resolve_pending_executive_votes(
     initial_cache_size = len(slate_cache)
 
     earliest_start = min(s["startDate"] for s in spell_info)
-    from_block = _approx_block_from_date(w3, earliest_start)
+    from_block = _block_from_date(earliest_start)
     logger.info("Verifying executive votes on-chain from block %d onwards", from_block)
 
     voters: set[str] = {
