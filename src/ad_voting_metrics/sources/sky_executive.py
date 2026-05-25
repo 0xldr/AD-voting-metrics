@@ -9,7 +9,6 @@ import pandas as pd
 from ad_voting_metrics.metrics import PENDING_VERIFICATION
 from ad_voting_metrics.period import MonthPeriod
 
-from .dune import build_sky_lookup
 from .http import HEADERS, HTTP_TIMEOUT, get_session
 
 logger = logging.getLogger(__name__)
@@ -59,7 +58,11 @@ def get_executive_ids(period: MonthPeriod) -> list[dict]:
     return spell_info
 
 
-def get_vote_executive_ids(spell_info: list[dict], df: pd.DataFrame, df_sky: pd.DataFrame) -> pd.DataFrame:
+def get_vote_executive_ids(
+    spell_info: list[dict],
+    df: pd.DataFrame,
+    sky_lookup: dict[tuple[str, date], float],
+) -> pd.DataFrame:
     """Add one column per spell to df, populated with each delegate's vote status.
 
     Returns:
@@ -77,8 +80,6 @@ def get_vote_executive_ids(spell_info: list[dict], df: pd.DataFrame, df_sky: pd.
     )
     response.raise_for_status()
     supporters_by_spell = response.json()
-
-    sky_lookup = build_sky_lookup(df_sky)
 
     for spell in spell_info:
         vote_statuses = []

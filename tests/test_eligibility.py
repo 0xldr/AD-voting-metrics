@@ -10,6 +10,7 @@ from ad_voting_metrics.eligibility import (
     TOTAL_SLOTS,
     DelegateMetricsInput,
     compute_daily_eligibility,
+    compute_period_metrics,
 )
 from ad_voting_metrics.roster import Delegate, LevelAssignment
 
@@ -35,6 +36,24 @@ def test_eligibility_threshold_constant():
 DAY = date(2026, 4, 15)
 WINDOW_START = date(2025, 11, 1)
 WINDOW_END = date(2026, 4, 30)
+
+
+def _daily(
+    *,
+    day=DAY,
+    window=(WINDOW_START, WINDOW_END),
+    delegates,
+    daily_ranks,
+    metrics_input,
+):
+    """Build period metrics + invoke compute_daily_eligibility, mirroring the old single-call signature."""
+    period_metrics = compute_period_metrics(window, delegates, metrics_input)
+    return compute_daily_eligibility(
+        day=day,
+        delegates=delegates,
+        daily_ranks=daily_ranks,
+        period_metrics=period_metrics,
+    )
 
 
 def _delegate(
@@ -119,9 +138,8 @@ def test_missing_rank_for_active_delegate_raises():
     """Every active delegate must have a rank entry."""
     delegates = [_delegate("Alpha"), _delegate("Beta")]
     with pytest.raises(ValueError, match="daily_ranks is missing"):
-        compute_daily_eligibility(
+        _daily(
             day=DAY,
-            window=(WINDOW_START, WINDOW_END),
             delegates=delegates,
             daily_ranks={"Alpha": 1},  # Beta missing
             metrics_input={"Alpha": _metrics(yeses=10), "Beta": _metrics(yeses=10)},
@@ -131,9 +149,8 @@ def test_missing_rank_for_active_delegate_raises():
 def test_missing_metrics_for_active_delegate_raises():
     delegates = [_delegate("Alpha"), _delegate("Beta")]
     with pytest.raises(ValueError, match="metrics_input is missing"):
-        compute_daily_eligibility(
+        _daily(
             day=DAY,
-            window=(WINDOW_START, WINDOW_END),
             delegates=delegates,
             daily_ranks={"Alpha": 1, "Beta": 2},
             metrics_input={"Alpha": _metrics(yeses=10)},  # Beta missing
@@ -146,9 +163,8 @@ def test_inactive_delegate_silently_excluded():
         _delegate("Active"),
         _delegate("Old", end_date=date(2025, 12, 31)),  # exited before April 2026
     ]
-    result = compute_daily_eligibility(
+    result = _daily(
         day=DAY,
-        window=(WINDOW_START, WINDOW_END),
         delegates=delegates,
         daily_ranks={"Active": 1},  # Old absent, fine
         metrics_input={"Active": _metrics(yeses=10)},  # Old absent, fine
@@ -164,9 +180,8 @@ def test_inactive_delegate_silently_excluded():
 
 def test_perfect_record_eligible():
     delegates = [_delegate("Alpha")]
-    result = compute_daily_eligibility(
+    result = _daily(
         day=DAY,
-        window=(WINDOW_START, WINDOW_END),
         delegates=delegates,
         daily_ranks={"Alpha": 1},
         metrics_input={"Alpha": _metrics(yeses=10)},
@@ -181,9 +196,8 @@ def test_perfect_record_eligible():
 def test_below_participation_threshold_ineligible():
     """7 Yes + 3 No = 70% participation, below 75%."""
     delegates = [_delegate("Alpha")]
-    result = compute_daily_eligibility(
+    result = _daily(
         day=DAY,
-        window=(WINDOW_START, WINDOW_END),
         delegates=delegates,
         daily_ranks={"Alpha": 1},
         metrics_input={"Alpha": _metrics(yeses=7, nos=3)},
@@ -202,9 +216,8 @@ def test_below_communication_threshold_ineligible():
         participation_statuses=["Yes"] * 10,
         communication_statuses=["Yes"] * 7 + ["No"] * 3,
     )
-    result = compute_daily_eligibility(
+    result = _daily(
         day=DAY,
-        window=(WINDOW_START, WINDOW_END),
         delegates=delegates,
         daily_ranks={"Alpha": 1},
         metrics_input={"Alpha": metrics},
@@ -218,9 +231,8 @@ def test_below_communication_threshold_ineligible():
 def test_exactly_at_threshold_eligible():
     """75% is eligible — boundary is inclusive."""
     delegates = [_delegate("Alpha")]
-    result = compute_daily_eligibility(
+    result = _daily(
         day=DAY,
-        window=(WINDOW_START, WINDOW_END),
         delegates=delegates,
         daily_ranks={"Alpha": 1},
         metrics_input={"Alpha": _metrics(yeses=3, nos=1)},  # 75%
@@ -233,9 +245,8 @@ def test_exactly_at_threshold_eligible():
 def test_no_votable_polls_returns_none_pct_and_ineligible():
     """New delegate with no closed polls in window → not eligible."""
     delegates = [_delegate("Newbie", start_date=date(2026, 4, 14))]
-    result = compute_daily_eligibility(
+    result = _daily(
         day=DAY,
-        window=(WINDOW_START, WINDOW_END),
         delegates=delegates,
         daily_ranks={"Newbie": 1},
         metrics_input={"Newbie": _no_polls_metrics()},
@@ -256,9 +267,8 @@ def test_polls_outside_window_ignored():
         participation_statuses=["Yes"] * 10,
         communication_statuses=["Yes"] * 10,
     )
-    result = compute_daily_eligibility(
+    result = _daily(
         day=DAY,
-        window=(WINDOW_START, WINDOW_END),
         delegates=delegates,
         daily_ranks={"Alpha": 1},
         metrics_input={"Alpha": metrics},
@@ -281,9 +291,8 @@ def test_l1_assignment_from_yaml_overrides_rank():
             levels=[LevelAssignment(level=1, start_date=date(2024, 1, 1))],
         ),
     ]
-    result = compute_daily_eligibility(
+    result = _daily(
         day=DAY,
-        window=(WINDOW_START, WINDOW_END),
         delegates=delegates,
         daily_ranks={"L1Person": 99},
         metrics_input={"L1Person": _metrics(yeses=10)},
@@ -298,9 +307,8 @@ def test_l2_assignment_from_yaml():
             levels=[LevelAssignment(level=2, start_date=date(2024, 1, 1))],
         ),
     ]
-    result = compute_daily_eligibility(
+    result = _daily(
         day=DAY,
-        window=(WINDOW_START, WINDOW_END),
         delegates=delegates,
         daily_ranks={"L2Person": 5},
         metrics_input={"L2Person": _metrics(yeses=10)},
@@ -316,9 +324,8 @@ def test_l1_below_threshold_keeps_slot_but_records_ineligible():
             levels=[LevelAssignment(level=1, start_date=date(2024, 1, 1))],
         ),
     ]
-    result = compute_daily_eligibility(
+    result = _daily(
         day=DAY,
-        window=(WINDOW_START, WINDOW_END),
         delegates=delegates,
         daily_ranks={"BadL1": 1},
         metrics_input={"BadL1": _metrics(yeses=5, nos=5)},  # 50%
@@ -342,9 +349,8 @@ def test_l1_assignment_inactive_on_day_excluded():
             ],
         ),
     ]
-    result = compute_daily_eligibility(
+    result = _daily(
         day=DAY,
-        window=(WINDOW_START, WINDOW_END),
         delegates=delegates,
         daily_ranks={"FormerL1": 1},
         metrics_input={"FormerL1": _metrics(yeses=10)},
@@ -362,9 +368,8 @@ def test_zero_l1_l2_yields_six_l3_slots():
     delegates = [_delegate(f"D{i}") for i in range(10)]
     ranks = {f"D{i}": i + 1 for i in range(10)}
     metrics = {f"D{i}": _metrics(yeses=10) for i in range(10)}
-    result = compute_daily_eligibility(
+    result = _daily(
         day=DAY,
-        window=(WINDOW_START, WINDOW_END),
         delegates=delegates,
         daily_ranks=ranks,
         metrics_input=metrics,
@@ -384,9 +389,8 @@ def test_two_l1_and_one_l2_yields_three_l3_slots():
     ]
     ranks = {d.name: i + 1 for i, d in enumerate(delegates)}
     metrics = {d.name: _metrics(yeses=10) for d in delegates}
-    result = compute_daily_eligibility(
+    result = _daily(
         day=DAY,
-        window=(WINDOW_START, WINDOW_END),
         delegates=delegates,
         daily_ranks=ranks,
         metrics_input=metrics,
@@ -404,9 +408,8 @@ def test_six_l1_yields_zero_l3_slots():
     delegates.append(_delegate("Cand"))
     ranks = {d.name: i + 1 for i, d in enumerate(delegates)}
     metrics = {d.name: _metrics(yeses=10) for d in delegates}
-    result = compute_daily_eligibility(
+    result = _daily(
         day=DAY,
-        window=(WINDOW_START, WINDOW_END),
         delegates=delegates,
         daily_ranks=ranks,
         metrics_input=metrics,
@@ -420,9 +423,8 @@ def test_over_assigned_governance_yields_zero_l3_slots_no_error():
     delegates = [_delegate(f"L1{i}", levels=[LevelAssignment(level=1, start_date=date(2024, 1, 1))]) for i in range(7)]
     ranks = {d.name: i + 1 for i, d in enumerate(delegates)}
     metrics = {d.name: _metrics(yeses=10) for d in delegates}
-    result = compute_daily_eligibility(
+    result = _daily(
         day=DAY,
-        window=(WINDOW_START, WINDOW_END),
         delegates=delegates,
         daily_ranks=ranks,
         metrics_input=metrics,
@@ -440,9 +442,8 @@ def test_fewer_eligible_candidates_than_slots_all_get_l3():
     delegates = [_delegate(f"C{i}") for i in range(3)]
     ranks = {d.name: i + 1 for i, d in enumerate(delegates)}
     metrics = {d.name: _metrics(yeses=10) for d in delegates}
-    result = compute_daily_eligibility(
+    result = _daily(
         day=DAY,
-        window=(WINDOW_START, WINDOW_END),
         delegates=delegates,
         daily_ranks=ranks,
         metrics_input=metrics,
@@ -459,9 +460,8 @@ def test_ineligible_candidate_skipped_for_l3_slot():
         "Bad": _metrics(yeses=5, nos=5),  # 50%, ineligible
         "Good": _metrics(yeses=10),  # 100%, eligible
     }
-    result = compute_daily_eligibility(
+    result = _daily(
         day=DAY,
-        window=(WINDOW_START, WINDOW_END),
         delegates=delegates,
         daily_ranks=ranks,
         metrics_input=metrics,
@@ -475,9 +475,8 @@ def test_tie_within_granted_set_no_error():
     delegates = [_delegate(f"C{i}") for i in range(6)]
     ranks = {"C0": 1, "C1": 1, "C2": 3, "C3": 4, "C4": 5, "C5": 6}
     metrics = {d.name: _metrics(yeses=10) for d in delegates}
-    result = compute_daily_eligibility(
+    result = _daily(
         day=DAY,
-        window=(WINDOW_START, WINDOW_END),
         delegates=delegates,
         daily_ranks=ranks,
         metrics_input=metrics,
@@ -492,9 +491,8 @@ def test_tie_crossing_cutoff_raises():
     ranks = {"C0": 1, "C1": 2, "C2": 3, "C3": 4, "C4": 5, "C5": 6, "C6": 6}
     metrics = {d.name: _metrics(yeses=10) for d in delegates}
     with pytest.raises(ValueError, match="cutoff tie"):
-        compute_daily_eligibility(
+        _daily(
             day=DAY,
-            window=(WINDOW_START, WINDOW_END),
             delegates=delegates,
             daily_ranks=ranks,
             metrics_input=metrics,
@@ -506,9 +504,8 @@ def test_tie_excluded_from_consideration_no_error():
     delegates = [_delegate(f"C{i}") for i in range(8)]
     ranks = {"C0": 1, "C1": 2, "C2": 3, "C3": 4, "C4": 5, "C5": 6, "C6": 7, "C7": 7}
     metrics = {d.name: _metrics(yeses=10) for d in delegates}
-    result = compute_daily_eligibility(
+    result = _daily(
         day=DAY,
-        window=(WINDOW_START, WINDOW_END),
         delegates=delegates,
         daily_ranks=ranks,
         metrics_input=metrics,
@@ -528,9 +525,8 @@ def test_zero_l3_slots_no_tie_check_runs():
     ranks["CandA"] = 7
     ranks["CandB"] = 7  # tie, but doesn't matter
     metrics = {d.name: _metrics(yeses=10) for d in delegates}
-    result = compute_daily_eligibility(
+    result = _daily(
         day=DAY,
-        window=(WINDOW_START, WINDOW_END),
         delegates=delegates,
         daily_ranks=ranks,
         metrics_input=metrics,
@@ -584,9 +580,8 @@ def test_realistic_april_2026_scenario():
         "Failing": _metrics(yeses=5, nos=5),
         "Newbie": _no_polls_metrics(),
     }
-    result = compute_daily_eligibility(
+    result = _daily(
         day=DAY,
-        window=(WINDOW_START, WINDOW_END),
         delegates=delegates,
         daily_ranks=ranks,
         metrics_input=metrics,

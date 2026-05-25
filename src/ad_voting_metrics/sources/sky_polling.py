@@ -10,7 +10,6 @@ import pandas as pd
 from ad_voting_metrics.period import MonthPeriod
 from ad_voting_metrics.vote_status import determine_vote_status
 
-from .dune import build_sky_lookup
 from .http import HEADERS, HTTP_TIMEOUT, get_session
 
 logger = logging.getLogger(__name__)
@@ -87,13 +86,16 @@ def _fetch_poll_voters(poll: dict) -> tuple[int, set[str]]:
 
 
 def get_vote_poll_ids(
-    poll_info: list[dict], df: pd.DataFrame, df_sky: pd.DataFrame, current_datetime: datetime
+    poll_info: list[dict],
+    df: pd.DataFrame,
+    sky_lookup: dict[tuple[str, date], float],
+    current_datetime: datetime,
 ) -> pd.DataFrame:
     """Add one column per poll to df, populated with each delegate's vote status.
 
     For every poll in poll_info, queries vote.sky.money for the voter list and runs determine_vote_status against each
-    delegate using their SKY balance in df_sky. Polls that started before a delegate's alignment date are marked "Not
-    Started".
+    delegate using their SKY balance from sky_lookup. Polls that started before a delegate's alignment date are marked
+    "Not Started".
 
     Returns:
         The same df, mutated in place with one new column per poll.
@@ -101,7 +103,6 @@ def get_vote_poll_ids(
     if not poll_info:
         return df
 
-    sky_lookup = build_sky_lookup(df_sky)
     first_dates_by_contract = dict(
         zip(df["Delegate Contract"], df["Start Date"].map(date.fromisoformat), strict=True),
     )

@@ -20,9 +20,9 @@ def _reset_session():
     http_module.get_session.cache_clear()
 
 
-# Helper for building df_sky-shaped DataFrames in sky_executive tests.
-def _df_sky_for_window(rows):
-    return pd.DataFrame(rows, columns=["contract", "date", "sky"])
+# Helper for building sky_lookup dicts in sky_executive tests.
+def _sky_lookup(rows: list[tuple[str, date, float]]) -> dict[tuple[str, date], float]:
+    return {(contract, day): sky for contract, day, sky in rows}
 
 
 # ---------------------------------------------------------------------------
@@ -48,7 +48,7 @@ def test_get_vote_executive_ids_adds_column_per_spell():
     df = pd.DataFrame([
         {"Delegate Name": "Alice", "Delegate Contract": "0xaaa", "Start Date": "2024-01-01"},
     ])
-    df_sky = _df_sky_for_window([("0xaaa", date(2026, 4, 5), 1000.0)])
+    sky_lookup = _sky_lookup([("0xaaa", date(2026, 4, 5), 1000.0)])
     spell_info = [
         {"address": "0xspell1", "startDate": date(2026, 4, 5)},
         {"address": "0xspell2", "startDate": date(2026, 4, 5)},
@@ -56,7 +56,7 @@ def test_get_vote_executive_ids_adds_column_per_spell():
 
     with patch("ad_voting_metrics.sources.sky_executive.get_session") as mock_session:
         mock_session.return_value.get.return_value = _mock_executive_supporters_response({})
-        result = sky_executive.get_vote_executive_ids(spell_info, df, df_sky)
+        result = sky_executive.get_vote_executive_ids(spell_info, df, sky_lookup)
 
     assert "0xspell1" in result.columns
     assert "0xspell2" in result.columns
@@ -67,14 +67,14 @@ def test_get_vote_executive_ids_supporter_with_sky_returns_yes():
     df = pd.DataFrame([
         {"Delegate Name": "Alice", "Delegate Contract": "0xaaa", "Start Date": "2024-01-01"},
     ])
-    df_sky = _df_sky_for_window([("0xaaa", date(2026, 4, 5), 1000.0)])
+    sky_lookup = _sky_lookup([("0xaaa", date(2026, 4, 5), 1000.0)])
     spell_info = [{"address": "0xspell1", "startDate": date(2026, 4, 5)}]
 
     with patch("ad_voting_metrics.sources.sky_executive.get_session") as mock_session:
         mock_session.return_value.get.return_value = _mock_executive_supporters_response(
             {"0xspell1": ["0xaaa"]},
         )
-        result = sky_executive.get_vote_executive_ids(spell_info, df, df_sky)
+        result = sky_executive.get_vote_executive_ids(spell_info, df, sky_lookup)
 
     assert result.loc[0, "0xspell1"] == "Yes"
 
@@ -84,14 +84,14 @@ def test_get_vote_executive_ids_not_supporter_with_sky_returns_pending():
     df = pd.DataFrame([
         {"Delegate Name": "Alice", "Delegate Contract": "0xaaa", "Start Date": "2024-01-01"},
     ])
-    df_sky = _df_sky_for_window([("0xaaa", date(2026, 4, 5), 1000.0)])
+    sky_lookup = _sky_lookup([("0xaaa", date(2026, 4, 5), 1000.0)])
     spell_info = [{"address": "0xspell1", "startDate": date(2026, 4, 5)}]
 
     with patch("ad_voting_metrics.sources.sky_executive.get_session") as mock_session:
         mock_session.return_value.get.return_value = _mock_executive_supporters_response(
             {"0xspell1": []},  # no supporters
         )
-        result = sky_executive.get_vote_executive_ids(spell_info, df, df_sky)
+        result = sky_executive.get_vote_executive_ids(spell_info, df, sky_lookup)
 
     assert result.loc[0, "0xspell1"] == "Pending verification"
 
@@ -101,14 +101,14 @@ def test_get_vote_executive_ids_zero_sky_returns_no_delegated_sky():
     df = pd.DataFrame([
         {"Delegate Name": "Alice", "Delegate Contract": "0xaaa", "Start Date": "2024-01-01"},
     ])
-    df_sky = _df_sky_for_window([("0xaaa", date(2026, 4, 5), 0.0)])
+    sky_lookup = _sky_lookup([("0xaaa", date(2026, 4, 5), 0.0)])
     spell_info = [{"address": "0xspell1", "startDate": date(2026, 4, 5)}]
 
     with patch("ad_voting_metrics.sources.sky_executive.get_session") as mock_session:
         mock_session.return_value.get.return_value = _mock_executive_supporters_response(
             {"0xspell1": ["0xaaa"]},  # delegate IS a supporter, but no SKY
         )
-        result = sky_executive.get_vote_executive_ids(spell_info, df, df_sky)
+        result = sky_executive.get_vote_executive_ids(spell_info, df, sky_lookup)
 
     assert result.loc[0, "0xspell1"] == "No Delegated SKY"
 
@@ -118,14 +118,14 @@ def test_get_vote_executive_ids_not_started_if_spell_started_before_delegate():
     df = pd.DataFrame([
         {"Delegate Name": "Alice", "Delegate Contract": "0xaaa", "Start Date": "2026-05-01"},
     ])
-    df_sky = _df_sky_for_window([("0xaaa", date(2026, 4, 5), 1000.0)])
+    sky_lookup = _sky_lookup([("0xaaa", date(2026, 4, 5), 1000.0)])
     spell_info = [{"address": "0xspell1", "startDate": date(2026, 4, 5)}]
 
     with patch("ad_voting_metrics.sources.sky_executive.get_session") as mock_session:
         mock_session.return_value.get.return_value = _mock_executive_supporters_response(
             {"0xspell1": ["0xaaa"]},
         )
-        result = sky_executive.get_vote_executive_ids(spell_info, df, df_sky)
+        result = sky_executive.get_vote_executive_ids(spell_info, df, sky_lookup)
 
     assert result.loc[0, "0xspell1"] == "Not Started"
 
@@ -141,14 +141,14 @@ def test_get_vote_executive_ids_normalizes_supporter_address_case():
     df = pd.DataFrame([
         {"Delegate Name": "Alice", "Delegate Contract": "0xaaa", "Start Date": "2024-01-01"},
     ])
-    df_sky = _df_sky_for_window([("0xaaa", date(2026, 4, 5), 1000.0)])
+    sky_lookup = _sky_lookup([("0xaaa", date(2026, 4, 5), 1000.0)])
     spell_info = [{"address": "0xspell1", "startDate": date(2026, 4, 5)}]
 
     with patch("ad_voting_metrics.sources.sky_executive.get_session") as mock_session:
         mock_session.return_value.get.return_value = _mock_executive_supporters_response(
             {"0xspell1": ["0xAAA"]},  # API returns mixed-case
         )
-        result = sky_executive.get_vote_executive_ids(spell_info, df, df_sky)
+        result = sky_executive.get_vote_executive_ids(spell_info, df, sky_lookup)
 
     # Despite API casing mismatch, the boundary-lowercase makes this work.
     assert result.loc[0, "0xspell1"] == "Yes"
@@ -159,11 +159,11 @@ def test_get_vote_executive_ids_empty_spell_info_leaves_df_unchanged():
     df = pd.DataFrame([
         {"Delegate Name": "Alice", "Delegate Contract": "0xaaa", "Start Date": "2024-01-01"},
     ])
-    df_sky = _df_sky_for_window([])
+    sky_lookup = _sky_lookup([])
     original_columns = list(df.columns)
 
     with patch("ad_voting_metrics.sources.sky_executive.get_session") as mock_session:
-        result = sky_executive.get_vote_executive_ids([], df, df_sky)
+        result = sky_executive.get_vote_executive_ids([], df, sky_lookup)
 
     assert list(result.columns) == original_columns
     mock_session.return_value.get.assert_not_called()
