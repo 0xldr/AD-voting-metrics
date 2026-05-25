@@ -492,21 +492,6 @@ def write_participation_raw_data(
 COMMUNICATION_MASTER_TAB_TITLE = "Communication Master"
 
 
-def _apply_cross_reference_rule(participation: str) -> str:
-    """Return the default communication status for a given participation status.
-
-    Wraps the shared `cross_reference_one` rule with the sheets-specific defaults
-    for participation values it leaves as passthrough: PARTICIPATED becomes the
-    "Pending verification" sentinel (operator must confirm), unknown becomes blank.
-    """
-    override = cross_reference_one(participation)
-    if override is not None:
-        return override
-    if participation in PARTICIPATED:
-        return PENDING_VERIFICATION
-    return ""
-
-
 def _existing_comm_master(worksheet: gspread.Worksheet) -> pd.DataFrame:
     """Read the Communication Master tab as a string DataFrame indexed on Poll Id.
 
@@ -557,14 +542,25 @@ def _build_comm_defaults(
         for col in columns:
             if col in row:
                 continue
-            if col in in_roster:
-                p_status = str(df_by_delegate.loc[col, poll_id]) if poll_id in df_by_delegate.columns else ""
-                row[col] = _apply_cross_reference_rule(p_status)
+            if col not in in_roster:
+                row[col] = ""
+                continue
+            # Apply the cross-reference rule from metrics, with the sheets-specific
+            # defaults: PARTICIPATED becomes the "Pending verification" sentinel
+            # (operator must confirm), unknown becomes blank.
+            p_status = str(df_by_delegate.loc[col, poll_id]) if poll_id in df_by_delegate.columns else ""
+            override = cross_reference_one(p_status)
+            if override is not None:
+                row[col] = override
+            elif p_status in PARTICIPATED:
+                row[col] = PENDING_VERIFICATION
             else:
                 row[col] = ""
         rows[poll_id] = row
 
-    return pd.DataFrame.from_dict(rows, orient="index", columns=columns).fillna("")
+    out = pd.DataFrame.from_dict(rows, orient="index", columns=columns).fillna("")
+    out.index.name = "Poll Id"
+    return out
 
 
 def write_communication_master(  # noqa: PLR0914 — DataFrame merge is one logical operation
@@ -660,9 +656,7 @@ def write_communication_master(  # noqa: PLR0914 — DataFrame merge is one logi
         .drop(columns="_sort_key")
     )
 
-    out = merged.reset_index().rename(columns={"index": "Poll Id"})
-    if "Poll Id" not in out.columns:
-        out = out.rename(columns={out.columns[0]: "Poll Id"})
+    out = merged.reset_index()
 
     clear_tab(worksheet)
     set_with_dataframe(worksheet, out, include_index=False, include_column_header=True, resize=False)
@@ -672,17 +666,6 @@ def write_communication_master(  # noqa: PLR0914 — DataFrame merge is one logi
 # ---------------------------------------------------------------------------
 # Readers: Participation window aggregation + Communication Master
 # ---------------------------------------------------------------------------
-
-
-def _enumerate_months(start: date, end: date) -> list[MonthPeriod]:
-    """Return one MonthPeriod per calendar month touched by [start, end].
-
-    Inclusive on both ends.
-
-    Returns:
-        Months in chronological order.
-    """
-    return [MonthPeriod(year=p.year, month=p.month) for p in pd.period_range(start=start, end=end, freq="M")]
 
 
 def _parse_poll_history_tab(worksheet: gspread.Worksheet, value_col_name: str) -> pd.DataFrame:
@@ -740,7 +723,10 @@ def read_participation_for_window(
         End Date, Title, Participation Status. Empty (with those columns)
         if no in-window data was found.
     """
-    months = _enumerate_months(window_start, window_end)
+    months = [
+        MonthPeriod(year=p.year, month=p.month)
+        for p in pd.period_range(start=window_start, end=window_end, freq="M")
+    ]
     out_cols = ["Delegate", "Poll Id", "Start Date", "End Date", "Title", "Participation Status"]
     frames: list[pd.DataFrame] = []
     for month in months:
@@ -862,16 +848,8 @@ def read_config(workbook: gspread.Spreadsheet) -> "CompensationConfig":
     )
 
 
+# Compensation-tab H-column labels for assigned_level. Anything not 1/2/3 (i.e. None for unassigned) renders as "No".
 _LEVEL_LABELS: dict[int | None, str] = {1: "Level 1", 2: "Level 2", 3: "Level 3"}
-
-
-def _level_label(level: int | None) -> str:
-    """Map an assigned_level (1/2/3/None) to the workbook's H-column label.
-
-    Returns:
-        "Level 1", "Level 2", "Level 3", or "No".
-    """
-    return _LEVEL_LABELS.get(level, "No")
 
 
 def _format_pct(pct: float | None) -> str | float:
@@ -932,7 +910,7 @@ def _compensation_data_dataframe(period_comp: "PeriodCompensation") -> pd.DataFr
             "Participation 6-month %": _format_pct(r.participation_pct),
             "Communication 6-month %": _format_pct(r.communication_pct),
             "Metrics Modifier": r.metrics_modifier,
-            "Ranked During Month?": _level_label(r.level_at_period_end),
+            "Ranked During Month?": _LEVEL_LABELS.get(r.level_at_period_end, "No"),
             "Days As Ranked": r.days_as_l1 + r.days_as_l2 + r.days_as_l3,
             "Entitlement Pre-Modifiers (USDS)": r.entitlement_pre_modifier,
             "Final Amount to AD Buffer (USDS)": r.final_amount,
