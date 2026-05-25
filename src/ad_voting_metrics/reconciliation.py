@@ -96,34 +96,23 @@ def build_entry(
     }
 
 
-def _filename(period: MonthPeriod, run_timestamp_iso: str) -> str:
-    """Build a filesystem-safe, sortable filename for a single run.
-
-    Format: <YYYY-MM>_<sanitized-iso-timestamp>.json. Colons are replaced with hyphens because they're illegal on
-    Windows filesystems; the trailing +00:00 offset is collapsed to Z so the result is compact.
-
-    Returns:
-        The composed filename.
-    """
-    period_iso = period.start.strftime("%Y-%m")
-    sanitized = run_timestamp_iso.replace("+00:00", "Z").replace(":", "-")
-    return f"{period_iso}_{sanitized}.json"
-
-
 def write_entry(directory: Path, period: MonthPeriod, entry: ReconciliationEntry) -> Path | None:
     """Write a reconciliation entry as a JSON file under `directory`.
 
-    Soft-fails on any IO error: logs a warning and returns None rather than blocking the run.
+    Filename format `<YYYY-MM>_<sanitized-iso-timestamp>.json` combines the period and the entry's run timestamp so
+    re-runs of the same period produce distinct files. Colons are hyphens (illegal on Windows) and `+00:00` collapses
+    to `Z` for compactness.
 
-    The filename combines the period and the entry's run timestamp, so re-runs of the same period produce distinct files
-    rather than overwriting.
+    Soft-fails on any IO error: logs a warning and returns None rather than blocking the run.
 
     Returns:
         The written path on success, or None on failure.
     """
+    period_iso = period.start.strftime("%Y-%m")
+    sanitized_ts = entry["run_timestamp"].replace("+00:00", "Z").replace(":", "-")
     try:
         directory.mkdir(parents=True, exist_ok=True)
-        path = directory / _filename(period, entry["run_timestamp"])
+        path = directory / f"{period_iso}_{sanitized_ts}.json"
         path.write_text(json.dumps(entry, indent=2, ensure_ascii=False))
         logger.info("Reconciliation log written to %s", path)
     except (OSError, TypeError, ValueError) as e:

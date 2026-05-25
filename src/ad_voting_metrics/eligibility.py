@@ -183,7 +183,8 @@ def compute_daily_eligibility(
 ) -> DailyEligibility:
     """Compute eligibility and slot assignment for every active delegate on `day`.
 
-    `window` is (start, end) bounding the trailing metric window. For a finalize run the same window is usually passed for every day in the period - the 6-month metric is a track record, not a per-day rolling calculation.
+    `window` is (start, end) bounding the trailing metric window. For a finalize run the same window is usually passed
+    for every day in the period - the 6-month metric is a track record, not a per-day rolling calculation.
 
     Active delegate are those where `is_active_during(day, day)` holds. Inactive delegates are silently excluded from
     the result, even if present in `daily_ranks` or `metrics_input` - callers may reuse one metrics dict across many

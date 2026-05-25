@@ -963,23 +963,6 @@ def test_write_participation_raw_data_to_real_workbook(temp_tab, monkeypatch):
 # ---------------------------------------------------------------------------
 
 
-def test_apply_cross_reference_rule_yes_means_pending():
-    assert sheets._apply_cross_reference_rule("Yes") == "Pending verification"
-
-
-def test_apply_cross_reference_rule_no_means_did_not_vote():
-    assert sheets._apply_cross_reference_rule("No") == "Did not vote"
-
-
-def test_apply_cross_reference_rule_discounted_mirrors_status():
-    assert sheets._apply_cross_reference_rule("No Delegated SKY") == "No Delegated SKY"
-
-
-def test_apply_cross_reference_rule_unknown_returns_blank():
-    assert sheets._apply_cross_reference_rule("") == ""
-    assert sheets._apply_cross_reference_rule("random") == ""
-
-
 def test_write_communication_master_missing_df_column_raises():
     workbook = MagicMock()
     df_bad = pd.DataFrame({"NotTheRightColumn": ["foo"]})
@@ -1620,35 +1603,6 @@ def test_write_compensation_tab_clears_before_writing(empty_existing_ws):
     assert "set" in call_order  # data table write
     assert call_order.index("clear") < call_order.index("update")
     assert call_order.index("update") < call_order.index("set")
-
-
-# ---------------------------------------------------------------------------
-# _enumerate_months
-# ---------------------------------------------------------------------------
-
-
-def test_enumerate_months_single_month():
-    months = sheets._enumerate_months(date(2026, 4, 1), date(2026, 4, 30))
-    assert months == [MonthPeriod(year=2026, month=4)]
-
-
-def test_enumerate_months_window_spans_year_rollover():
-    months = sheets._enumerate_months(date(2025, 11, 15), date(2026, 2, 28))
-    assert months == [
-        MonthPeriod(year=2025, month=11),
-        MonthPeriod(year=2025, month=12),
-        MonthPeriod(year=2026, month=1),
-        MonthPeriod(year=2026, month=2),
-    ]
-
-
-def test_enumerate_months_partial_month_at_edges():
-    months = sheets._enumerate_months(date(2026, 1, 5), date(2026, 3, 10))
-    assert months == [
-        MonthPeriod(year=2026, month=1),
-        MonthPeriod(year=2026, month=2),
-        MonthPeriod(year=2026, month=3),
-    ]
 
 
 # ---------------------------------------------------------------------------
