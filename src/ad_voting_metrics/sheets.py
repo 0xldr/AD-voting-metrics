@@ -671,12 +671,11 @@ def write_communication_master(  # noqa: PLR0914 — DataFrame merge is one logi
 def _parse_poll_history_tab(worksheet: gspread.Worksheet, value_col_name: str) -> pd.DataFrame:
     """Reshape a poll-history tab into long-form DataFrame.
 
-    Output columns: Delegate, Poll Id, Start Date (date), End Date (date),
-    Title, plus value_col_name carrying the per-cell status.
+    Output columns: Delegate, Poll Id, Start Date (date), End Date (date), Title, plus value_col_name carrying the
+    per-cell status.
 
-    Empty tabs and tabs without delegate columns return an empty
-    DataFrame with the expected columns. Blank-poll-id rows and
-    rows with unparseable Start Date are dropped.
+    Empty tabs and tabs without delegate columns return an empty DataFrame with the expected columns. Blank-poll-id rows
+    and rows with unparseable Start Date are dropped.
 
     Returns:
         Long-form DataFrame.
@@ -713,19 +712,16 @@ def read_participation_for_window(
 ) -> pd.DataFrame:
     """Aggregate per-delegate participation across all months in [window_start, window_end].
 
-    Walks each month touching the window. For each, looks for a tab
-    named "Participation Raw Data <Month Year>". Missing tabs are
-    silently skipped (zero-poll months produce no tab). Polls with
-    Start Date outside [window_start, window_end] are dropped.
+    Walks each month touching the window. For each, looks for a tab named "Participation Raw Data <Month Year>". Missing
+    tabs are silently skipped (zero-poll months produce no tab). Polls with Start Date outside [window_start,
+    window_end] are dropped.
 
     Returns:
-        Long-form DataFrame with columns Delegate, Poll Id, Start Date,
-        End Date, Title, Participation Status. Empty (with those columns)
-        if no in-window data was found.
+        Long-form DataFrame with columns Delegate, Poll Id, Start Date, End Date, Title, Participation Status. Empty
+        (with those columns) if no in-window data was found.
     """
     months = [
-        MonthPeriod(year=p.year, month=p.month)
-        for p in pd.period_range(start=window_start, end=window_end, freq="M")
+        MonthPeriod(year=p.year, month=p.month) for p in pd.period_range(start=window_start, end=window_end, freq="M")
     ]
     out_cols = ["Delegate", "Poll Id", "Start Date", "End Date", "Title", "Participation Status"]
     frames: list[pd.DataFrame] = []
@@ -750,9 +746,8 @@ def read_communication_master(workbook: gspread.Spreadsheet) -> pd.DataFrame:
     """Read the workbook-wide Communication Master tab as a long DataFrame.
 
     Returns:
-        Long-form DataFrame with columns Delegate, Poll Id, Start Date,
-        End Date, Title, Communication Status. Empty (with those columns)
-        if the tab has no parseable rows.
+        Long-form DataFrame with columns Delegate, Poll Id, Start Date, End Date, Title, Communication Status. Empty
+        (with those columns) if the tab has no parseable rows.
     """
     worksheet = _open_required_tab(
         workbook,
@@ -798,15 +793,14 @@ def compensation_tab_title(period: MonthPeriod) -> str:
 def read_config(workbook: gspread.Spreadsheet) -> "CompensationConfig":
     """Read the workbook-wide Config tab and return a CompensationConfig.
 
-    Format: two columns (Key, Value), header in row 1. Required keys:
-    L1_USDS, L2_USDS, L3_USDS, TOTAL_SLOTS. Unknown keys are ignored.
+    Format: two columns (Key, Value), header in row 1. Required keys: L1_USDS, L2_USDS, L3_USDS, TOTAL_SLOTS. Unknown
+    keys are ignored.
 
     Returns:
         Parsed CompensationConfig.
 
     Raises:
-        ValueError: if a required key is missing or a value can't
-            be coerced.
+        ValueError: if a required key is missing or a value can't be coerced.
     """
     worksheet = _open_required_tab(
         workbook,
@@ -866,8 +860,7 @@ def _format_pct(pct: float | None) -> str | float:
 def _compensation_header_block(period_comp: "PeriodCompensation", total_final: float) -> list[list[object]]:
     """Build rows 1-8 of the Compensation tab.
 
-    The total is precomputed in Python (no =SUM formula) so the tab
-    is fully self-describing on its own.
+    The total is precomputed in Python (no =SUM formula) so the tab is fully self-describing on its own.
 
     Returns:
         Eight rows, each padded to 8 columns.
@@ -941,8 +934,7 @@ def write_compensation_tab(
       - Row 7: Total Final Amount (computed in Python, no formula).
       - Row 8: Slot Days Check GOOD/NOT GOOD status.
       - Row 9: column headers (14 columns A-N).
-      - Rows 10+: one row per delegate, in alphabetical order from
-        period_comp.per_delegate.
+      - Rows 10+: one row per delegate, in alphabetical order from period_comp.per_delegate.
 
     Returns:
         The worksheet that was written.
