@@ -9,17 +9,37 @@ from datetime import UTC, date, datetime
 from unittest.mock import MagicMock
 
 import pandas as pd
+import pytest
+import responses
 from hexbytes import HexBytes
 from web3.exceptions import ContractLogicError
 
+from ad_voting_metrics.sources import http as http_module
 from ad_voting_metrics.sources import sky_executive_onchain as onchain
 
 PENDING = "Pending verification"
 
 
+@pytest.fixture(autouse=True)
+def _reset_session():
+    """Clear the cached requests.Session before and after every test in this module."""
+    http_module.get_session.cache_clear()
+    yield
+    http_module.get_session.cache_clear()
+
+
 def _ts(d: date) -> int:
     """Unix timestamp for midnight UTC on `d`."""
     return int(datetime(d.year, d.month, d.day, tzinfo=UTC).timestamp())
+
+
+def _mock_blockscout(block_number: int = 22_000_000) -> None:
+    """Register a Blockscout getblocknobytime response for the active `responses` context."""
+    responses.add(
+        responses.GET,
+        onchain.BLOCKSCOUT_API_URL,
+        json={"status": "1", "message": "OK", "result": str(block_number)},
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -119,27 +139,35 @@ def test_resolve_slate_safety_cap_on_runaway():
 
 
 # ---------------------------------------------------------------------------
-# _approx_block_from_date
+# _block_from_date
 # ---------------------------------------------------------------------------
 
 
-def test_approx_block_from_date_subtracts_seconds_then_buffer():
-    """latest_block - seconds_back/12 - one_day_blocks."""
-    w3 = MagicMock()
-    w3.eth.get_block.return_value = {"timestamp": _ts(date(2026, 5, 20)), "number": 22_000_000}
-
-    # Target 7 days earlier.
-    out = onchain._approx_block_from_date(w3, date(2026, 5, 13))
-    # 7 days = 604_800s; 50_400 blocks at 12s; minus another day buffer = 7_200.
-    expected = 22_000_000 - 50_400 - 7_200
-    assert abs(out - expected) <= 1
+@responses.activate
+def test_block_from_date_returns_blockscout_result():
+    responses.add(
+        responses.GET,
+        onchain.BLOCKSCOUT_API_URL,
+        json={"status": "1", "message": "OK", "result": "21500000"},
+    )
+    assert onchain._block_from_date(date(2026, 5, 13)) == 21_500_000
 
 
-def test_approx_block_from_date_clamps_at_zero():
-    w3 = MagicMock()
-    w3.eth.get_block.return_value = {"timestamp": 100, "number": 5}
-    out = onchain._approx_block_from_date(w3, date(2024, 1, 1))
-    assert out == 0
+@responses.activate
+def test_block_from_date_sends_midnight_utc_timestamp():
+    """The function must query by midnight UTC of the target date, with closest=after."""
+    responses.add(
+        responses.GET,
+        onchain.BLOCKSCOUT_API_URL,
+        json={"status": "1", "message": "OK", "result": "1"},
+    )
+    onchain._block_from_date(date(2026, 5, 13))
+    request_url = responses.calls[0].request.url
+    assert request_url is not None
+    assert f"timestamp={_ts(date(2026, 5, 13))}" in request_url
+    assert "closest=after" in request_url
+    assert "module=block" in request_url
+    assert "action=getblocknobytime" in request_url
 
 
 # ---------------------------------------------------------------------------
@@ -410,12 +438,10 @@ def test_resolve_pending_skips_when_rpc_url_missing(monkeypatch, caplog):
 def _w3_for_resolver(
     *,
     events: list[dict] | None = None,
-    block_ts: int = 1_779_148_800,  # 2026-05-20 UTC
     slate_addresses: dict[str, list[str]] | None = None,
 ) -> MagicMock:
     """Build a w3 mock that returns the given events and resolves slates."""
     w3 = MagicMock()
-    w3.eth.get_block.return_value = {"timestamp": block_ts, "number": 22_000_000}
 
     contract = MagicMock()
     contract.events.Vote.return_value.get_logs.return_value = events or []
@@ -435,8 +461,10 @@ def _w3_for_resolver(
     return w3
 
 
+@responses.activate
 def test_resolve_pending_flips_cell_when_slate_contains_spell(tmp_path):
     """Happy path: a delegate's in-window vote for a slate containing the spell."""
+    _mock_blockscout()
     spell_addr = "0x" + "11" * 20
     spell_start = date(2026, 4, 1)
     df = pd.DataFrame({
@@ -447,11 +475,8 @@ def test_resolve_pending_flips_cell_when_slate_contains_spell(tmp_path):
     slate = "0x" + "ab" * 32
     events = [_make_event(slate, 1000)]
     w3 = _w3_for_resolver(events=events, slate_addresses={slate: [spell_addr]})
-    # Make the block timestamp fall on 2026-04-03 (within 7-day window).
-    w3.eth.get_block.side_effect = [
-        {"timestamp": _ts(date(2026, 5, 20)), "number": 22_000_000},  # latest, for from-block calc
-        {"timestamp": _ts(date(2026, 4, 3))},  # the log's block
-    ]
+    # The log's block falls on 2026-04-03 (within 7-day window).
+    w3.eth.get_block.return_value = {"timestamp": _ts(date(2026, 4, 3))}
 
     result = onchain.resolve_pending_executive_votes(
         df,
@@ -462,8 +487,10 @@ def test_resolve_pending_flips_cell_when_slate_contains_spell(tmp_path):
     assert result.loc[0, spell_addr] == "Yes"
 
 
+@responses.activate
 def test_resolve_pending_late_vote_stays_pending(tmp_path):
     """A vote 8 days after spell start does not flip the cell."""
+    _mock_blockscout()
     spell_addr = "0x" + "22" * 20
     spell_start = date(2026, 4, 1)
     df = pd.DataFrame({
@@ -475,10 +502,7 @@ def test_resolve_pending_late_vote_stays_pending(tmp_path):
     events = [_make_event(slate, 1000)]
     w3 = _w3_for_resolver(events=events, slate_addresses={slate: [spell_addr]})
     # 2026-04-09 — one day past the 7-day window.
-    w3.eth.get_block.side_effect = [
-        {"timestamp": _ts(date(2026, 5, 20)), "number": 22_000_000},
-        {"timestamp": _ts(date(2026, 4, 9))},
-    ]
+    w3.eth.get_block.return_value = {"timestamp": _ts(date(2026, 4, 9))}
 
     result = onchain.resolve_pending_executive_votes(
         df,
@@ -489,8 +513,10 @@ def test_resolve_pending_late_vote_stays_pending(tmp_path):
     assert result.loc[0, spell_addr] == PENDING
 
 
+@responses.activate
 def test_resolve_pending_persists_cache_growth(tmp_path):
     """Newly resolved slates are written back to the cache file."""
+    _mock_blockscout()
     spell_addr = "0x" + "33" * 20
     spell_start = date(2026, 4, 1)
     df = pd.DataFrame({
@@ -501,10 +527,7 @@ def test_resolve_pending_persists_cache_growth(tmp_path):
     slate = "0x" + "ef" * 32
     events = [_make_event(slate, 1000)]
     w3 = _w3_for_resolver(events=events, slate_addresses={slate: [spell_addr]})
-    w3.eth.get_block.side_effect = [
-        {"timestamp": _ts(date(2026, 5, 20)), "number": 22_000_000},
-        {"timestamp": _ts(date(2026, 4, 3))},
-    ]
+    w3.eth.get_block.return_value = {"timestamp": _ts(date(2026, 4, 3))}
 
     cache_path = tmp_path / "slate_cache.json"
     onchain.resolve_pending_executive_votes(
@@ -520,8 +543,10 @@ def test_resolve_pending_persists_cache_growth(tmp_path):
     assert written[slate.lower()] == [spell_addr]
 
 
+@responses.activate
 def test_resolve_pending_reuses_cached_slate(tmp_path):
     """If the slate is already cached, no contract call is made."""
+    _mock_blockscout()
     spell_addr = "0x" + "44" * 20
     spell_start = date(2026, 4, 1)
     slate = "0x" + "ef" * 32
@@ -535,10 +560,7 @@ def test_resolve_pending_reuses_cached_slate(tmp_path):
 
     events = [_make_event(slate, 1000)]
     w3 = _w3_for_resolver(events=events)  # no slate_addresses configured
-    w3.eth.get_block.side_effect = [
-        {"timestamp": _ts(date(2026, 5, 20)), "number": 22_000_000},
-        {"timestamp": _ts(date(2026, 4, 3))},
-    ]
+    w3.eth.get_block.return_value = {"timestamp": _ts(date(2026, 4, 3))}
 
     result = onchain.resolve_pending_executive_votes(
         df,
@@ -552,8 +574,10 @@ def test_resolve_pending_reuses_cached_slate(tmp_path):
     w3.eth.contract.return_value.functions.slates.assert_not_called()
 
 
+@responses.activate
 def test_resolve_pending_no_cache_write_when_no_new_slates(tmp_path):
     """If the on-chain events reveal only already-cached slates, the file is left alone."""
+    _mock_blockscout()
     spell_addr = "0x" + "55" * 20
     spell_start = date(2026, 4, 1)
     slate = "0x" + "ef" * 32
@@ -568,10 +592,7 @@ def test_resolve_pending_no_cache_write_when_no_new_slates(tmp_path):
 
     events = [_make_event(slate, 1000)]
     w3 = _w3_for_resolver(events=events)
-    w3.eth.get_block.side_effect = [
-        {"timestamp": _ts(date(2026, 5, 20)), "number": 22_000_000},
-        {"timestamp": _ts(date(2026, 4, 3))},
-    ]
+    w3.eth.get_block.return_value = {"timestamp": _ts(date(2026, 4, 3))}
 
     onchain.resolve_pending_executive_votes(
         df,
