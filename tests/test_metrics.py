@@ -8,7 +8,6 @@ from ad_voting_metrics.metrics import (
     DISCOUNTED,
     NOT_PARTICIPATED,
     PARTICIPATED,
-    ParticipationCounts,
     apply_participation_cross_reference,
     communication_pct,
     communication_pct_for_window,
@@ -67,7 +66,10 @@ def test_status_sets_are_disjoint():
 
 def test_count_statuses_empty_input():
     counts = count_statuses([])
-    assert counts == ParticipationCounts(0, 0, 0, 0)
+    assert counts.participated == 0
+    assert counts.not_participated == 0
+    assert counts.discounted == 0
+    assert counts.unknown == 0
 
 
 def test_count_statuses_all_yes():

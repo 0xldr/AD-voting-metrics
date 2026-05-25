@@ -18,6 +18,13 @@ from ad_voting_metrics.roster import (
     to_dataframe,
 )
 
+# Reusable delegate-contract addresses for tests. All are valid
+# `^0x[0-9a-f]{40}$`. Pick whichever is convenient; they don't carry meaning.
+_ADDR_A = "0xfc48fbca739079aab08216c4d5e506b96593753d"
+_ADDR_B = "0x0f23de72e1581857eacd6308aebb69cf3a49cc86"
+_ADDR_C = "0x173a1c04b79ed9266721c1154daa29addc0b9558"
+_ADDR_GENERIC = "0x1234567890abcdef1234567890abcdef12345678"
+
 # ---------------------------------------------------------------------------
 # Delegate construction and validation
 # ---------------------------------------------------------------------------
@@ -44,7 +51,7 @@ def test_name_must_be_non_empty():
     with pytest.raises(ValidationError, match="name must be non-empty"):
         Delegate(
             name="   ",
-            vote_delegate_address="0x1234567890abcdef1234567890abcdef12345678",
+            vote_delegate_address=_ADDR_GENERIC,
             start_date=date(2025, 1, 1),
         )
 
@@ -60,7 +67,7 @@ def test_end_date_must_be_strictly_after_start(end_date):
     with pytest.raises(ValidationError, match=r"end_date.*must be after"):
         Delegate(
             name="X",
-            vote_delegate_address="0x1234567890abcdef1234567890abcdef12345678",
+            vote_delegate_address=_ADDR_GENERIC,
             start_date=date(2025, 1, 1),
             end_date=end_date,
         )
@@ -317,7 +324,7 @@ def test_level_at_with_sequential_levels():
 def _delegate(start: date, end: date | None = None) -> Delegate:
     return Delegate(
         name="Harry",
-        vote_delegate_address="0x1234567890abcdef1234567890abcdef12345678",
+        vote_delegate_address=_ADDR_GENERIC,
         start_date=start,
         end_date=end,
     )
@@ -396,7 +403,7 @@ def test_empty_list_accepted():
 
 
 def test_duplicate_addresses_rejected():
-    addr = "0x1234567890abcdef1234567890abcdef12345678"
+    addr = _ADDR_GENERIC
     with pytest.raises(ValidationError, match="Duplicate vote_delegate_address"):
         DelegatesConfig(
             delegates=[
@@ -509,7 +516,7 @@ def _api_entry(name: str, address: str) -> dict:
 
 
 def test_merge_no_drift():
-    addr = "0xfc48fbca739079aab08216c4d5e506b96593753d"
+    addr = _ADDR_A
     yaml_config = DelegatesConfig(
         delegates=[
             Delegate(name="Active", vote_delegate_address=addr, start_date=date(2024, 1, 1)),
@@ -521,7 +528,7 @@ def test_merge_no_drift():
 
 
 def test_merge_yaml_active_api_absent_warns():
-    addr = "0xfc48fbca739079aab08216c4d5e506b96593753d"
+    addr = _ADDR_A
     yaml_config = DelegatesConfig(
         delegates=[
             Delegate(name="GhostlyActive", vote_delegate_address=addr, start_date=date(2024, 1, 1)),
@@ -536,7 +543,7 @@ def test_merge_yaml_active_api_absent_warns():
 
 def test_merge_yaml_exited_api_absent_no_warn():
     """Expected case: YAML says exited, API doesn't return them."""
-    addr = "0xfc48fbca739079aab08216c4d5e506b96593753d"
+    addr = _ADDR_A
     yaml_config = DelegatesConfig(
         delegates=[
             Delegate(
@@ -553,7 +560,7 @@ def test_merge_yaml_exited_api_absent_no_warn():
 
 
 def test_merge_yaml_exited_api_present_warns():
-    addr = "0xfc48fbca739079aab08216c4d5e506b96593753d"
+    addr = _ADDR_A
     yaml_config = DelegatesConfig(
         delegates=[
             Delegate(
@@ -572,7 +579,7 @@ def test_merge_yaml_exited_api_present_warns():
 
 def test_merge_api_present_not_in_yaml_warns():
     yaml_config = DelegatesConfig(delegates=[])
-    api = [_api_entry("NewlyAligned", "0x0f23de72e1581857eacd6308aebb69cf3a49cc86")]
+    api = [_api_entry("NewlyAligned", _ADDR_B)]
     warnings = merge_with_api(yaml_config, api)
     assert len(warnings) == 1
     assert "NewlyAligned" in warnings[0]
@@ -581,7 +588,7 @@ def test_merge_api_present_not_in_yaml_warns():
 
 def test_merge_address_case_insensitive():
     """API may return mixed-case addresses; comparison should still work."""
-    addr_lower = "0xfc48fbca739079aab08216c4d5e506b96593753d"
+    addr_lower = _ADDR_A
     addr_mixed = "0xFc48fBcA739079aaB08216C4d5E506B96593753d"
     yaml_config = DelegatesConfig(
         delegates=[
@@ -595,7 +602,7 @@ def test_merge_address_case_insensitive():
 
 def test_merge_names_differ_addresses_match_no_warn():
     """Casing differences in names are intentional; don't flag them."""
-    addr = "0xfc48fbca739079aab08216c4d5e506b96593753d"
+    addr = _ADDR_A
     yaml_config = DelegatesConfig(
         delegates=[
             Delegate(name="BONAPUBLICA", vote_delegate_address=addr, start_date=date(2024, 1, 1)),
@@ -608,8 +615,8 @@ def test_merge_names_differ_addresses_match_no_warn():
 
 def test_merge_only_returns_warnings_not_delegates():
     """The YAML is the canonical roster; merge_with_api does not return it. API-only entries surface as a warning."""
-    addr_in_yaml = "0xfc48fbca739079aab08216c4d5e506b96593753d"
-    addr_in_api_only = "0x0f23de72e1581857eacd6308aebb69cf3a49cc86"
+    addr_in_yaml = _ADDR_A
+    addr_in_api_only = _ADDR_B
     yaml_config = DelegatesConfig(
         delegates=[
             Delegate(
@@ -650,10 +657,12 @@ def test_build_roster_for_period_filters_to_active(tmp_path):
     p.write_text(yaml_text)
 
     period = MonthPeriod(2026, 4)
-    fake_fetcher = lambda: [  # noqa: E731
-        _api_entry("Active", "0xfc48fbca739079aab08216c4d5e506b96593753d"),
-        _api_entry("AlignedAfter", "0x173a1c04b79ed9266721c1154daa29addc0b9558"),
-    ]
+
+    def fake_fetcher():
+        return [
+            _api_entry("Active", _ADDR_A),
+            _api_entry("AlignedAfter", _ADDR_C),
+        ]
 
     result = build_roster_for_period(p, period, fake_fetcher)
 
@@ -722,10 +731,11 @@ def test_build_roster_for_period_records_api_metadata(tmp_path):
     p = tmp_path / "delegates.yaml"
     p.write_text(yaml_text)
 
-    fake_fetcher = lambda: [  # noqa: E731
-        _api_entry("Active", "0xfc48fbca739079aab08216c4d5e506b96593753d"),
-        _api_entry("Other", "0x0f23de72e1581857eacd6308aebb69cf3a49cc86"),
-    ]
+    def fake_fetcher():
+        return [
+            _api_entry("Active", _ADDR_A),
+            _api_entry("Other", _ADDR_B),
+        ]
 
     result = build_roster_for_period(p, MonthPeriod(2026, 4), fake_fetcher)
 
@@ -777,7 +787,7 @@ def test_to_dataframe_columns():
     delegates = [
         Delegate(
             name="Cloaky",
-            vote_delegate_address="0x0f23de72e1581857eacd6308aebb69cf3a49cc86",
+            vote_delegate_address=_ADDR_B,
             start_date=date(2023, 6, 6),
         ),
     ]
@@ -790,7 +800,7 @@ def test_to_dataframe_start_date_is_string():
     delegates = [
         Delegate(
             name="X",
-            vote_delegate_address="0xfc48fbca739079aab08216c4d5e506b96593753d",
+            vote_delegate_address=_ADDR_A,
             start_date=date(2024, 7, 4),
         ),
     ]
@@ -802,12 +812,12 @@ def test_to_dataframe_preserves_address_format():
     delegates = [
         Delegate(
             name="X",
-            vote_delegate_address="0xfc48fbca739079aab08216c4d5e506b96593753d",
+            vote_delegate_address=_ADDR_A,
             start_date=date(2024, 1, 1),
         ),
     ]
     df = to_dataframe(delegates)
-    assert df.iloc[0]["Delegate Contract"] == "0xfc48fbca739079aab08216c4d5e506b96593753d"
+    assert df.iloc[0]["Delegate Contract"] == _ADDR_A
 
 
 def test_to_dataframe_empty():

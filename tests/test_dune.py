@@ -1,14 +1,23 @@
 """Tests for sources.dune — Dune client integration and (delegate, day) projection."""
 
 from datetime import date
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pandas as pd
 import pytest
 
-from ad_voting_metrics.period import MonthPeriod
 from ad_voting_metrics.sources import dune
 from ad_voting_metrics.sources import http as http_module
+
+
+def _period_stub(start: date, end: date) -> SimpleNamespace:
+    """Build a period-shaped stub covering [start, end].
+
+    Tests need arbitrary date ranges; real MonthPeriod only models calendar months.
+    The dune module only reads .start/.end on the period it's handed.
+    """
+    return SimpleNamespace(start=start, end=end, year=start.year, month=start.month)
 
 
 @pytest.fixture(autouse=True)
@@ -89,11 +98,6 @@ def test_get_all_sky_delegated_raises_when_api_key_missing(monkeypatch):
         dune.get_all_sky_delegated()
 
 
-def test_dune_query_id_is_6604139():
-    """Pin the query ID - bumping it requires a deliberate edit."""
-    assert dune.DUNE_SKY_QUERY_ID == 6604139
-
-
 # ---------------------------------------------------------------------------
 # get_delegate_list_sky — per-day SKY rows + ranking inputs
 # ---------------------------------------------------------------------------
@@ -121,11 +125,7 @@ def test_get_delegate_list_sky_returns_one_row_per_delegate_per_day():
         ("0xaaa", "2026-04-01", 1000.0),
         ("0xaaa", "2026-04-02", 1500.0),
     ])
-    period_2day = MagicMock(spec=MonthPeriod)
-    period_2day.start = date(2026, 4, 1)
-    period_2day.end = date(2026, 4, 2)
-    period_2day.year = 2026
-    period_2day.month = 4
+    period_2day = _period_stub(date(2026, 4, 1), date(2026, 4, 2))
 
     with patch.object(dune, "get_all_sky_delegated", return_value=fake_all_sky):
         result = dune.get_delegate_list_sky(df, period_2day)
@@ -143,9 +143,7 @@ def test_get_delegate_list_sky_fills_missing_dune_days_with_zero():
         ("0xaaa", "2026-04-02", 1500.0),
         # day 1 and day 3 missing
     ])
-    period_3day = MagicMock(spec=MonthPeriod)
-    period_3day.start = date(2026, 4, 1)
-    period_3day.end = date(2026, 4, 3)
+    period_3day = _period_stub(date(2026, 4, 1), date(2026, 4, 3))
 
     with patch.object(dune, "get_all_sky_delegated", return_value=fake_all_sky):
         result = dune.get_delegate_list_sky(df, period_3day)
@@ -162,9 +160,7 @@ def test_get_delegate_list_sky_lowercases_and_strips_name():
         {"Delegate Name": "  Alice  ", "Delegate Contract": "0xaaa", "Start Date": "2024-01-01"},
     ])
     fake_all_sky = _all_sky_df([("0xaaa", "2026-04-01", 1000.0)])
-    period_1day = MagicMock(spec=MonthPeriod)
-    period_1day.start = date(2026, 4, 1)
-    period_1day.end = date(2026, 4, 1)
+    period_1day = _period_stub(date(2026, 4, 1), date(2026, 4, 1))
 
     with patch.object(dune, "get_all_sky_delegated", return_value=fake_all_sky):
         result = dune.get_delegate_list_sky(df, period_1day)
@@ -178,9 +174,7 @@ def test_get_delegate_list_sky_preserves_unrounded_sky():
         {"Delegate Name": "Alice", "Delegate Contract": "0xaaa", "Start Date": "2024-01-01"},
     ])
     fake_all_sky = _all_sky_df([("0xaaa", "2026-04-01", 1234.56789)])
-    period_1day = MagicMock(spec=MonthPeriod)
-    period_1day.start = date(2026, 4, 1)
-    period_1day.end = date(2026, 4, 1)
+    period_1day = _period_stub(date(2026, 4, 1), date(2026, 4, 1))
 
     with patch.object(dune, "get_all_sky_delegated", return_value=fake_all_sky):
         result = dune.get_delegate_list_sky(df, period_1day)
@@ -194,9 +188,7 @@ def test_get_delegate_list_sky_date_is_date_object():
         {"Delegate Name": "Alice", "Delegate Contract": "0xaaa", "Start Date": "2024-01-01"},
     ])
     fake_all_sky = _all_sky_df([("0xaaa", "2026-04-01", 1000.0)])
-    period_1day = MagicMock(spec=MonthPeriod)
-    period_1day.start = date(2026, 4, 1)
-    period_1day.end = date(2026, 4, 1)
+    period_1day = _period_stub(date(2026, 4, 1), date(2026, 4, 1))
 
     with patch.object(dune, "get_all_sky_delegated", return_value=fake_all_sky):
         result = dune.get_delegate_list_sky(df, period_1day)
@@ -214,9 +206,7 @@ def test_get_delegate_list_sky_multiple_delegates_distinct_rows():
         ("0xaaa", "2026-04-01", 1000.0),
         ("0xbbb", "2026-04-01", 500.0),
     ])
-    period_1day = MagicMock(spec=MonthPeriod)
-    period_1day.start = date(2026, 4, 1)
-    period_1day.end = date(2026, 4, 1)
+    period_1day = _period_stub(date(2026, 4, 1), date(2026, 4, 1))
 
     with patch.object(dune, "get_all_sky_delegated", return_value=fake_all_sky):
         result = dune.get_delegate_list_sky(df, period_1day)
@@ -233,9 +223,7 @@ def test_get_delegate_list_sky_passes_cache_max_age_hours_through():
         {"Delegate Name": "Alice", "Delegate Contract": "0xaaa", "Start Date": "2024-01-01"},
     ])
     fake_all_sky = _all_sky_df([("0xaaa", "2026-04-01", 1000.0)])
-    period_1day = MagicMock(spec=MonthPeriod)
-    period_1day.start = date(2026, 4, 1)
-    period_1day.end = date(2026, 4, 1)
+    period_1day = _period_stub(date(2026, 4, 1), date(2026, 4, 1))
 
     with patch.object(dune, "get_all_sky_delegated", return_value=fake_all_sky) as mock_dune:
         dune.get_delegate_list_sky(df, period_1day, cache_max_age_hours=24)

@@ -8,7 +8,7 @@ run timestamp, with soft-fail on errors.
 import json
 from datetime import date, datetime
 from pathlib import Path
-from typing import Any, cast
+from typing import cast
 
 from ad_voting_metrics.period import MonthPeriod
 from ad_voting_metrics.reconciliation import ReconciliationEntry, build_entry, write_entry
@@ -72,15 +72,9 @@ def _make_roster_result(
 def _make_entry(**overrides: object) -> ReconciliationEntry:
     """Return a complete ReconciliationEntry with sensible defaults.
 
-    Tests of write_entry don't care about most fields — they're
-    exercising filename construction, JSON encoding, or soft-fail
-    behavior. Use this helper to get a typed full entry, overriding
-    only the fields the test actually asserts on.
-
-    Overrides are typed `object` because each ReconciliationEntry field
-    has a different type; no single TypedDict variadic kwargs annotation
-    works. The cast(Any, ...) at the .update site quiets static checkers
-    that can't see the update is field-by-field correct.
+    Tests override only the fields they assert on; the rest come from the base. Overrides are typed `object` because
+    ReconciliationEntry's fields are heterogeneous and pyright treats the merged dict as `dict[str, object]` until
+    cast back.
     """
     base: ReconciliationEntry = {
         "run_timestamp": "2026-05-06T15:32:08+00:00",
@@ -100,8 +94,7 @@ def _make_entry(**overrides: object) -> ReconciliationEntry:
         "dune_cache_max_age_hours": None,
         "output_files": [],
     }
-    cast("Any", base).update(overrides)
-    return base
+    return cast("ReconciliationEntry", {**base, **overrides})
 
 
 # ---------------------------------------------------------------------------
