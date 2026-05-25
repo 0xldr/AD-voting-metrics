@@ -1,10 +1,19 @@
 """Tests for sources.delegates — the vote.sky.money paginated fetcher."""
 
 import pytest
+import requests
 import responses
 
 from ad_voting_metrics.sources import http as http_module
 from ad_voting_metrics.sources.delegates import _MAX_PAGES, DELEGATES_URL, fetch_aligned_delegates
+
+# Errors a misbehaving HTTP endpoint can surface through urllib3's
+# retry layer + requests' raise_for_status.
+_HTTP_FAILURES = (
+    requests.exceptions.HTTPError,
+    requests.exceptions.RetryError,
+    requests.exceptions.ConnectionError,
+)
 
 
 @pytest.fixture(autouse=True)
@@ -249,11 +258,11 @@ def test_500_error_raises():
         status=500,
     )
     # The session has retries on 5xx, but after retries are exhausted
-    # raise_on_status=False means raise_for_status fires.
-    # We register only one response, so retries will fail on subsequent
-    # attempts (responses will raise ConnectionError when no match exists).
-    # That's acceptable — the test just confirms 500s don't get swallowed.
-    with pytest.raises(Exception):  # noqa: B017, PT011 — Exception or RetryError or HTTPError, depending on retry behavior
+    # raise_on_status=False means raise_for_status fires. We register only
+    # one response, so retries will fail on subsequent attempts (responses
+    # raises ConnectionError when no match exists). Either way, the test
+    # confirms 500s don't get swallowed.
+    with pytest.raises(_HTTP_FAILURES):
         fetch_aligned_delegates()
 
 
@@ -266,5 +275,5 @@ def test_404_error_raises():
         status=404,
     )
     # 404 isn't in the retry list, so raise_for_status fires immediately.
-    with pytest.raises(Exception):  # noqa: B017, PT011
+    with pytest.raises(_HTTP_FAILURES):
         fetch_aligned_delegates()

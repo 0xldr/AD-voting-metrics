@@ -18,6 +18,11 @@ import pandas as pd
 import pytest
 
 from ad_voting_metrics import sheets
+from ad_voting_metrics.compensation import (
+    CompensationConfig,
+    DelegateCompensation,
+    PeriodCompensation,
+)
 from ad_voting_metrics.period import MonthPeriod
 
 # ---------------------------------------------------------------------------
@@ -309,12 +314,28 @@ def test_clear_tab_wipes_real_cells(temp_tab):
 # ---------------------------------------------------------------------------
 
 
-def _empty_existing_ws() -> tuple[MagicMock, MagicMock]:
-    """Return (workbook, worksheet) pair where the worksheet is fresh-looking."""
+@pytest.fixture
+def empty_existing_ws():
+    """Return (workbook, worksheet) where workbook.worksheet(...) returns a fresh-looking ws."""
     workbook = MagicMock()
     fake_ws = MagicMock(spec=gspread.Worksheet)
     workbook.worksheet.return_value = fake_ws
     return workbook, fake_ws
+
+
+@pytest.fixture
+def sheet_io():
+    """Patch get_as_dataframe (defaults to empty) and set_with_dataframe.
+
+    Yields (get_mock, set_mock); tests override `get_mock.return_value` to inject existing-tab state and inspect
+    `set_mock.call_args.args[1]` to assert on the DataFrame written.
+    """
+    with (
+        patch("ad_voting_metrics.sheets.get_as_dataframe") as get_mock,
+        patch("ad_voting_metrics.sheets.set_with_dataframe") as set_mock,
+    ):
+        get_mock.return_value = pd.DataFrame()
+        yield get_mock, set_mock
 
 
 # ---------------------------------------------------------------------------
@@ -344,32 +365,26 @@ def test_write_daily_data_missing_columns_raises():
         sheets.write_daily_data(workbook, MonthPeriod(year=2026, month=4), df_bad)
 
 
-def test_write_daily_data_uses_workbook_wide_tab_name():
-    workbook, fake_ws = _empty_existing_ws()
+def test_write_daily_data_uses_workbook_wide_tab_name(empty_existing_ws, sheet_io):
+    workbook, fake_ws = empty_existing_ws
     workbook.worksheet.side_effect = gspread.exceptions.WorksheetNotFound
     workbook.add_worksheet.return_value = fake_ws
     df = _make_ranking_df()
 
-    with (
-        patch("ad_voting_metrics.sheets.get_as_dataframe", return_value=pd.DataFrame()),
-        patch("ad_voting_metrics.sheets.set_with_dataframe"),
-    ):
-        sheets.write_daily_data(workbook, MonthPeriod(year=2026, month=4), df)
+    _, _ = sheet_io
+    sheets.write_daily_data(workbook, MonthPeriod(year=2026, month=4), df)
 
     workbook.add_worksheet.assert_called_once()
     assert workbook.add_worksheet.call_args.kwargs["title"] == "Daily Data"
 
 
-def test_write_daily_data_first_fetch_writes_header_and_rows():
+def test_write_daily_data_first_fetch_writes_header_and_rows(empty_existing_ws, sheet_io):
     """First fetch (empty existing) writes the canonical column order with all rows."""
-    workbook, _ = _empty_existing_ws()
+    workbook, _ = empty_existing_ws
     df = _make_ranking_df()
 
-    with (
-        patch("ad_voting_metrics.sheets.get_as_dataframe", return_value=pd.DataFrame()),
-        patch("ad_voting_metrics.sheets.set_with_dataframe") as set_mock,
-    ):
-        sheets.write_daily_data(workbook, MonthPeriod(year=2026, month=4), df)
+    _, set_mock = sheet_io
+    sheets.write_daily_data(workbook, MonthPeriod(year=2026, month=4), df)
 
     written = set_mock.call_args.args[1]
     assert list(written.columns) == list(sheets.DAILY_DATA_COLUMNS)
@@ -378,8 +393,8 @@ def test_write_daily_data_first_fetch_writes_header_and_rows():
     assert set(written["Date"]) == {"2026-04-01", "2026-04-02"}
 
 
-def test_write_daily_data_clears_before_writing():
-    workbook, fake_ws = _empty_existing_ws()
+def test_write_daily_data_clears_before_writing(empty_existing_ws):
+    workbook, fake_ws = empty_existing_ws
     call_order: list[str] = []
     fake_ws.clear.side_effect = lambda: call_order.append("clear")
 
@@ -395,9 +410,9 @@ def test_write_daily_data_clears_before_writing():
     assert call_order == ["clear", "set"]
 
 
-def test_write_daily_data_preserves_existing_rows_for_other_dates():
+def test_write_daily_data_preserves_existing_rows_for_other_dates(empty_existing_ws, sheet_io):
     """Dates not in the current fetch should keep their existing rows."""
-    workbook, _ = _empty_existing_ws()
+    workbook, _ = empty_existing_ws
     existing = pd.DataFrame({
         "Date": ["2026-03-31", "2026-03-31"],
         "Delegate": ["alpha", "beta"],
@@ -411,11 +426,9 @@ def test_write_daily_data_preserves_existing_rows_for_other_dates():
         "Rank": [1, 2],
     })
 
-    with (
-        patch("ad_voting_metrics.sheets.get_as_dataframe", return_value=existing),
-        patch("ad_voting_metrics.sheets.set_with_dataframe") as set_mock,
-    ):
-        sheets.write_daily_data(workbook, MonthPeriod(year=2026, month=4), df_new)
+    get_mock, set_mock = sheet_io
+    get_mock.return_value = existing
+    sheets.write_daily_data(workbook, MonthPeriod(year=2026, month=4), df_new)
 
     written = set_mock.call_args.args[1]
     assert "2026-03-31" in set(written["Date"])
@@ -423,9 +436,9 @@ def test_write_daily_data_preserves_existing_rows_for_other_dates():
     assert len(written) == 4
 
 
-def test_write_daily_data_overwrites_existing_rows_for_current_dates():
+def test_write_daily_data_overwrites_existing_rows_for_current_dates(empty_existing_ws, sheet_io):
     """Re-runs replace any existing rows for dates that appear in the new fetch."""
-    workbook, _ = _empty_existing_ws()
+    workbook, _ = empty_existing_ws
     existing = pd.DataFrame({
         "Date": ["2026-04-01", "2026-04-01"],
         "Delegate": ["alpha", "beta"],
@@ -439,11 +452,9 @@ def test_write_daily_data_overwrites_existing_rows_for_current_dates():
         "Rank": [1, 2],
     })
 
-    with (
-        patch("ad_voting_metrics.sheets.get_as_dataframe", return_value=existing),
-        patch("ad_voting_metrics.sheets.set_with_dataframe") as set_mock,
-    ):
-        sheets.write_daily_data(workbook, MonthPeriod(year=2026, month=4), df_new)
+    get_mock, set_mock = sheet_io
+    get_mock.return_value = existing
+    sheets.write_daily_data(workbook, MonthPeriod(year=2026, month=4), df_new)
 
     written = set_mock.call_args.args[1]
     assert len(written) == 2
@@ -451,9 +462,9 @@ def test_write_daily_data_overwrites_existing_rows_for_current_dates():
     assert 999 not in set(written["Rank"])
 
 
-def test_write_daily_data_raises_on_roster_drift():
+def test_write_daily_data_raises_on_roster_drift(empty_existing_ws):
     """A date whose delegate-row count changed between fetches is fatal."""
-    workbook, _ = _empty_existing_ws()
+    workbook, _ = empty_existing_ws
     existing = pd.DataFrame({
         "Date": ["2026-04-01", "2026-04-01", "2026-04-01"],
         "Delegate": ["alpha", "beta", "gamma"],
@@ -475,9 +486,9 @@ def test_write_daily_data_raises_on_roster_drift():
         sheets.write_daily_data(workbook, MonthPeriod(year=2026, month=4), df_new)
 
 
-def test_write_daily_data_no_drift_when_dates_dont_overlap():
+def test_write_daily_data_no_drift_when_dates_dont_overlap(empty_existing_ws, sheet_io):
     """Per-date row count is only checked for dates appearing in both."""
-    workbook, _ = _empty_existing_ws()
+    workbook, _ = empty_existing_ws
     existing = pd.DataFrame({
         "Date": ["2026-03-31", "2026-03-31", "2026-03-31"],
         "Delegate": ["alpha", "beta", "gamma"],
@@ -491,19 +502,17 @@ def test_write_daily_data_no_drift_when_dates_dont_overlap():
         "Rank": [1, 2],
     })
 
-    with (
-        patch("ad_voting_metrics.sheets.get_as_dataframe", return_value=existing),
-        patch("ad_voting_metrics.sheets.set_with_dataframe") as set_mock,
-    ):
-        sheets.write_daily_data(workbook, MonthPeriod(year=2026, month=4), df_new)
+    get_mock, set_mock = sheet_io
+    get_mock.return_value = existing
+    sheets.write_daily_data(workbook, MonthPeriod(year=2026, month=4), df_new)
 
     # 3 + 2 = 5 rows, no drift error
     assert len(set_mock.call_args.args[1]) == 5
 
 
-def test_write_daily_data_handles_unparseable_existing_rows():
+def test_write_daily_data_handles_unparseable_existing_rows(empty_existing_ws, sheet_io):
     """Existing rows with non-numeric Rank are silently dropped during read."""
-    workbook, _ = _empty_existing_ws()
+    workbook, _ = empty_existing_ws
     existing = pd.DataFrame({
         "Date": ["2026-03-31", "garbage"],
         "Delegate": ["alpha", "beta"],
@@ -512,11 +521,9 @@ def test_write_daily_data_handles_unparseable_existing_rows():
     })
     df_new = _make_ranking_df()
 
-    with (
-        patch("ad_voting_metrics.sheets.get_as_dataframe", return_value=existing),
-        patch("ad_voting_metrics.sheets.set_with_dataframe") as set_mock,
-    ):
-        sheets.write_daily_data(workbook, MonthPeriod(year=2026, month=4), df_new)
+    get_mock, set_mock = sheet_io
+    get_mock.return_value = existing
+    sheets.write_daily_data(workbook, MonthPeriod(year=2026, month=4), df_new)
 
     written = set_mock.call_args.args[1]
     # The parseable old row (2026-03-31, alpha) is preserved; the bad row dropped.
@@ -524,9 +531,9 @@ def test_write_daily_data_handles_unparseable_existing_rows():
     assert "garbage" not in set(written["Date"])
 
 
-def test_write_daily_data_handles_unrecognised_existing_header():
+def test_write_daily_data_handles_unrecognised_existing_header(empty_existing_ws, sheet_io):
     """If the existing header doesn't match the canonical columns, treat as empty."""
-    workbook, _ = _empty_existing_ws()
+    workbook, _ = empty_existing_ws
     # Wrong header order: Daily Data parser checks for an exact prefix match.
     existing = pd.DataFrame({
         "Foo": ["x"],
@@ -536,19 +543,17 @@ def test_write_daily_data_handles_unrecognised_existing_header():
     })
     df_new = _make_ranking_df()
 
-    with (
-        patch("ad_voting_metrics.sheets.get_as_dataframe", return_value=existing),
-        patch("ad_voting_metrics.sheets.set_with_dataframe") as set_mock,
-    ):
-        sheets.write_daily_data(workbook, MonthPeriod(year=2026, month=4), df_new)
+    get_mock, set_mock = sheet_io
+    get_mock.return_value = existing
+    sheets.write_daily_data(workbook, MonthPeriod(year=2026, month=4), df_new)
 
     # Only the new rows are written; the misshapen existing is treated as empty.
     written = set_mock.call_args.args[1]
     assert len(written) == 4
 
 
-def test_write_daily_data_sort_order_date_then_rank():
-    workbook, _ = _empty_existing_ws()
+def test_write_daily_data_sort_order_date_then_rank(empty_existing_ws, sheet_io):
+    workbook, _ = empty_existing_ws
     df = pd.DataFrame({
         "Delegate": ["alpha", "beta", "alpha", "beta"],
         "Date": [date(2026, 4, 2), date(2026, 4, 1), date(2026, 4, 1), date(2026, 4, 2)],
@@ -556,11 +561,8 @@ def test_write_daily_data_sort_order_date_then_rank():
         "Rank": [1, 2, 1, 2],
     })
 
-    with (
-        patch("ad_voting_metrics.sheets.get_as_dataframe", return_value=pd.DataFrame()),
-        patch("ad_voting_metrics.sheets.set_with_dataframe") as set_mock,
-    ):
-        sheets.write_daily_data(workbook, MonthPeriod(year=2026, month=4), df)
+    _, set_mock = sheet_io
+    sheets.write_daily_data(workbook, MonthPeriod(year=2026, month=4), df)
 
     written = set_mock.call_args.args[1]
     # Sorted by Date asc, then Rank asc → first row should be (2026-04-01, rank 1).
@@ -570,9 +572,9 @@ def test_write_daily_data_sort_order_date_then_rank():
     assert written.iloc[-1]["Rank"] == 2
 
 
-def test_write_daily_data_handles_pandas_timestamps():
+def test_write_daily_data_handles_pandas_timestamps(empty_existing_ws, sheet_io):
     """Dates incoming as pandas Timestamp objects are coerced to date(YYYY-MM-DD)."""
-    workbook, _ = _empty_existing_ws()
+    workbook, _ = empty_existing_ws
     df = pd.DataFrame({
         "Delegate": ["alpha", "beta"],
         "Date": [pd.Timestamp("2026-04-01"), pd.Timestamp("2026-04-01")],
@@ -580,41 +582,32 @@ def test_write_daily_data_handles_pandas_timestamps():
         "Rank": [1, 2],
     })
 
-    with (
-        patch("ad_voting_metrics.sheets.get_as_dataframe", return_value=pd.DataFrame()),
-        patch("ad_voting_metrics.sheets.set_with_dataframe") as set_mock,
-    ):
-        sheets.write_daily_data(workbook, MonthPeriod(year=2026, month=4), df)
+    _, set_mock = sheet_io
+    sheets.write_daily_data(workbook, MonthPeriod(year=2026, month=4), df)
 
     written = set_mock.call_args.args[1]
     assert set(written["Date"]) == {"2026-04-01"}
 
 
-def test_write_daily_data_extra_columns_ignored():
+def test_write_daily_data_extra_columns_ignored(empty_existing_ws, sheet_io):
     """Extra columns in df_ranking don't appear in the written values."""
-    workbook, _ = _empty_existing_ws()
+    workbook, _ = empty_existing_ws
     df = _make_ranking_df()
     df["Extra"] = "junk"
 
-    with (
-        patch("ad_voting_metrics.sheets.get_as_dataframe", return_value=pd.DataFrame()),
-        patch("ad_voting_metrics.sheets.set_with_dataframe") as set_mock,
-    ):
-        sheets.write_daily_data(workbook, MonthPeriod(year=2026, month=4), df)
+    _, set_mock = sheet_io
+    sheets.write_daily_data(workbook, MonthPeriod(year=2026, month=4), df)
 
     written = set_mock.call_args.args[1]
     assert "Extra" not in written.columns
 
 
-def test_write_daily_data_empty_dataframe_with_empty_existing():
-    workbook, _ = _empty_existing_ws()
+def test_write_daily_data_empty_dataframe_with_empty_existing(empty_existing_ws, sheet_io):
+    workbook, _ = empty_existing_ws
     df_empty = pd.DataFrame(columns=list(sheets.DAILY_DATA_COLUMNS))
 
-    with (
-        patch("ad_voting_metrics.sheets.get_as_dataframe", return_value=pd.DataFrame()),
-        patch("ad_voting_metrics.sheets.set_with_dataframe") as set_mock,
-    ):
-        sheets.write_daily_data(workbook, MonthPeriod(year=2026, month=4), df_empty)
+    _, set_mock = sheet_io
+    sheets.write_daily_data(workbook, MonthPeriod(year=2026, month=4), df_empty)
 
     written = set_mock.call_args.args[1]
     assert list(written.columns) == list(sheets.DAILY_DATA_COLUMNS)
@@ -835,8 +828,8 @@ def test_write_participation_creates_tab_with_correct_title():
     assert workbook.add_worksheet.call_args.kwargs["title"] == "Participation Raw Data April 2026"
 
 
-def test_write_participation_clears_existing_tab_before_writing():
-    workbook, fake_ws = _empty_existing_ws()
+def test_write_participation_clears_existing_tab_before_writing(empty_existing_ws):
+    workbook, fake_ws = empty_existing_ws
     call_order: list[str] = []
     fake_ws.clear.side_effect = lambda: call_order.append("clear")
 
@@ -855,8 +848,8 @@ def test_write_participation_clears_existing_tab_before_writing():
     assert call_order == ["clear", "set"]
 
 
-def test_write_participation_header_includes_metadata_and_delegate_names():
-    workbook, _ = _empty_existing_ws()
+def test_write_participation_header_includes_metadata_and_delegate_names(empty_existing_ws):
+    workbook, _ = empty_existing_ws
     with patch("ad_voting_metrics.sheets.set_with_dataframe") as set_mock:
         sheets.write_participation_raw_data(
             workbook,
@@ -877,8 +870,8 @@ def test_write_participation_header_includes_metadata_and_delegate_names():
     ]
 
 
-def test_write_participation_data_rows_one_per_poll_with_metadata():
-    workbook, _ = _empty_existing_ws()
+def test_write_participation_data_rows_one_per_poll_with_metadata(empty_existing_ws):
+    workbook, _ = empty_existing_ws
     with patch("ad_voting_metrics.sheets.set_with_dataframe") as set_mock:
         sheets.write_participation_raw_data(
             workbook,
@@ -898,14 +891,14 @@ def test_write_participation_data_rows_one_per_poll_with_metadata():
     assert spell_row["End Date"] == "2026-04-22"
 
 
-def test_write_participation_unknown_poll_id_has_blank_metadata():
+def test_write_participation_unknown_poll_id_has_blank_metadata(empty_existing_ws):
     df = pd.DataFrame({
         "Delegate Name": ["BLUE"],
         "Delegate Contract": ["0xaaa"],
         "Start Date": ["2025-12-01"],
         "99999": ["Yes"],
     })
-    workbook, _ = _empty_existing_ws()
+    workbook, _ = empty_existing_ws
     with patch("ad_voting_metrics.sheets.set_with_dataframe") as set_mock:
         sheets.write_participation_raw_data(
             workbook,
@@ -921,13 +914,13 @@ def test_write_participation_unknown_poll_id_has_blank_metadata():
     assert row["BLUE"] == "Yes"
 
 
-def test_write_participation_zero_polls_writes_header_only():
+def test_write_participation_zero_polls_writes_header_only(empty_existing_ws):
     df = pd.DataFrame({
         "Delegate Name": ["BLUE", "Cloaky"],
         "Delegate Contract": ["0xaaa", "0xbbb"],
         "Start Date": ["2025-12-01", "2025-12-01"],
     })
-    workbook, _ = _empty_existing_ws()
+    workbook, _ = empty_existing_ws
     with patch("ad_voting_metrics.sheets.set_with_dataframe") as set_mock:
         sheets.write_participation_raw_data(
             workbook,
@@ -999,19 +992,16 @@ def test_write_communication_master_missing_df_column_raises():
         )
 
 
-def test_write_communication_master_first_fetch_creates_header():
+def test_write_communication_master_first_fetch_creates_header(empty_existing_ws, sheet_io):
     """First fetch (empty tab): header is metadata columns + delegate names in df order."""
-    workbook, _ = _empty_existing_ws()
-    with (
-        patch("ad_voting_metrics.sheets.get_as_dataframe", return_value=pd.DataFrame()),
-        patch("ad_voting_metrics.sheets.set_with_dataframe") as set_mock,
-    ):
-        sheets.write_communication_master(
-            workbook,
-            _make_participation_df(),
-            _make_poll_info(),
-            _make_spell_info(),
-        )
+    workbook, _ = empty_existing_ws
+    _, set_mock = sheet_io
+    sheets.write_communication_master(
+        workbook,
+        _make_participation_df(),
+        _make_poll_info(),
+        _make_spell_info(),
+    )
     written = set_mock.call_args.args[1]
     assert list(written.columns) == [
         "Poll Id",
@@ -1024,7 +1014,7 @@ def test_write_communication_master_first_fetch_creates_header():
     ]
 
 
-def test_write_communication_master_first_fetch_pending_for_yes_participation():
+def test_write_communication_master_first_fetch_pending_for_yes_participation(empty_existing_ws, sheet_io):
     """'Yes' participation defaults the communication cell to 'Pending verification'."""
     df = pd.DataFrame({
         "Delegate Name": ["BLUE", "Cloaky"],
@@ -1032,53 +1022,44 @@ def test_write_communication_master_first_fetch_pending_for_yes_participation():
         "Start Date": ["2025-12-01", "2025-12-01"],
         "12345": ["Yes", "Yes"],
     })
-    workbook, _ = _empty_existing_ws()
-    with (
-        patch("ad_voting_metrics.sheets.get_as_dataframe", return_value=pd.DataFrame()),
-        patch("ad_voting_metrics.sheets.set_with_dataframe") as set_mock,
-    ):
-        sheets.write_communication_master(workbook, df, _make_poll_info(), [])
+    workbook, _ = empty_existing_ws
+    _, set_mock = sheet_io
+    sheets.write_communication_master(workbook, df, _make_poll_info(), [])
     written = set_mock.call_args.args[1]
     row = written[written["Poll Id"] == "12345"].iloc[0]
     assert row["BLUE"] == "Pending verification"
     assert row["Cloaky"] == "Pending verification"
 
 
-def test_write_communication_master_first_fetch_did_not_vote_for_no_participation():
+def test_write_communication_master_first_fetch_did_not_vote_for_no_participation(empty_existing_ws, sheet_io):
     df = pd.DataFrame({
         "Delegate Name": ["BLUE"],
         "Delegate Contract": ["0xaaa"],
         "Start Date": ["2025-12-01"],
         "12345": ["No"],
     })
-    workbook, _ = _empty_existing_ws()
-    with (
-        patch("ad_voting_metrics.sheets.get_as_dataframe", return_value=pd.DataFrame()),
-        patch("ad_voting_metrics.sheets.set_with_dataframe") as set_mock,
-    ):
-        sheets.write_communication_master(workbook, df, _make_poll_info(), [])
+    workbook, _ = empty_existing_ws
+    _, set_mock = sheet_io
+    sheets.write_communication_master(workbook, df, _make_poll_info(), [])
     written = set_mock.call_args.args[1]
     assert written.iloc[0]["BLUE"] == "Did not vote"
 
 
-def test_write_communication_master_first_fetch_mirrors_discounted():
+def test_write_communication_master_first_fetch_mirrors_discounted(empty_existing_ws, sheet_io):
     df = pd.DataFrame({
         "Delegate Name": ["BLUE"],
         "Delegate Contract": ["0xaaa"],
         "Start Date": ["2025-12-01"],
         "12345": ["No Delegated SKY"],
     })
-    workbook, _ = _empty_existing_ws()
-    with (
-        patch("ad_voting_metrics.sheets.get_as_dataframe", return_value=pd.DataFrame()),
-        patch("ad_voting_metrics.sheets.set_with_dataframe") as set_mock,
-    ):
-        sheets.write_communication_master(workbook, df, _make_poll_info(), [])
+    workbook, _ = empty_existing_ws
+    _, set_mock = sheet_io
+    sheets.write_communication_master(workbook, df, _make_poll_info(), [])
     written = set_mock.call_args.args[1]
     assert written.iloc[0]["BLUE"] == "No Delegated SKY"
 
 
-def test_write_communication_master_missing_column_raises():
+def test_write_communication_master_missing_column_raises(empty_existing_ws):
     """New delegate added to YAML but not to the existing tab → raise."""
     existing = pd.DataFrame({
         "Poll Id": ["55555"],
@@ -1093,7 +1074,7 @@ def test_write_communication_master_missing_column_raises():
         "Start Date": ["2025-12-01", "2025-12-01"],
         "12345": ["Yes", "Yes"],
     })
-    workbook, _ = _empty_existing_ws()
+    workbook, _ = empty_existing_ws
     with (
         patch("ad_voting_metrics.sheets.get_as_dataframe", return_value=existing),
         patch("ad_voting_metrics.sheets.set_with_dataframe"),
@@ -1102,7 +1083,7 @@ def test_write_communication_master_missing_column_raises():
         sheets.write_communication_master(workbook, df, _make_poll_info(), [])
 
 
-def test_write_communication_master_preserves_operator_edits():
+def test_write_communication_master_preserves_operator_edits(empty_existing_ws, sheet_io):
     """Non-blank existing cells survive the rewrite."""
     existing = pd.DataFrame({
         "Poll Id": ["12345"],
@@ -1114,19 +1095,17 @@ def test_write_communication_master_preserves_operator_edits():
         "BONAPUBLICA": [""],
     })
     df = _make_participation_df()
-    workbook, _ = _empty_existing_ws()
-    with (
-        patch("ad_voting_metrics.sheets.get_as_dataframe", return_value=existing),
-        patch("ad_voting_metrics.sheets.set_with_dataframe") as set_mock,
-    ):
-        sheets.write_communication_master(workbook, df, _make_poll_info(), _make_spell_info())
+    workbook, _ = empty_existing_ws
+    get_mock, set_mock = sheet_io
+    get_mock.return_value = existing
+    sheets.write_communication_master(workbook, df, _make_poll_info(), _make_spell_info())
     written = set_mock.call_args.args[1]
     row = written[written["Poll Id"] == "12345"].iloc[0]
     assert row["BLUE"] == "Operator-set value"
     assert row["Cloaky"] == "Did not vote"
 
 
-def test_write_communication_master_preserves_historical_polls():
+def test_write_communication_master_preserves_historical_polls(empty_existing_ws, sheet_io):
     """A poll in the existing tab but not in the current fetch stays in the output."""
     existing = pd.DataFrame({
         "Poll Id": ["55555"],
@@ -1138,18 +1117,16 @@ def test_write_communication_master_preserves_historical_polls():
         "BONAPUBLICA": [""],
     })
     df = _make_participation_df()  # contains polls 12345, 67890, 0xspell001
-    workbook, _ = _empty_existing_ws()
-    with (
-        patch("ad_voting_metrics.sheets.get_as_dataframe", return_value=existing),
-        patch("ad_voting_metrics.sheets.set_with_dataframe") as set_mock,
-    ):
-        sheets.write_communication_master(workbook, df, _make_poll_info(), _make_spell_info())
+    workbook, _ = empty_existing_ws
+    get_mock, set_mock = sheet_io
+    get_mock.return_value = existing
+    sheets.write_communication_master(workbook, df, _make_poll_info(), _make_spell_info())
     written = set_mock.call_args.args[1]
     assert "55555" in set(written["Poll Id"])
     assert "12345" in set(written["Poll Id"])
 
 
-def test_write_communication_master_historical_delegate_cells_blank_for_new_polls():
+def test_write_communication_master_historical_delegate_cells_blank_for_new_polls(empty_existing_ws, sheet_io):
     """An out-of-roster delegate column stays blank for newly added polls."""
     existing = pd.DataFrame({
         "Poll Id": ["55555"],
@@ -1162,19 +1139,17 @@ def test_write_communication_master_historical_delegate_cells_blank_for_new_poll
         "GoneDelegate": ["Yes"],  # historical column, delegate no longer in roster
     })
     df = _make_participation_df()
-    workbook, _ = _empty_existing_ws()
-    with (
-        patch("ad_voting_metrics.sheets.get_as_dataframe", return_value=existing),
-        patch("ad_voting_metrics.sheets.set_with_dataframe") as set_mock,
-    ):
-        sheets.write_communication_master(workbook, df, _make_poll_info(), _make_spell_info())
+    workbook, _ = empty_existing_ws
+    get_mock, set_mock = sheet_io
+    get_mock.return_value = existing
+    sheets.write_communication_master(workbook, df, _make_poll_info(), _make_spell_info())
     written = set_mock.call_args.args[1]
     new_row = written[written["Poll Id"] == "12345"].iloc[0]
     # GoneDelegate column stays blank for a poll that isn't in their history.
     assert new_row["GoneDelegate"] == ""
 
 
-def test_write_communication_master_sort_order_start_date_descending():
+def test_write_communication_master_sort_order_start_date_descending(empty_existing_ws, sheet_io):
     """Output is sorted newest first; unparseable Start Date rows go to the end."""
     existing = pd.DataFrame({
         "Poll Id": ["alpha", "beta"],
@@ -1186,12 +1161,10 @@ def test_write_communication_master_sort_order_start_date_descending():
         "BONAPUBLICA": ["Yes", "Yes"],
     })
     df = _make_participation_df()
-    workbook, _ = _empty_existing_ws()
-    with (
-        patch("ad_voting_metrics.sheets.get_as_dataframe", return_value=existing),
-        patch("ad_voting_metrics.sheets.set_with_dataframe") as set_mock,
-    ):
-        sheets.write_communication_master(workbook, df, _make_poll_info(), _make_spell_info())
+    workbook, _ = empty_existing_ws
+    get_mock, set_mock = sheet_io
+    get_mock.return_value = existing
+    sheets.write_communication_master(workbook, df, _make_poll_info(), _make_spell_info())
     written = set_mock.call_args.args[1]
     # The first row should be the latest valid Start Date (0xspell001 → 2026-04-20).
     assert written.iloc[0]["Poll Id"] == "0xspell001"
@@ -1199,8 +1172,8 @@ def test_write_communication_master_sort_order_start_date_descending():
     assert written.iloc[-1]["Poll Id"] == "beta"
 
 
-def test_write_communication_master_clears_before_writing():
-    workbook, fake_ws = _empty_existing_ws()
+def test_write_communication_master_clears_before_writing(empty_existing_ws):
+    workbook, fake_ws = empty_existing_ws
     call_order: list[str] = []
     fake_ws.clear.side_effect = lambda: call_order.append("clear")
 
@@ -1220,21 +1193,18 @@ def test_write_communication_master_clears_before_writing():
     assert call_order == ["clear", "set"]
 
 
-def test_write_communication_master_uses_correct_tab_name():
+def test_write_communication_master_uses_correct_tab_name(sheet_io):
     workbook = MagicMock()
     fake_ws = MagicMock(spec=gspread.Worksheet)
     workbook.worksheet.side_effect = gspread.exceptions.WorksheetNotFound
     workbook.add_worksheet.return_value = fake_ws
-    with (
-        patch("ad_voting_metrics.sheets.get_as_dataframe", return_value=pd.DataFrame()),
-        patch("ad_voting_metrics.sheets.set_with_dataframe"),
-    ):
-        sheets.write_communication_master(
-            workbook,
-            _make_participation_df(),
-            _make_poll_info(),
-            _make_spell_info(),
-        )
+    _, _ = sheet_io
+    sheets.write_communication_master(
+        workbook,
+        _make_participation_df(),
+        _make_poll_info(),
+        _make_spell_info(),
+    )
     assert workbook.add_worksheet.call_args.kwargs["title"] == "Communication Master"
 
 
@@ -1276,8 +1246,8 @@ def test_read_config_missing_tab_raises_runtime_error():
         sheets.read_config(workbook)
 
 
-def test_read_config_empty_tab_raises_value_error():
-    workbook, _ = _empty_existing_ws()
+def test_read_config_empty_tab_raises_value_error(empty_existing_ws):
+    workbook, _ = empty_existing_ws
     with (
         patch("ad_voting_metrics.sheets.get_as_dataframe", return_value=pd.DataFrame()),
         pytest.raises(ValueError, match="is empty"),
@@ -1285,8 +1255,8 @@ def test_read_config_empty_tab_raises_value_error():
         sheets.read_config(workbook)
 
 
-def test_read_config_missing_required_key_raises():
-    workbook, _ = _empty_existing_ws()
+def test_read_config_missing_required_key_raises(empty_existing_ws):
+    workbook, _ = empty_existing_ws
     df = _make_config_df([
         ["Key", "Value"],
         ["L1_USDS", "1000"],
@@ -1300,8 +1270,8 @@ def test_read_config_missing_required_key_raises():
         sheets.read_config(workbook)
 
 
-def test_read_config_unparseable_value_raises():
-    workbook, _ = _empty_existing_ws()
+def test_read_config_unparseable_value_raises(empty_existing_ws):
+    workbook, _ = empty_existing_ws
     df = _make_config_df([
         ["Key", "Value"],
         ["L1_USDS", "not a number"],
@@ -1316,8 +1286,8 @@ def test_read_config_unparseable_value_raises():
         sheets.read_config(workbook)
 
 
-def test_read_config_happy_path_returns_compensation_config():
-    workbook, _ = _empty_existing_ws()
+def test_read_config_happy_path_returns_compensation_config(empty_existing_ws):
+    workbook, _ = empty_existing_ws
     df = _make_config_df([
         ["Key", "Value"],
         ["L1_USDS", "33333"],
@@ -1333,8 +1303,8 @@ def test_read_config_happy_path_returns_compensation_config():
     assert config.total_slots == 6
 
 
-def test_read_config_unknown_keys_silently_ignored():
-    workbook, _ = _empty_existing_ws()
+def test_read_config_unknown_keys_silently_ignored(empty_existing_ws):
+    workbook, _ = empty_existing_ws
     df = _make_config_df([
         ["Key", "Value"],
         ["L1_USDS", "33333"],
@@ -1348,8 +1318,8 @@ def test_read_config_unknown_keys_silently_ignored():
     assert config.total_slots == 6
 
 
-def test_read_config_strips_whitespace_from_keys_and_values():
-    workbook, _ = _empty_existing_ws()
+def test_read_config_strips_whitespace_from_keys_and_values(empty_existing_ws):
+    workbook, _ = empty_existing_ws
     df = _make_config_df([
         ["Key", "Value"],
         ["  L1_USDS  ", "  33333  "],
@@ -1375,12 +1345,6 @@ def _make_period_comp(
     slot_days_check: str = "GOOD",
 ):
     """Build a minimal PeriodCompensation for write_compensation_tab tests."""
-    from ad_voting_metrics.compensation import (
-        CompensationConfig,
-        DelegateCompensation,
-        PeriodCompensation,
-    )
-
     if period is None:
         period = MonthPeriod(year=2026, month=4)
     if per_delegate is None:
@@ -1424,8 +1388,8 @@ def test_write_compensation_tab_uses_correct_tab_name():
     assert workbook.add_worksheet.call_args.kwargs["title"] == "April 2026 Compensation"
 
 
-def test_write_compensation_tab_writes_header_block():
-    workbook, fake_ws = _empty_existing_ws()
+def test_write_compensation_tab_writes_header_block(empty_existing_ws):
+    workbook, fake_ws = empty_existing_ws
     with patch("ad_voting_metrics.sheets.set_with_dataframe"):
         sheets.write_compensation_tab(workbook, _make_period_comp())
     header_block = fake_ws.update.call_args.kwargs["values"]
@@ -1438,8 +1402,8 @@ def test_write_compensation_tab_writes_header_block():
     assert header_block[4][0] == "Days in Month"
 
 
-def test_write_compensation_tab_writes_config_reference_amounts():
-    workbook, fake_ws = _empty_existing_ws()
+def test_write_compensation_tab_writes_config_reference_amounts(empty_existing_ws):
+    workbook, fake_ws = empty_existing_ws
     with patch("ad_voting_metrics.sheets.set_with_dataframe"):
         sheets.write_compensation_tab(workbook, _make_period_comp())
     header_block = fake_ws.update.call_args.kwargs["values"]
@@ -1451,10 +1415,8 @@ def test_write_compensation_tab_writes_config_reference_amounts():
     assert header_block[2][4] == 4000.0
 
 
-def test_write_compensation_tab_writes_level_counts():
+def test_write_compensation_tab_writes_level_counts(empty_existing_ws):
     """Number of Level X is the count of delegates with each end-of-period level."""
-    from ad_voting_metrics.compensation import DelegateCompensation
-
     delegates = [
         DelegateCompensation(
             name=f"d{i}",
@@ -1476,7 +1438,7 @@ def test_write_compensation_tab_writes_level_counts():
         )
         for i, lvl in enumerate([1, 1, 2, 3, 3, 3], start=1)
     ]
-    workbook, fake_ws = _empty_existing_ws()
+    workbook, fake_ws = empty_existing_ws
     with patch("ad_voting_metrics.sheets.set_with_dataframe"):
         sheets.write_compensation_tab(workbook, _make_period_comp(per_delegate=delegates))
     header_block = fake_ws.update.call_args.kwargs["values"]
@@ -1485,10 +1447,8 @@ def test_write_compensation_tab_writes_level_counts():
     assert header_block[2][7] == 3  # n_l3
 
 
-def test_write_compensation_tab_total_is_computed_in_python():
+def test_write_compensation_tab_total_is_computed_in_python(empty_existing_ws):
     """Total Final Amount is the sum of per-delegate finals (no =SUM formula)."""
-    from ad_voting_metrics.compensation import DelegateCompensation
-
     delegates = [
         DelegateCompensation(
             name=f"d{i}",
@@ -1510,7 +1470,7 @@ def test_write_compensation_tab_total_is_computed_in_python():
         )
         for i in range(3)
     ]
-    workbook, fake_ws = _empty_existing_ws()
+    workbook, fake_ws = empty_existing_ws
     with patch("ad_voting_metrics.sheets.set_with_dataframe"):
         sheets.write_compensation_tab(workbook, _make_period_comp(per_delegate=delegates))
     header_block = fake_ws.update.call_args.kwargs["values"]
@@ -1520,8 +1480,8 @@ def test_write_compensation_tab_total_is_computed_in_python():
     assert not (isinstance(header_block[6][1], str) and header_block[6][1].startswith("="))
 
 
-def test_write_compensation_tab_writes_slot_days_check():
-    workbook, fake_ws = _empty_existing_ws()
+def test_write_compensation_tab_writes_slot_days_check(empty_existing_ws):
+    workbook, fake_ws = empty_existing_ws
     with patch("ad_voting_metrics.sheets.set_with_dataframe"):
         sheets.write_compensation_tab(workbook, _make_period_comp(slot_days_check="NOT GOOD"))
     header_block = fake_ws.update.call_args.kwargs["values"]
@@ -1529,26 +1489,24 @@ def test_write_compensation_tab_writes_slot_days_check():
     assert header_block[7][1] == "NOT GOOD"
 
 
-def test_write_compensation_tab_data_table_starts_at_row_9():
+def test_write_compensation_tab_data_table_starts_at_row_9(empty_existing_ws):
     """The data table (column headers + data) is written at row 9."""
-    workbook, _ = _empty_existing_ws()
+    workbook, _ = empty_existing_ws
     with patch("ad_voting_metrics.sheets.set_with_dataframe") as set_mock:
         sheets.write_compensation_tab(workbook, _make_period_comp())
     assert set_mock.call_args.kwargs["row"] == 9
 
 
-def test_write_compensation_tab_data_columns_match_canonical_header():
-    workbook, _ = _empty_existing_ws()
+def test_write_compensation_tab_data_columns_match_canonical_header(empty_existing_ws):
+    workbook, _ = empty_existing_ws
     with patch("ad_voting_metrics.sheets.set_with_dataframe") as set_mock:
         sheets.write_compensation_tab(workbook, _make_period_comp())
     written = set_mock.call_args.args[1]
     assert list(written.columns) == list(sheets.COMPENSATION_COLUMNS)
 
 
-def test_write_compensation_tab_data_rows_in_order():
+def test_write_compensation_tab_data_rows_in_order(empty_existing_ws):
     """Rows appear in the order of period_comp.per_delegate (alphabetical from compute)."""
-    from ad_voting_metrics.compensation import DelegateCompensation
-
     delegates = [
         DelegateCompensation(
             name=name,
@@ -1570,17 +1528,15 @@ def test_write_compensation_tab_data_rows_in_order():
         )
         for name in ["alpha", "beta", "gamma"]
     ]
-    workbook, _ = _empty_existing_ws()
+    workbook, _ = empty_existing_ws
     with patch("ad_voting_metrics.sheets.set_with_dataframe") as set_mock:
         sheets.write_compensation_tab(workbook, _make_period_comp(per_delegate=delegates))
     written = set_mock.call_args.args[1]
     assert list(written["Delegate"]) == ["alpha", "beta", "gamma"]
 
 
-def test_write_compensation_tab_none_pct_renders_as_no_data():
+def test_write_compensation_tab_none_pct_renders_as_no_data(empty_existing_ws):
     """None for participation_pct / communication_pct → 'No Data' string in the cell."""
-    from ad_voting_metrics.compensation import DelegateCompensation
-
     delegate = DelegateCompensation(
         name="alpha",
         rank_at_period_end=1,
@@ -1599,7 +1555,7 @@ def test_write_compensation_tab_none_pct_renders_as_no_data():
         buffer_post_payment=0.0,
         notes="",
     )
-    workbook, _ = _empty_existing_ws()
+    workbook, _ = empty_existing_ws
     with patch("ad_voting_metrics.sheets.set_with_dataframe") as set_mock:
         sheets.write_compensation_tab(workbook, _make_period_comp(per_delegate=[delegate]))
     written = set_mock.call_args.args[1]
@@ -1607,10 +1563,8 @@ def test_write_compensation_tab_none_pct_renders_as_no_data():
     assert written.iloc[0]["Communication 6-month %"] == "No Data"
 
 
-def test_write_compensation_tab_level_label_mapping():
+def test_write_compensation_tab_level_label_mapping(empty_existing_ws):
     """level_at_period_end (1/2/3/None) → Level 1 / Level 2 / Level 3 / No."""
-    from ad_voting_metrics.compensation import DelegateCompensation
-
     def _delegate(level):
         return DelegateCompensation(
             name=f"d{level}",
@@ -1632,16 +1586,16 @@ def test_write_compensation_tab_level_label_mapping():
         )
 
     delegates = [_delegate(1), _delegate(2), _delegate(3), _delegate(None)]
-    workbook, _ = _empty_existing_ws()
+    workbook, _ = empty_existing_ws
     with patch("ad_voting_metrics.sheets.set_with_dataframe") as set_mock:
         sheets.write_compensation_tab(workbook, _make_period_comp(per_delegate=delegates))
     written = set_mock.call_args.args[1]
     assert list(written["Ranked During Month?"]) == ["Level 1", "Level 2", "Level 3", "No"]
 
 
-def test_write_compensation_tab_empty_per_delegate_still_writes_header():
+def test_write_compensation_tab_empty_per_delegate_still_writes_header(empty_existing_ws):
     """Empty roster: data table is empty but column headers still appear."""
-    workbook, _ = _empty_existing_ws()
+    workbook, _ = empty_existing_ws
     with patch("ad_voting_metrics.sheets.set_with_dataframe") as set_mock:
         sheets.write_compensation_tab(workbook, _make_period_comp(per_delegate=[]))
     written = set_mock.call_args.args[1]
@@ -1649,8 +1603,8 @@ def test_write_compensation_tab_empty_per_delegate_still_writes_header():
     assert list(written.columns) == list(sheets.COMPENSATION_COLUMNS)
 
 
-def test_write_compensation_tab_clears_before_writing():
-    workbook, fake_ws = _empty_existing_ws()
+def test_write_compensation_tab_clears_before_writing(empty_existing_ws):
+    workbook, fake_ws = empty_existing_ws
     call_order: list[str] = []
     fake_ws.clear.side_effect = lambda: call_order.append("clear")
     fake_ws.update.side_effect = lambda **_kw: call_order.append("update")
@@ -1714,8 +1668,8 @@ def test_read_daily_data_missing_tab_raises_with_operator_message():
         sheets.read_daily_data(workbook, MonthPeriod(year=2026, month=4))
 
 
-def test_read_daily_data_no_rows_in_period_raises():
-    workbook, _ = _empty_existing_ws()
+def test_read_daily_data_no_rows_in_period_raises(empty_existing_ws):
+    workbook, _ = empty_existing_ws
     df = _make_daily_data_df([
         ("2026-03-15", "alpha", "100", "1"),  # outside April
     ])
@@ -1726,8 +1680,8 @@ def test_read_daily_data_no_rows_in_period_raises():
         sheets.read_daily_data(workbook, MonthPeriod(year=2026, month=4))
 
 
-def test_read_daily_data_returns_ranks_for_every_day_present():
-    workbook, _ = _empty_existing_ws()
+def test_read_daily_data_returns_ranks_for_every_day_present(empty_existing_ws):
+    workbook, _ = empty_existing_ws
     df = _make_daily_data_df([
         ("2026-04-01", "alpha", "100", "1"),
         ("2026-04-01", "beta", "50", "2"),
@@ -1741,8 +1695,8 @@ def test_read_daily_data_returns_ranks_for_every_day_present():
     assert set(out["Rank"]) == {1, 2}
 
 
-def test_read_daily_data_filters_out_other_months():
-    workbook, _ = _empty_existing_ws()
+def test_read_daily_data_filters_out_other_months(empty_existing_ws):
+    workbook, _ = empty_existing_ws
     df = _make_daily_data_df([
         ("2026-03-31", "alpha", "100", "1"),  # outside
         ("2026-04-01", "alpha", "100", "1"),
@@ -1753,8 +1707,8 @@ def test_read_daily_data_filters_out_other_months():
     assert list(out["Date"]) == [date(2026, 4, 1)]
 
 
-def test_read_daily_data_skips_unparseable_dates():
-    workbook, _ = _empty_existing_ws()
+def test_read_daily_data_skips_unparseable_dates(empty_existing_ws):
+    workbook, _ = empty_existing_ws
     df = _make_daily_data_df([
         ("2026-04-01", "alpha", "100", "1"),
         ("garbage", "beta", "50", "2"),
@@ -1900,8 +1854,8 @@ def test_read_communication_master_missing_tab_raises():
         sheets.read_communication_master(workbook)
 
 
-def test_read_communication_master_empty_tab_returns_empty_df():
-    workbook, _ = _empty_existing_ws()
+def test_read_communication_master_empty_tab_returns_empty_df(empty_existing_ws):
+    workbook, _ = empty_existing_ws
     with patch("ad_voting_metrics.sheets.get_as_dataframe", return_value=pd.DataFrame()):
         out = sheets.read_communication_master(workbook)
     assert isinstance(out, pd.DataFrame)
@@ -1909,16 +1863,16 @@ def test_read_communication_master_empty_tab_returns_empty_df():
     assert "Communication Status" in out.columns
 
 
-def test_read_communication_master_header_only_returns_empty():
-    workbook, _ = _empty_existing_ws()
+def test_read_communication_master_header_only_returns_empty(empty_existing_ws):
+    workbook, _ = empty_existing_ws
     header_only = pd.DataFrame(columns=["Poll Id", "Start Date", "End Date", "Title", "alpha"])
     with patch("ad_voting_metrics.sheets.get_as_dataframe", return_value=header_only):
         out = sheets.read_communication_master(workbook)
     assert out.empty
 
 
-def test_read_communication_master_pivots_into_long_dataframe():
-    workbook, _ = _empty_existing_ws()
+def test_read_communication_master_pivots_into_long_dataframe(empty_existing_ws):
+    workbook, _ = empty_existing_ws
     df = pd.DataFrame({
         "Poll Id": ["12345", "67890"],
         "Start Date": ["2026-04-05", "2026-04-12"],
@@ -1938,8 +1892,8 @@ def test_read_communication_master_pivots_into_long_dataframe():
     assert beta_67890["Communication Status"] == "Pending verification"
 
 
-def test_read_communication_master_skips_blank_poll_id_rows():
-    workbook, _ = _empty_existing_ws()
+def test_read_communication_master_skips_blank_poll_id_rows(empty_existing_ws):
+    workbook, _ = empty_existing_ws
     df = pd.DataFrame({
         "Poll Id": ["12345", "", "  "],
         "Start Date": ["2026-04-05", "", ""],
@@ -1952,8 +1906,8 @@ def test_read_communication_master_skips_blank_poll_id_rows():
     assert set(out["Poll Id"]) == {"12345"}
 
 
-def test_read_communication_master_no_delegate_columns_returns_empty():
-    workbook, _ = _empty_existing_ws()
+def test_read_communication_master_no_delegate_columns_returns_empty(empty_existing_ws):
+    workbook, _ = empty_existing_ws
     df = pd.DataFrame({
         "Poll Id": ["12345"],
         "Start Date": ["2026-04-05"],
@@ -1970,9 +1924,9 @@ def test_read_communication_master_no_delegate_columns_returns_empty():
 # ---------------------------------------------------------------------------
 
 
-def test_read_sheet_as_strings_fills_nan_with_blank():
+def test_read_sheet_as_strings_fills_nan_with_blank(empty_existing_ws):
     """get_as_dataframe may return NaN for some empty cells; we coerce to ''."""
-    workbook, _ = _empty_existing_ws()
+    workbook, _ = empty_existing_ws
     df_with_nan = pd.DataFrame({"A": ["x", np.nan], "B": [np.nan, "y"]})
     with patch("ad_voting_metrics.sheets.get_as_dataframe", return_value=df_with_nan):
         out = sheets._read_sheet_as_strings(workbook.worksheet())

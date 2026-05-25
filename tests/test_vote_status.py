@@ -2,314 +2,79 @@
 
 from datetime import UTC, date, datetime
 
+import pytest
+
 from ad_voting_metrics import vote_status
-
-# ---------------------------------------------------------------------------
-# determine_vote_status — voting-status logic with close-day grace period
-# ---------------------------------------------------------------------------
-
 
 # Standard 3-day poll spanning 4 calendar days in Dune's daily rollups:
 # 16:00-24:00 on day 0, full days 1 and 2, 0:00-16:00 on day 3 (close day).
 _POLL_DAYS = [date(2026, 4, 1), date(2026, 4, 2), date(2026, 4, 3), date(2026, 4, 4)]
 _POLL_CLOSE = date(2026, 4, 4)
-_AFTER_CLOSE = datetime(2026, 4, 10, 12, 0, tzinfo=UTC)  # a date well after poll close
-_DURING_VOTING = datetime(2026, 4, 2, 12, 0, tzinfo=UTC)  # a date while poll is still open
+
+_AFTER_CLOSE = datetime(2026, 4, 10, 12, 0, tzinfo=UTC)
+_DURING_VOTING = datetime(2026, 4, 2, 12, 0, tzinfo=UTC)
+_CLOSE_DAY_BEFORE_1600 = datetime(2026, 4, 4, 15, 0, tzinfo=UTC)
+_CLOSE_DAY_AT_1600 = datetime(2026, 4, 4, 16, 0, tzinfo=UTC)
+_CLOSE_DAY_AFTER_1600 = datetime(2026, 4, 4, 17, 0, tzinfo=UTC)
 
 
-def _sky_dict(day0: float, day1: float, day2: float, day3: float) -> dict:
-    return dict(zip(_POLL_DAYS, [day0, day1, day2, day3], strict=True))
+def _sky(*values: float) -> dict[date, float]:
+    """Pair _POLL_DAYS with the given per-day SKY balances."""
+    return dict(zip(_POLL_DAYS, values, strict=True))
 
 
-def test_status_no_sky_anywhere_returns_no_delegated_sky():
-    sky = _sky_dict(0, 0, 0, 0)
-    assert (
-        vote_status.determine_vote_status(
-            sky,
-            _POLL_CLOSE,
-            delegate_voted=False,
-            current_datetime=_AFTER_CLOSE,
-        )
-        == "No Delegated SKY"
+@pytest.mark.parametrize(
+    ("sky", "delegate_voted", "current_datetime", "expected"),
+    [
+        # --- Closed poll: no/zero SKY → No Delegated SKY -------------------
+        pytest.param(_sky(0, 0, 0, 0), False, _AFTER_CLOSE, "No Delegated SKY", id="no sky anywhere"),
+        pytest.param({}, False, _AFTER_CLOSE, "No Delegated SKY", id="empty sky dict"),
+        # --- Closed poll: sky throughout window ----------------------------
+        pytest.param(_sky(1000, 1000, 1000, 1000), True, _AFTER_CLOSE, "Yes", id="voted with sky throughout"),
+        pytest.param(_sky(1000, 1000, 1000, 1000), False, _AFTER_CLOSE, "No", id="did not vote with sky throughout"),
+        # --- Closed poll: grace period (no sky before close day) -----------
+        pytest.param(_sky(0, 0, 0, 1000), False, _AFTER_CLOSE, "No Delegated SKY", id="close-day-only sky, no vote"),
+        pytest.param(_sky(0, 0, 0, 1000), True, _AFTER_CLOSE, "Yes", id="close-day-only sky, voted"),
+        pytest.param(_sky(0, 0, 1000, 1000), False, _AFTER_CLOSE, "No", id="pre-close-day sky persists, no vote"),
+        pytest.param(_sky(0, 1000, 0, 0), False, _AFTER_CLOSE, "No Delegated SKY", id="mid-window only"),
+        pytest.param(_sky(1000, 1000, 0, 0), True, _AFTER_CLOSE, "Yes", id="withdrew pre-close, voted"),
+        pytest.param(_sky(1000, 1000, 0, 0), False, _AFTER_CLOSE, "No Delegated SKY", id="withdrew pre-close, no vote"),
+        pytest.param(_sky(0, 0, 0, 1), False, _AFTER_CLOSE, "No Delegated SKY", id="grief vector: 1 SKY on close day"),
+        # --- Closed poll: partial sky data ---------------------------------
+        pytest.param(
+            {date(2026, 4, 4): 1000.0}, False, _AFTER_CLOSE, "No Delegated SKY",
+            id="only close day present",
+        ),
+        pytest.param(
+            {date(2026, 4, 2): 1000.0}, False, _AFTER_CLOSE, "No Delegated SKY",
+            id="only pre-close day present",
+        ),
+        # --- Open poll: current_datetime < 16:00 UTC on close day ----------
+        pytest.param(_sky(1000, 1000, 0, 0), True, _DURING_VOTING, "Yes", id="open poll, voted"),
+        pytest.param(_sky(1000, 1000, 0, 0), False, _DURING_VOTING, "Voting Open", id="open poll, not voted"),
+        pytest.param(_sky(0, 0, 0, 0), False, _DURING_VOTING, "Voting Open", id="open poll, no sky"),
+        pytest.param(_sky(0, 0, 0, 0), True, _DURING_VOTING, "Yes", id="open poll, voted with no sky"),
+        # --- Close-day time-of-day boundary --------------------------------
+        pytest.param(
+            _sky(1000, 1000, 1000, 1000), False, _CLOSE_DAY_BEFORE_1600, "Voting Open",
+            id="15:00 UTC → still open",
+        ),
+        pytest.param(
+            _sky(1000, 1000, 1000, 1000), False, _CLOSE_DAY_AT_1600, "No",
+            id="16:00 UTC → closed",
+        ),
+        pytest.param(
+            _sky(1000, 1000, 1000, 1000), False, _CLOSE_DAY_AFTER_1600, "No",
+            id="17:00 UTC → closed",
+        ),
+    ],
+)
+def test_determine_vote_status(sky, delegate_voted, current_datetime, expected):
+    """Status rule for one (delegate, poll) pair across closed and open-poll regimes."""
+    result = vote_status.determine_vote_status(
+        sky,
+        _POLL_CLOSE,
+        delegate_voted=delegate_voted,
+        current_datetime=current_datetime,
     )
-
-
-def test_empty_sky_dict_returns_no_delegated_sky():
-    """Empty sky dict treated as all-zero rather than falling through to a stale value."""
-    assert (
-        vote_status.determine_vote_status(
-            {},
-            _POLL_CLOSE,
-            delegate_voted=False,
-            current_datetime=_AFTER_CLOSE,
-        )
-        == "No Delegated SKY"
-    )
-
-
-def test_status_voted_with_sky_returns_yes():
-    """Delegate had SKY and voted."""
-    sky = _sky_dict(1000, 1000, 1000, 1000)
-    assert (
-        vote_status.determine_vote_status(
-            sky,
-            _POLL_CLOSE,
-            delegate_voted=True,
-            current_datetime=_AFTER_CLOSE,
-        )
-        == "Yes"
-    )
-
-
-def test_status_did_not_vote_full_window_returns_no():
-    """Delegate has SKY throughout and did not vote."""
-    sky = _sky_dict(1000, 1000, 1000, 1000)
-    assert (
-        vote_status.determine_vote_status(
-            sky,
-            _POLL_CLOSE,
-            delegate_voted=False,
-            current_datetime=_AFTER_CLOSE,
-        )
-        == "No"
-    )
-
-
-def test_status_grace_period_close_day_only_no_vote_returns_no_delegated_sky():
-    """Scenario C: zero days 0-2, non-zero only on close day, didn't vote → grace applies."""
-    sky = _sky_dict(0, 0, 0, 1000)
-    assert (
-        vote_status.determine_vote_status(
-            sky,
-            _POLL_CLOSE,
-            delegate_voted=False,
-            current_datetime=_AFTER_CLOSE,
-        )
-        == "No Delegated SKY"
-    )
-
-
-def test_status_grace_period_close_day_only_voted_returns_yes():
-    """Scenario D: same as C but they voted anyway — counts as Yes."""
-    sky = _sky_dict(0, 0, 0, 1000)
-    assert (
-        vote_status.determine_vote_status(
-            sky,
-            _POLL_CLOSE,
-            delegate_voted=True,
-            current_datetime=_AFTER_CLOSE,
-        )
-        == "Yes"
-    )
-
-
-def test_status_pre_close_day_delegation_still_returns_no():
-    """Non-zero on days 2-3, didn't vote → No (both rule conditions met)."""
-    sky = _sky_dict(0, 0, 1000, 1000)
-    assert (
-        vote_status.determine_vote_status(
-            sky,
-            _POLL_CLOSE,
-            delegate_voted=False,
-            current_datetime=_AFTER_CLOSE,
-        )
-        == "No"
-    )
-
-
-def test_status_mid_window_only_returns_no_delegated_sky():
-    """Non-zero on days 2-3, didn't vote → No (both rule conditions met)."""
-    sky = _sky_dict(0, 1000, 0, 0)
-    assert (
-        vote_status.determine_vote_status(
-            sky,
-            _POLL_CLOSE,
-            delegate_voted=False,
-            current_datetime=_AFTER_CLOSE,
-        )
-        == "No Delegated SKY"
-    )
-
-
-def test_status_voted_but_withdrew_before_close_returns_yes():
-    """A recorded vote stands even if delegations were pulled before close."""
-    sky = _sky_dict(1000, 1000, 0, 0)
-    assert (
-        vote_status.determine_vote_status(
-            sky,
-            _POLL_CLOSE,
-            delegate_voted=True,
-            current_datetime=_AFTER_CLOSE,
-        )
-        == "Yes"
-    )
-
-
-def test_status_grief_vector_blocked():
-    """A hostile delegator dropping 1 SKY on close day cannot harm the target.
-
-    Without grace rule: target marked No, participation % drops,
-    eligibility may flip. With it: marked No Delegated SKY, discounted,
-    target unaffected.
-    """
-    sky = _sky_dict(0, 0, 0, 1)
-    assert (
-        vote_status.determine_vote_status(
-            sky,
-            _POLL_CLOSE,
-            delegate_voted=False,
-            current_datetime=_AFTER_CLOSE,
-        )
-        == "No Delegated SKY"
-    )
-
-
-def test_status_mid_window_withdrawal_returns_no_delegated_sky():
-    """Withdrawn-before-close + no vote → No Delegated SKY, not No.
-
-    Zero stake at the decisive moment → discounted, not penalised.
-    """
-    sky = _sky_dict(1000, 1000, 0, 0)
-    assert (
-        vote_status.determine_vote_status(
-            sky,
-            _POLL_CLOSE,
-            delegate_voted=False,
-            current_datetime=_AFTER_CLOSE,
-        )
-        == "No Delegated SKY"
-    )
-
-
-def test_status_partial_window_date_uses_what_is_present():
-    """Missing days are treated as zero; only day 3 has a row → grace applies."""
-    sky = {date(2026, 4, 4): 1000.0}
-    assert (
-        vote_status.determine_vote_status(
-            sky,
-            _POLL_CLOSE,
-            delegate_voted=False,
-            current_datetime=_AFTER_CLOSE,
-        )
-        == "No Delegated SKY"
-    )
-
-
-def test_status_partial_window_pre_close_only_returns_no_delegated_sky():
-    """Day-1 only (close day missing → treated as zero) → No Delegated SKY."""
-    sky = {date(2026, 4, 2): 1000.0}
-    assert (
-        vote_status.determine_vote_status(
-            sky,
-            _POLL_CLOSE,
-            delegate_voted=False,
-            current_datetime=_AFTER_CLOSE,
-        )
-        == "No Delegated SKY"
-    )
-
-
-# ---------------------------------------------------------------------------
-# determine_vote_status — in-progress polls (current_datetime < poll_end_date)
-# ---------------------------------------------------------------------------
-
-
-def test_status_in_progress_poll_voted_returns_yes():
-    """Delegate already voted on a poll still open. Counted positively."""
-    sky = _sky_dict(1000, 1000, 0, 0)  # data through day 1 only
-    assert (
-        vote_status.determine_vote_status(
-            sky,
-            _POLL_CLOSE,
-            delegate_voted=True,
-            current_datetime=_DURING_VOTING,
-        )
-        == "Yes"
-    )
-
-
-def test_status_in_progress_poll_not_voted_returns_voting_open():
-    """Open poll, no vote → 'Voting Open' (discounted, not penalised)."""
-    sky = _sky_dict(1000, 1000, 0, 0)
-    assert (
-        vote_status.determine_vote_status(
-            sky,
-            _POLL_CLOSE,
-            delegate_voted=False,
-            current_datetime=_DURING_VOTING,
-        )
-        == "Voting Open"
-    )
-
-
-def test_status_in_progress_with_no_sky_still_returns_voting_open():
-    """Open poll with no SKY now → still 'Voting Open' (they could still receive a delegation)."""
-    sky = _sky_dict(0, 0, 0, 0)
-    assert (
-        vote_status.determine_vote_status(
-            sky,
-            _POLL_CLOSE,
-            delegate_voted=False,
-            current_datetime=_DURING_VOTING,
-        )
-        == "Voting Open"
-    )
-
-
-def test_status_in_progress_voted_with_no_sky_returns_yes():
-    """Recorded vote stands even with zero SKY at run time — the API's voted flag is authoritative."""
-    sky = _sky_dict(0, 0, 0, 0)
-    assert (
-        vote_status.determine_vote_status(
-            sky,
-            _POLL_CLOSE,
-            delegate_voted=True,
-            current_datetime=_DURING_VOTING,
-        )
-        == "Yes"
-    )
-
-
-def test_status_close_day_before_1600_utc_treated_as_open():
-    """15:00 UTC on close day → still open (close is 16:00 UTC)."""
-    sky = _sky_dict(1000, 1000, 1000, 1000)
-    current = datetime(2026, 4, 4, 15, 0, tzinfo=UTC)
-    assert (
-        vote_status.determine_vote_status(
-            sky,
-            _POLL_CLOSE,
-            delegate_voted=False,
-            current_datetime=current,
-        )
-        == "Voting Open"
-    )
-
-
-def test_status_close_day_at_exactly_1600_utc_treated_as_closed():
-    """Exactly 16:00 UTC counts as closed; close-day rule applies."""
-    sky = _sky_dict(1000, 1000, 1000, 1000)
-    current = datetime(2026, 4, 4, 16, 0, tzinfo=UTC)
-    assert (
-        vote_status.determine_vote_status(
-            sky,
-            _POLL_CLOSE,
-            delegate_voted=False,
-            current_datetime=current,
-        )
-        == "No"
-    )
-
-
-def test_status_close_day_after_1600_utc_treated_as_closed():
-    """17:00 UTC on close day → closed."""
-    sky = _sky_dict(1000, 1000, 1000, 1000)
-    current = datetime(2026, 4, 4, 17, 0, tzinfo=UTC)
-    assert (
-        vote_status.determine_vote_status(
-            sky,
-            _POLL_CLOSE,
-            delegate_voted=False,
-            current_datetime=current,
-        )
-        == "No"
-    )
+    assert result == expected

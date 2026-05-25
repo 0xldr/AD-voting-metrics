@@ -174,7 +174,7 @@ def test_perfect_record_eligible():
     alpha = result.per_delegate["Alpha"]
     assert alpha.participation_pct == 1.0
     assert alpha.communication_pct == 1.0
-    assert alpha.eligible is True
+    assert alpha.eligible
     assert alpha.assigned_level == 3
 
 
@@ -190,7 +190,7 @@ def test_below_participation_threshold_ineligible():
     )
     alpha = result.per_delegate["Alpha"]
     assert alpha.participation_pct == 0.7
-    assert alpha.eligible is False
+    assert not alpha.eligible
     assert alpha.assigned_level is None
 
 
@@ -212,7 +212,7 @@ def test_below_communication_threshold_ineligible():
     alpha = result.per_delegate["Alpha"]
     assert alpha.participation_pct == 1.0
     assert alpha.communication_pct == 0.7
-    assert alpha.eligible is False
+    assert not alpha.eligible
 
 
 def test_exactly_at_threshold_eligible():
@@ -227,7 +227,7 @@ def test_exactly_at_threshold_eligible():
     )
     alpha = result.per_delegate["Alpha"]
     assert alpha.participation_pct == 0.75
-    assert alpha.eligible is True
+    assert alpha.eligible
 
 
 def test_no_votable_polls_returns_none_pct_and_ineligible():
@@ -243,7 +243,7 @@ def test_no_votable_polls_returns_none_pct_and_ineligible():
     newbie = result.per_delegate["Newbie"]
     assert newbie.participation_pct is None
     assert newbie.communication_pct is None
-    assert newbie.eligible is False
+    assert not newbie.eligible
     assert newbie.assigned_level is None
 
 
@@ -265,7 +265,7 @@ def test_polls_outside_window_ignored():
     )
     alpha = result.per_delegate["Alpha"]
     assert alpha.participation_pct is None
-    assert alpha.eligible is False
+    assert not alpha.eligible
 
 
 # ---------------------------------------------------------------------------
@@ -325,7 +325,7 @@ def test_l1_below_threshold_keeps_slot_but_records_ineligible():
     )
     bad = result.per_delegate["BadL1"]
     assert bad.assigned_level == 1  # keeps slot
-    assert bad.eligible is False  # recorded as ineligible
+    assert not bad.eligible  # recorded as ineligible
 
 
 def test_l1_assignment_inactive_on_day_excluded():
@@ -606,7 +606,7 @@ def test_realistic_april_2026_scenario():
     assert result.per_delegate["Newbie"].assigned_level is None
 
     # Per-delegate eligibility recorded correctly.
-    assert result.per_delegate["Aligned1"].eligible is True
-    assert result.per_delegate["Failing"].eligible is False
-    assert result.per_delegate["Newbie"].eligible is False
+    assert result.per_delegate["Aligned1"].eligible
+    assert not result.per_delegate["Failing"].eligible
+    assert not result.per_delegate["Newbie"].eligible
     assert result.per_delegate["Newbie"].participation_pct is None
