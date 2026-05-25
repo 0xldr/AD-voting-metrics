@@ -91,10 +91,9 @@ def get_vote_poll_ids(
 ) -> pd.DataFrame:
     """Add one column per poll to df, populated with each delegate's vote status.
 
-    For every poll in poll_info, queries vote.sky.money for the voter
-    list and runs determine_vote_status against each delegate using
-    their SKY balance in df_sky. Polls that started before a delegate's
-    alignment date are marked "Not Started".
+    For every poll in poll_info, queries vote.sky.money for the voter list and runs determine_vote_status against each
+    delegate using their SKY balance in df_sky. Polls that started before a delegate's alignment date are marked "Not
+    Started".
 
     Returns:
         The same df, mutated in place with one new column per poll.

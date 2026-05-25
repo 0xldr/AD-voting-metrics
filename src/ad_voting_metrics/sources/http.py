@@ -1,9 +1,8 @@
 """Shared HTTP session for all outbound requests.
 
-A single module-cached `requests.Session` is reused across all external
-API calls, giving us connection pooling, uniform retry behavior, and
-one placeto adjust timeouts. Use `get_session()`; don't instantiate
-`requests.Session()` directly.
+A single module-cached `requests.Session` is reused across all external API calls, giving us connection pooling,
+uniform retry behavior, and one placeto adjust timeouts. Use `get_session()`; don't instantiate `requests.Session()`
+directly.
 """
 
 from functools import cache

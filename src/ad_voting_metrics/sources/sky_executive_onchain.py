@@ -1,15 +1,12 @@
 """On-chain verification of executive votes for "Pending verification" cells.
 
-When the public API doesn't show a delegate as a direct supporter of an
-executive but they had SKY delegated at the vote's start, `sky_executive`
-marks the cell "Pending verification". This module checks the chief
-contract directly: did the delegate's vote-delegate contract emit a
-`Vote(usr, slate)` event within 7 days of the executive going live, and
-does that slate contain the executive's address? If yes, flip the cell
-to "Yes". Otherwise leave it as Pending for operator adjudication.
+When the public API doesn't show a delegate as a direct supporter of an executive but they had SKY delegated at the
+vote's start, `sky_executive` marks the cell "Pending verification". This module checks the chief contract directly:
+did the delegate's vote-delegate contract emit a `Vote(usr, slate)` event within 7 days of the executive going live,
+and does that slate contain the executive's address? If yes, flip the cell to "Yes". Otherwise leave it as Pending for
+operator adjudication.
 
-Slate -> address-list resolution is cached persistently because slates
-are immutable once etched.
+Slate -> address-list resolution is cached persistently because slates are immutable once etched.
 """
 
 import json
@@ -146,9 +143,8 @@ def _resolve_slate(w3: Web3, slate_hash: str) -> list[str]:
 def _approx_block_from_date(w3: Web3, target: date) -> int:
     """Estimate the block number near midnight UTC on `target`.
 
-    Used to seed `eth_getLogs`'s fromBlock — not the actual time filter
-    (the timestamp check is applied per-event after the fact). One day
-    of safety buffer is subtracted so the estimate undershoots.
+    Used to seed `eth_getLogs`'s fromBlock — not the actual time filter (the timestamp check is applied per-event after
+    the fact). One day of safety buffer is subtracted so the estimate undershoots.
 
     Returns:
         A non-negative block number to start the log search from.
@@ -169,11 +165,9 @@ def _fetch_vote_events(
 ) -> dict[str, list[tuple[str, date]]]:
     """Fetch chief Vote events for every voter in one eth_getLogs call.
 
-    Passes the voter set as an OR-filter on the indexed `usr` argument
-    so a single RPC roundtrip returns events for all voters together,
-    then groups them client-side by lowercased voter address. Voters
-    with no events in the window get an empty list. web3's
-    contract.events handles topic encoding and decoding.
+    Passes the voter set as an OR-filter on the indexed `usr` argument     so a single RPC roundtrip returns events for
+    all voters together, then groups them client-side by lowercased voter address. Voters with no events in the window
+    get an empty list. web3's contract.events handles topic encoding and decoding.
 
     Returns:
         Lowercased voter address -> list of (slate_hash, event_date) tuples.
@@ -281,13 +275,11 @@ def resolve_pending_executive_votes(
 
     For each (delegate, spell) cell currently "Pending verification":
       - Fetch the delegate's chief Vote events from on-chain.
-      - For each event with `spell.startDate <= event.date <=
-        spell.startDate + 7 days`, look up the slate's executive list
-        (cached). If the spell's address is in the slate, flip the cell.
+      - For each event with `spell.startDate <= event.date <= spell.startDate + 7 days`, look up the slate's executive
+        list (cached). If the spell's address is in the slate, flip the cell.
 
-    No-ops gracefully when SKY_RPC_URL is missing, when spell_info is
-    empty, or when no cells are pending. Other errors (RPC failures,
-    decode errors) propagate.
+    No-ops gracefully when SKY_RPC_URL is missing, when spell_info is empty, or when no cells are pending. Other errors
+    (RPC failures, decode errors) propagate.
 
     Returns:
         The same df (mutated) with verifiable Pending cells set to "Yes".

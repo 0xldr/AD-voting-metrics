@@ -1,13 +1,10 @@
 """Period compensation: pro-rata by days held, scaled by the metrics modifier.
 
-Pure functions. Given per-day eligibility outputs and period-end metric
-percentages, returns one DelegateCompensation per active delegate,
-alphabetical by name.
+Pure functions. Given per-day eligibility outputs and period-end metric percentages, returns one DelegateCompensation
+per active delegate, alphabetical by name.
 
 Per delegate:
-  entitlement = (days_as_l1 / N) * L1_USDS
-              + (days_as_l2 / N) * L2_USDS
-              + (days_as_l3 / N) * L3_USDS
+  entitlement = (days_as_l1 / N) * L1_USDS + (days_as_l2 / N) * L2_USDS + (days_as_l3 / N) * L3_USDS
   modifier    = component(p_pct) * component(c_pct)
   final       = round(entitlement * modifier, 0)
 
@@ -48,9 +45,8 @@ class CompensationConfig:
 class DelegateCompensation:
     """Per-delegate compensation row for the period.
 
-    Days fields sum to days held at any level (≤ days_in_period).
-    Buffer fields are stubs: carry_in/payment/post_payment are 0.0
-    pending the buffer carry-over implementation.
+    Days fields sum to days held at any level (≤ days_in_period). Buffer fields are stubs: carry_in/payment/post_payment
+    are 0.0 pending the buffer carry-over implementation.
     """
 
     name: str
@@ -75,8 +71,7 @@ class DelegateCompensation:
 class PeriodCompensation:
     """Period-level compensation output.
 
-    `per_delegate` is sorted alphabetically by name.
-    `validation` records the workbook-equivalent GOOD/NOT GOOD checks.
+    `per_delegate` is sorted alphabetically by name. `validation` records the workbook-equivalent GOOD/NOT GOOD checks.
     """
 
     period: MonthPeriod
@@ -90,8 +85,7 @@ def component_modifier(pct: float | None) -> float:
     """Map a single metric pct to its component modifier in [0.0, 1.0].
 
     Returns:
-        0.0 for None or below 0.75, 1.0 for >= 0.95, and a linear ramp
-        in between.
+        0.0 for None or below 0.75, 1.0 for >= 0.95, and a linear ramp in between.
     """
     if pct is None or pct < _BUDGET_FLOOR:
         return 0.0
@@ -106,8 +100,7 @@ def _aggregate_daily_eligibility(
     """Collect per-delegate level-day counts and (rank, level) on the final day.
 
     Returns:
-        Tuple of (day_counts, end_state). day_counts maps name to
-        {1: count, 2: count, 3: count}. end_state maps name to
+        Tuple of (day_counts, end_state). day_counts maps name to {1: count, 2: count, 3: count}. end_state maps name to
         (rank, assigned_level) from the period's last day.
     """
     day_counts: dict[str, dict[int, int]] = {}
@@ -179,10 +172,9 @@ def compute_period_compensation(
 ) -> PeriodCompensation:
     """Compute compensation for every delegate active at any point in the period.
 
-    `daily_eligibility` must have one entry per day in the period.
-    `final_metrics` maps delegate name → (participation_pct,
-    communication_pct) evaluated on the period's last day (the 6-month
-    track-record values that gate the modifier).
+    `daily_eligibility` must have one entry per day in the period. `final_metrics` maps delegate name →
+    (participation_pct, communication_pct) evaluated on the period's last day (the 6-month track-record values that gate
+    the modifier).
 
     The output is sorted alphabetically by delegate name.
 
@@ -190,9 +182,8 @@ def compute_period_compensation(
         PeriodCompensation with alphabetical per-delegate rows.
 
     Raises:
-        ValueError: if daily_eligibility's day count doesn't match
-            the period's day count, or if a delegate appears in
-            daily_eligibility but is missing from final_metrics.
+        ValueError: if daily_eligibility's day count doesn't match the period's day count, or if a delegate appears in
+        daily_eligibility but is missing from final_metrics.
     """
     days_in_period = (period.end - period.start).days + 1
     if len(daily_eligibility) != days_in_period:

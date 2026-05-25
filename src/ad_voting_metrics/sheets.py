@@ -1,13 +1,11 @@
 """Google Sheets connection for reading/writing the AD compensation workbook.
 
-Auth is via a Google Cloud service account; the JSON key file is referenced
-by GOOGLE_SERVICE_ACCOUNT_FILE and the workbook by SHEETS_WORKBOOK_ID. The
-service account's client_email must be added as Editor on the workbook -
-a one-time setup step in the Google Sheets sharing dialog.
+Auth is via a Google Cloud service account; the JSON key file is referenced by GOOGLE_SERVICE_ACCOUNT_FILE and the
+workbook by SHEETS_WORKBOOK_ID. The service account's client_email must be added as Editor on the workbook - a one-time
+setup step in the Google Sheets sharing dialog.
 
-I/O is mediated by gspread-dataframe so values move in and out of the
-sheet as pandas DataFrames; the readers return DataFrames directly and
-the writers consume them.
+I/O is mediated by gspread-dataframe so values move in and out of the sheet as pandas DataFrames; the readers return
+DataFrames directly and the writers consume them.
 """
 
 import calendar
@@ -48,9 +46,8 @@ def get_workbook(
 ) -> gspread.Spreadsheet:
     """Open the configured workbook using the service account credentials.
 
-    If service_account_file or workbook_id is None, reads from the matching
-    env var (GOOGLE_SERVICE_ACCOUNT_FILE / SHEETS_WORKBOOK_ID). Pass explicit
-    values for testing.
+    If service_account_file or workbook_id is None, reads from the matching env var (GOOGLE_SERVICE_ACCOUNT_FILE /
+    SHEETS_WORKBOOK_ID). Pass explicit values for testing.
 
     Returns:
         The opened gspread.Spreadsheet.
@@ -130,13 +127,11 @@ def get_or_create_tab(
 ) -> gspread.Worksheet:
     r"""Return the worksheet with the given title, creating it if absent.
 
-    `rows` and `cols` apply only on creation; existing tabs keep their
-    current dimensions. They're keyword-only to force callers to size
-    new tabs based on the data they're about to write.
+    `rows` and `cols` apply only on creation; existing tabs keep their current dimensions. They're keyword-only to force
+    callers to size new tabs based on the data they're about to write.
 
-    Title matching is exact and case-sensitive. Tab titles forbid
-    `[`, `]`, `*`, `?`, `:`, `/`, `\` — not validated here; gspread
-    will surface the API error.
+    Title matching is exact and case-sensitive. Tab titles forbid `[`, `]`, `*`, `?`, `:`, `/`, `\` — not validated
+    here; gspread will surface the API error.
 
     Returns:
         The worksheet.
@@ -180,8 +175,8 @@ def _open_required_tab(
 def _read_sheet_as_strings(worksheet: gspread.Worksheet) -> pd.DataFrame:
     """Read a worksheet via gspread-dataframe with all cells as strings.
 
-    Empty cells come through as "" rather than NaN; trailing all-blank
-    rows and columns are dropped by gspread-dataframe.
+    Empty cells come through as "" rather than NaN; trailing all-blank rows and columns are dropped by
+    gspread-dataframe.
 
     Returns:
         DataFrame with string cells, or empty DataFrame if the tab is empty.
@@ -194,8 +189,7 @@ def _read_sheet_as_strings(worksheet: gspread.Worksheet) -> pd.DataFrame:
 def _coerce_date(value: date | datetime | None) -> str:
     """Convert a date/datetime/pd.Timestamp/None to a 'YYYY-MM-DD' string.
 
-    None becomes empty string. Datetimes (and pd.Timestamp, which
-    subclasses datetime) collapse to their date portion.
+    None becomes empty string. Datetimes (and pd.Timestamp, which subclasses datetime) collapse to their date portion.
 
     Returns:
         The ISO date string, or empty string for None.
@@ -238,9 +232,8 @@ DAILY_DATA_TAB_TITLE = "Daily Data"
 def _existing_daily_data(worksheet: gspread.Worksheet) -> pd.DataFrame:
     """Read the Daily Data tab into a typed DataFrame.
 
-    Returns an empty DataFrame (with the expected columns) when the tab
-    is empty, has an unrecognised header, or has no parseable rows. The
-    caller can then treat it as a fresh write.
+    Returns an empty DataFrame (with the expected columns) when the tab is empty, has an unrecognised header, or has no
+    parseable rows. The caller can then treat it as a fresh write.
 
     Returns:
         DataFrame with columns Date (date), Delegate (str), Total Delegation (float), Rank (int).
@@ -266,32 +259,26 @@ def write_daily_data(
 ) -> gspread.Worksheet:
     """Write the workbook-wide Daily Data tab, merging in the current fetch.
 
-    Long format, one row per (date, delegate). Columns are exactly
-    DAILY_DATA_COLUMNS; extras in df_ranking are ignored.
+    Long format, one row per (date, delegate). Columns are exactly DAILY_DATA_COLUMNS; extras in df_ranking are ignored.
 
     Merge behavior:
       - Existing rows for dates not in the current fetch are preserved.
-      - Existing rows for dates in the current fetch are overwritten
-        (re-runs are idempotent).
+      - Existing rows for dates in the current fetch are overwritten (re-runs are idempotent).
       - New dates are added.
 
-    For dates appearing in both existing and new data, the count of
-    delegate rows must match - a mismatch indicates roster drift
-    (delegate added/removed) and the function raises rather than
-    silently shifting which delegates are represented.
+    For dates appearing in both existing and new data, the count of delegate rows must match - a mismatch indicates
+    roster drift (delegate added/removed) and the function raises rather than silently shifting which delegates are
+    represented.
 
-    Date values are coerced to 'YYYY-MM-DD' ISO strings. Output is
-    sorted by (Date asc, Rank asc).
+    Date values are coerced to 'YYYY-MM-DD' ISO strings. Output is sorted by (Date asc, Rank asc).
 
-    Tab name is "Daily Data" (no period suffix); `period` is retained
-    for error messages.
+    Tab name is "Daily Data" (no period suffix); `period` is retained for error messages.
 
     Returns:
         The worksheet that was written.
 
     Raises:
-        ValueError: if df_ranking is missing required columns, or on
-            roster drift.
+        ValueError: if df_ranking is missing required columns, or on roster drift.
     """
     missing = [c for c in DAILY_DATA_COLUMNS if c not in df_ranking.columns]
     if missing:
@@ -355,12 +342,11 @@ def read_daily_data(
     """Read the workbook-wide Daily Data tab, filtered to days in `period`.
 
     Returns:
-        DataFrame with columns Date (date), Delegate (str), Total Delegation
-        (float), Rank (int) for every (date, delegate) row in `period`.
+        DataFrame with columns Date (date), Delegate (str), Total Delegation (float), Rank (int) for every (date,
+        delegate) row in `period`.
 
     Raises:
-        RuntimeError: if the Daily Data tab is absent, or no rows in
-            the tab fall inside `period`.
+        RuntimeError: if the Daily Data tab is absent, or no rows in the tab fall inside `period`.
     """
     worksheet = _open_required_tab(
         workbook,
@@ -383,8 +369,7 @@ def read_daily_data(
 def _to_date_value(value: date | datetime | str | None) -> date | None:
     """Best-effort conversion of an arbitrary input to a date object.
 
-    Strings are parsed as ISO dates; datetimes (incl. pd.Timestamp)
-    collapse to their date portion; None stays None.
+    Strings are parsed as ISO dates; datetimes (incl. pd.Timestamp) collapse to their date portion; None stays None.
 
     Returns:
         date or None if value can't be parsed.

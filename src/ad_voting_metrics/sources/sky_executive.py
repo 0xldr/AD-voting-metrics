@@ -63,8 +63,8 @@ def get_vote_executive_ids(spell_info: list[dict], df: pd.DataFrame, df_sky: pd.
     """Add one column per spell to df, populated with each delegate's vote status.
 
     Returns:
-        The same df, mutated in place with one new column per spell. Returns
-        df unchanged (and skips the supporters HTTP call) when spell_info is empty.
+        The same df, mutated in place with one new column per spell. Returns df unchanged (and skips the supporters HTTP
+        call) when spell_info is empty.
     """
     if not spell_info:
         return df

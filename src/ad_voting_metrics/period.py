@@ -12,8 +12,8 @@ YEAR_LOWER_BOUND = 2022
 class MonthPeriod:
     """A single calendar month, identified by year and 1-indexed month number.
 
-    Use the .start and .end properties to get date bounds for the month.
-    Construct from a string like "April 2026" via MonthPeriod.from_string().
+    Use the .start and .end properties to get date bounds for the month. Construct from a string like "April 2026" via
+    MonthPeriod.from_string().
     """
 
     year: int
@@ -22,9 +22,8 @@ class MonthPeriod:
     def __post_init__(self) -> None:
         """Normalize out-of-range months into adjacent years; reject pre-2022 years.
 
-        Constructing with month outside 1..12 rolls into the neighboring year
-        (e.g. month=13 becomes the next January, month=0 becomes the previous
-        December).
+        Constructing with month outside 1..12 rolls into the neighboring year (e.g. month=13 becomes the next January,
+        month=0 becomes the previous December).
 
         Raises:
             ValueError: if the (normalized) year is before the project's lower bound.
@@ -63,8 +62,8 @@ class MonthPeriod:
     def from_string(cls, value: str) -> "MonthPeriod":
         """Parse a human or ISO month string into a MonthPeriod.
 
-        Accepts "April 2026", "Apr 2026", "2026-04", and similar formats.
-        Day component is ignored; only year and month are read.
+        Accepts "April 2026", "Apr 2026", "2026-04", and similar formats. Day component is ignored; only year and month
+        are read.
 
         Returns:
             A MonthPeriod for the parsed (year, month).
