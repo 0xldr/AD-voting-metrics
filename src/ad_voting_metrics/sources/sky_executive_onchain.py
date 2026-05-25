@@ -14,6 +14,7 @@ import logging
 import os
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
+from typing import Any, cast
 
 import pandas as pd
 from eth_typing import HexStr
@@ -187,7 +188,10 @@ def _fetch_vote_events(
         slate = Web3.to_hex(entry["args"]["slate"])
         block_number = entry["blockNumber"]
         if block_number not in block_ts_cache:
-            block_ts_cache[block_number] = w3.eth.get_block(block_number)["timestamp"]
+            # `timestamp` is NotRequired on BlockData per web3-stubs, but full
+            # blocks always carry it at runtime; widen to plain dict for access.
+            block = cast("dict[str, Any]", w3.eth.get_block(block_number))
+            block_ts_cache[block_number] = block["timestamp"]
         event_date = datetime.fromtimestamp(block_ts_cache[block_number], tz=UTC).date()
         result.setdefault(voter, []).append((slate, event_date))
     return result
