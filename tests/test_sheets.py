@@ -1548,6 +1548,7 @@ def test_write_compensation_tab_none_pct_renders_as_no_data(empty_existing_ws):
 
 def test_write_compensation_tab_level_label_mapping(empty_existing_ws):
     """level_at_period_end (1/2/3/None) → Level 1 / Level 2 / Level 3 / No."""
+
     def _delegate(level):
         return DelegateCompensation(
             name=f"d{level}",
