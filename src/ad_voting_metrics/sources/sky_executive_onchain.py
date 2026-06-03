@@ -145,7 +145,7 @@ def _block_from_date(target: date) -> int:
         params={
             "module": "block",
             "action": "getblocknobytime",
-            "timestamp": target_ts,
+            "timestamp": str(target_ts),
             "closest": "after",
         },
         headers=HEADERS,
