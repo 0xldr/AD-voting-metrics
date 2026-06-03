@@ -252,6 +252,22 @@ def _existing_daily_data(worksheet: gspread.Worksheet) -> pd.DataFrame:
     return df.reset_index(drop=True)
 
 
+def _row_counts_by_date(frame: pd.DataFrame) -> dict[date, int]:
+    """Count rows per Date in a Daily Data frame, keyed by coerced date.
+
+    Rows whose Date can't be coerced to a date are skipped.
+
+    Returns:
+        Mapping of date to the number of rows on that date.
+    """
+    out: dict[date, int] = {}
+    for d, n in frame.groupby("Date").size().items():
+        day = _to_date_value(d) if isinstance(d, (date, datetime, str)) else None
+        if day is not None:
+            out[day] = int(n)
+    return out
+
+
 def write_daily_data(
     workbook: gspread.Spreadsheet,
     period: MonthPeriod,
@@ -299,19 +315,11 @@ def write_daily_data(
 
     existing = _existing_daily_data(worksheet)
 
-    def _counts_by_date(frame: pd.DataFrame) -> dict[date, int]:
-        out: dict[date, int] = {}
-        for d, n in frame.groupby("Date").size().items():
-            day = _to_date_value(d) if isinstance(d, (date, datetime, str)) else None
-            if day is not None:
-                out[day] = int(n)
-        return out
-
-    new_counts = _counts_by_date(new_df)
+    new_counts = _row_counts_by_date(new_df)
 
     if not existing.empty:
         overlap = existing[existing["Date"].isin(new_counts.keys())]
-        existing_counts = _counts_by_date(overlap)
+        existing_counts = _row_counts_by_date(overlap)
         for date_val, new_count in new_counts.items():
             existing_count = existing_counts.get(date_val)
             if existing_count is not None and existing_count != new_count:

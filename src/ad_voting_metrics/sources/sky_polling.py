@@ -3,7 +3,7 @@
 import itertools
 import logging
 from concurrent.futures import ThreadPoolExecutor
-from datetime import date, datetime, timedelta
+from datetime import date, datetime
 
 import pandas as pd
 
@@ -114,7 +114,7 @@ def get_vote_poll_ids(
         voter_set = voter_sets[poll["pollId"]]
         start_date = poll["startDate"]
         end_date = poll["endDate"]
-        poll_window_days = [start_date + timedelta(days=i) for i in range((end_date - start_date).days + 1)]
+        poll_window_days = pd.date_range(start_date, end_date, freq="D").date
 
         vote_statuses = []
         for _, row in df.iterrows():

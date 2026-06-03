@@ -997,49 +997,27 @@ def test_write_communication_master_first_fetch_creates_header(empty_existing_ws
     ]
 
 
-def test_write_communication_master_first_fetch_pending_for_yes_participation(empty_existing_ws, sheet_io):
-    """'Yes' participation defaults the communication cell to 'Pending verification'."""
-    df = pd.DataFrame({
-        "Delegate Name": ["BLUE", "Cloaky"],
-        "Delegate Contract": ["0xaaa", "0xbbb"],
-        "Start Date": ["2025-12-01", "2025-12-01"],
-        "12345": ["Yes", "Yes"],
-    })
-    workbook, _ = empty_existing_ws
-    _, set_mock = sheet_io
-    sheets.write_communication_master(workbook, df, _make_poll_info(), [])
-    written = set_mock.call_args.args[1]
-    row = written[written["Poll Id"] == "12345"].iloc[0]
-    assert row["BLUE"] == "Pending verification"
-    assert row["Cloaky"] == "Pending verification"
-
-
-def test_write_communication_master_first_fetch_did_not_vote_for_no_participation(empty_existing_ws, sheet_io):
+@pytest.mark.parametrize(
+    ("participation", "expected_default"),
+    [
+        ("Yes", "Pending verification"),  # participated → awaits operator verification
+        ("No", "Did not vote"),  # did not participate
+        ("No Delegated SKY", "No Delegated SKY"),  # discounted status mirrors through
+    ],
+)
+def test_write_communication_master_first_fetch_defaults(participation, expected_default, empty_existing_ws, sheet_io):
+    """On first fetch, each participation status maps to its communication default via cross_reference_one."""
     df = pd.DataFrame({
         "Delegate Name": ["BLUE"],
         "Delegate Contract": ["0xaaa"],
         "Start Date": ["2025-12-01"],
-        "12345": ["No"],
+        "12345": [participation],
     })
     workbook, _ = empty_existing_ws
     _, set_mock = sheet_io
     sheets.write_communication_master(workbook, df, _make_poll_info(), [])
     written = set_mock.call_args.args[1]
-    assert written.iloc[0]["BLUE"] == "Did not vote"
-
-
-def test_write_communication_master_first_fetch_mirrors_discounted(empty_existing_ws, sheet_io):
-    df = pd.DataFrame({
-        "Delegate Name": ["BLUE"],
-        "Delegate Contract": ["0xaaa"],
-        "Start Date": ["2025-12-01"],
-        "12345": ["No Delegated SKY"],
-    })
-    workbook, _ = empty_existing_ws
-    _, set_mock = sheet_io
-    sheets.write_communication_master(workbook, df, _make_poll_info(), [])
-    written = set_mock.call_args.args[1]
-    assert written.iloc[0]["BLUE"] == "No Delegated SKY"
+    assert written.iloc[0]["BLUE"] == expected_default
 
 
 def test_write_communication_master_missing_column_raises(empty_existing_ws):

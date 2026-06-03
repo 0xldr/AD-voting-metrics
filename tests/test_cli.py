@@ -59,28 +59,14 @@ def test_check_period_has_ended_message_includes_next_valid_date():
 
 
 def test_check_period_has_ended_handles_year_boundary():
-    """Verify December → January arithmetic doesn't trip on month/year overflow."""
+    """December → January arithmetic doesn't trip on month/year overflow.
+
+    The day-after-period computation crossing a year boundary is the one calendar
+    case worth checking here; per-month end-of-month length is covered by test_period.
+    """
     period = MonthPeriod(year=2026, month=12)  # ends 2026-12-31
     with pytest.raises(SystemExit, match="2027-01-01"):
         check_period_has_ended(period, today=date(2026, 12, 31))
-
-
-def test_check_period_has_ended_handles_short_month():
-    """Verify period.end calculation uses 28 for a 28-day February, not 30/31."""
-    period = MonthPeriod(year=2026, month=2)  # ends 2026-02-28
-    # Should accept March 1
-    check_period_has_ended(period, today=date(2026, 3, 1))
-    # Should reject Feb 28 (last day of period, not yet ended)
-    with pytest.raises(SystemExit, match="2026-03-01"):
-        check_period_has_ended(period, today=date(2026, 2, 28))
-
-
-def test_check_period_has_ended_handles_leap_year():
-    """February 2024 had 29 days."""
-    period = MonthPeriod(year=2024, month=2)  # ends 2024-02-29
-    check_period_has_ended(period, today=date(2024, 3, 1))
-    with pytest.raises(SystemExit, match="2024-03-01"):
-        check_period_has_ended(period, today=date(2024, 2, 29))
 
 
 # ---------------------------------------------------------------------------
