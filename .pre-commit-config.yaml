@@ -1,0 +1,44 @@
+# Mirrors the CI gate (.github/workflows/ci.yml). Tools run via `uv run`, pinned
+# to the versions in uv.lock. Lint/format/type-check run on commit; the test suite
+# runs on push to keep commits fast.
+# Enable per clone: uv run pre-commit install --hook-type pre-commit --hook-type pre-push
+repos:
+  - repo: local
+    hooks:
+      - id: uv-lock-check
+        name: uv lock (check up-to-date)
+        entry: uv lock --check
+        language: system
+        files: ^(pyproject\.toml|uv\.lock)$
+        pass_filenames: false
+
+      - id: ruff-check
+        name: ruff check
+        entry: uv run ruff check
+        language: system
+        types_or: [python, pyi]
+        require_serial: true
+
+      - id: ruff-format
+        name: ruff format (check)
+        entry: uv run ruff format --check
+        language: system
+        types_or: [python, pyi]
+        require_serial: true
+
+      - id: mypy
+        name: mypy
+        entry: uv run mypy
+        language: system
+        types_or: [python, pyi]
+        pass_filenames: false
+        require_serial: true
+
+      - id: pytest
+        name: pytest
+        entry: uv run pytest --tb=short
+        language: system
+        types: [python]
+        pass_filenames: false
+        stages: [pre-push]
+        require_serial: true
