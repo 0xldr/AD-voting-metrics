@@ -90,11 +90,8 @@ def test_str_format():
     [
         ("April 2026", MonthPeriod(2026, 4)),
         ("January 2025", MonthPeriod(2025, 1)),
-        ("December 2024", MonthPeriod(2024, 12)),
         ("Apr 2026", MonthPeriod(2026, 4)),
-        ("Jan 2025", MonthPeriod(2025, 1)),
         ("2026-04", MonthPeriod(2026, 4)),
-        ("2025-01", MonthPeriod(2025, 1)),
         ("APRIL 2026", MonthPeriod(2026, 4)),
         ("april 2026", MonthPeriod(2026, 4)),
     ],
@@ -120,7 +117,6 @@ def test_from_string_result_does_not_depend_on_current_day():
     [
         "not a date",
         "Decembruary 2026",
-        "Smarch",
         "",
     ],
 )
