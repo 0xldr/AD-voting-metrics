@@ -1,22 +1,26 @@
 """Tests for sources.delegation — on-chain event replay and daily totals."""
 
+import json
 from datetime import date
 from types import SimpleNamespace
+from typing import cast
 from unittest.mock import MagicMock, patch
 
 import pandas as pd
 import pytest
 
+from ad_voting_metrics.period import MonthPeriod
 from ad_voting_metrics.sources import delegation
 
 
-def _period_stub(start: date, end: date) -> SimpleNamespace:
+def _period_stub(start: date, end: date) -> MonthPeriod:
     """Build a period-shaped stub covering [start, end].
 
     Tests need arbitrary date ranges; real MonthPeriod only models calendar months.
-    The delegation module only reads .start/.end on the period it's handed.
+    The delegation module only reads .start/.end on the period it's handed, so a
+    duck-typed SimpleNamespace stands in (cast to MonthPeriod for the type checker).
     """
-    return SimpleNamespace(start=start, end=end, year=start.year, month=start.month)
+    return cast("MonthPeriod", SimpleNamespace(start=start, end=end, year=start.year, month=start.month))
 
 
 # ---------------------------------------------------------------------------
@@ -58,7 +62,7 @@ def test_get_all_sky_delegated_rebuild_resyncs_from_factory_block(monkeypatch, t
 
     # Pre-populate cache with stale last_synced_block.
     cache_path.parent.mkdir(parents=True, exist_ok=True)
-    import json
+
     cache_path.write_text(json.dumps({"last_synced_block": 99999999}))
 
     mock_w3 = MagicMock()
@@ -191,7 +195,7 @@ def test_build_sky_lookup_returns_dict_keyed_by_contract_date():
 def test_read_sync_state_returns_factory_block_and_last_synced(tmp_path):
     """read_sync_state fetches factory_block and last_synced_block from cache."""
     cache_path = tmp_path / "delegation_cache.json"
-    import json
+
     cache_path.parent.mkdir(parents=True, exist_ok=True)
     cache_path.write_text(json.dumps({"last_synced_block": 22500000}))
 
