@@ -1,7 +1,8 @@
 """Command-line entry point with `fetch` and `finalize` subcommands.
 
-`fetch` pulls SKY delegations from Dune and poll/spell vote data from vote.sky.money, then writes the raw participation
-tabs to the workbook. `finalize` reads the operator-reviewed Communication Master tab and writes the Compensation tab.
+`fetch` pulls SKY delegations from on-chain Lock/Free events and poll/spell vote data from vote.sky.money, then writes
+the raw participation tabs to the workbook. `finalize` reads the operator-reviewed Communication Master tab and writes
+the Compensation tab.
 """
 
 import argparse
@@ -42,26 +43,6 @@ def parse_month(value: str) -> MonthPeriod:
     return period
 
 
-def parse_cache_hours(value: str) -> int:
-    """Argparse callback for --cache-hours; requires a non-negative integer.
-
-    Returns:
-        The parsed integer.
-
-    Raises:
-        argparse.ArgumentTypeError: if the value isn't an integer or is negative.
-    """
-    try:
-        hours = int(value)
-    except ValueError as e:
-        msg = f"{value!r} is not an integer"
-        raise argparse.ArgumentTypeError(msg) from e
-    if hours < 0:
-        msg = f"{value!r} is negative; --cache-hours must be 0 or greater"
-        raise argparse.ArgumentTypeError(msg)
-    return hours
-
-
 def build_arg_parser() -> argparse.ArgumentParser:
     """Build the top-level argparse parser with `fetch` and `finalize` subcommands.
 
@@ -89,10 +70,10 @@ def build_arg_parser() -> argparse.ArgumentParser:
 
     fetch_parser = subparsers.add_parser(
         "fetch",
-        help="Pull data from Dune + APIs and write participation tabs.",
+        help="Pull data from on-chain + APIs and write participation tabs.",
         description=(
             "Step 1 of the monthly pipeline. Pulls SKY delegations from "
-            "Dune Analytics and poll/spell vote data from vote.sky.money, "
+            "on-chain Lock/Free events and poll/spell vote data from vote.sky.money, "
             "computes participation status per (poll, delegate), and "
             "reviews communication before running 'finalize'."
         ),
@@ -105,15 +86,12 @@ def build_arg_parser() -> argparse.ArgumentParser:
         help=("Month to query, e.g. 'April 2026' or '2026-04'. Resolves to the full calendar month."),
     )
     fetch_parser.add_argument(
-        "--cache-hours",
-        type=parse_cache_hours,
-        default=None,
-        metavar="N",
+        "--rebuild",
+        action="store_true",
         help=(
-            "If set, reuse a cached Dune execution if it's at most N hours old. "
-            "If omitted, executes the Dune query fresh (default behavior). "
-            "Use 24 or so for fast iteration during development; leave unset "
-            "for production monthly run."
+            "Force a full resync from the V3 factory block, discarding cached events. "
+            "By default, syncs only new blocks since the last run (fast). "
+            "Use --rebuild to rebuild the entire delegation history."
         ),
     )
 
@@ -125,7 +103,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
             "Communication Master tab from the workbook, computes "
             "participation and communication percentages, runs Level 3 "
             "eligibility, and writes the Compensation tab. Does not "
-            "re-fetch from Dune."
+            "re-fetch on-chain."
         ),
     )
     finalize_parser.add_argument(
@@ -173,7 +151,6 @@ def main(argv: list[str] | None = None) -> None:
         format="%(asctime)s %(levelname)s %(message)s",
         datefmt="%Y-%m-%d %H:%M:%S",
     )
-    logging.getLogger("dune_client").setLevel(logging.WARNING)
     load_dotenv()
     parser = build_arg_parser()
     args = parser.parse_args(argv)

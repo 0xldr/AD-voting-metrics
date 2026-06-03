@@ -6,7 +6,7 @@ import pytest
 
 from ad_voting_metrics import vote_status
 
-# Standard 3-day poll spanning 4 calendar days in Dune's daily rollups:
+# Standard 3-day poll spanning 4 calendar days in daily SKY delegation snapshots:
 # 16:00-24:00 on day 0, full days 1 and 2, 0:00-16:00 on day 3 (close day).
 _POLL_DAYS = [date(2026, 4, 1), date(2026, 4, 2), date(2026, 4, 3), date(2026, 4, 4)]
 _POLL_CLOSE = date(2026, 4, 4)

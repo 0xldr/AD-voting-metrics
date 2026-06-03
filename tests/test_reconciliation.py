@@ -89,9 +89,9 @@ def _make_entry(**overrides: object) -> ReconciliationEntry:
         "api_fetch_succeeded": True,
         "active_during_period": 0,
         "drift_warnings": [],
-        "dune_query_id": 6604139,
-        "dune_execution_mode": "fresh",
-        "dune_cache_max_age_hours": None,
+        "delegation_source": "onchain",
+        "delegation_factory_block": 22368737,
+        "delegation_last_synced_block": 22500000,
         "output_files": [],
     }
     return cast("ReconciliationEntry", {**base, **overrides})
@@ -116,7 +116,7 @@ def test_build_entry_minimal():
             active_delegates=active_delegates,
             api_delegate_count=2,
         ),
-        dune=(6604139, None),
+        delegation={"factory_block": 22368737, "last_synced_block": 22500000},
         output_files=[Path("/tmp/output.csv")],
     )
 
@@ -130,38 +130,40 @@ def test_build_entry_minimal():
     assert entry["api_fetch_succeeded"] is True
     assert entry["active_during_period"] == 2
     assert entry["drift_warnings"] == []
-    assert entry["dune_query_id"] == 6604139
-    assert entry["dune_execution_mode"] == "fresh"
-    assert entry["dune_cache_max_age_hours"] is None
+    assert entry["delegation_source"] == "onchain"
+    assert entry["delegation_factory_block"] == 22368737
+    assert entry["delegation_last_synced_block"] == 22500000
     assert entry["output_files"] == ["/tmp/output.csv"]
 
 
-def test_build_entry_records_fresh_execution_when_cache_hours_is_none():
-    """When dune_cache_max_age_hours is None, the entry records mode='fresh'."""
+def test_build_entry_records_delegation_source_when_fetched():
+    """When delegation is provided, the entry records source='onchain'."""
     entry = build_entry(
         period=_sample_period(),
         yaml_path=Path("/tmp/delegates.yaml"),
         roster=_make_roster_result(),
-        dune=(6604139, None),
+        delegation={"factory_block": 22368737, "last_synced_block": 22500000},
         output_files=[],
     )
 
-    assert entry["dune_execution_mode"] == "fresh"
-    assert entry["dune_cache_max_age_hours"] is None
+    assert entry["delegation_source"] == "onchain"
+    assert entry["delegation_factory_block"] == 22368737
+    assert entry["delegation_last_synced_block"] == 22500000
 
 
-def test_build_entry_records_cached_execution_when_cache_hours_is_set():
-    """When dune_cache_max_age_hours is an int, the entry records mode='cached'."""
+def test_build_entry_records_delegation_source_when_not_fetched():
+    """When delegation is None (finalize, no fetch), source='n/a'."""
     entry = build_entry(
         period=_sample_period(),
         yaml_path=Path("/tmp/delegates.yaml"),
         roster=_make_roster_result(),
-        dune=(6604139, 24),
+        delegation=None,
         output_files=[],
     )
 
-    assert entry["dune_execution_mode"] == "cached"
-    assert entry["dune_cache_max_age_hours"] == 24
+    assert entry["delegation_source"] == "n/a"
+    assert entry["delegation_factory_block"] is None
+    assert entry["delegation_last_synced_block"] is None
 
 
 def test_build_entry_preserves_drift_warnings():
@@ -171,7 +173,7 @@ def test_build_entry_preserves_drift_warnings():
         roster=_make_roster_result(
             drift_warnings=["Cloaky vanished from API", "Mystery delegate appeared"],
         ),
-        dune=(6604139, None),
+        delegation={"factory_block": 22368737, "last_synced_block": 22500000},
         output_files=[],
     )
 
@@ -189,7 +191,7 @@ def test_build_entry_records_api_failure():
             drift_warnings=["API drift check skipped..."],
             api_fetch_succeeded=False,
         ),
-        dune=(6604139, None),
+        delegation={"factory_block": 22368737, "last_synced_block": 22500000},
         output_files=[],
     )
 
@@ -203,7 +205,7 @@ def test_build_entry_includes_all_output_files():
         period=_sample_period(),
         yaml_path=Path("/tmp/delegates.yaml"),
         roster=_make_roster_result(),
-        dune=(6604139, None),
+        delegation={"factory_block": 22368737, "last_synced_block": 22500000},
         output_files=files,
     )
 
@@ -216,7 +218,7 @@ def test_build_entry_run_timestamp_is_iso_with_tz():
         period=_sample_period(),
         yaml_path=Path("/tmp/delegates.yaml"),
         roster=_make_roster_result(),
-        dune=(6604139, None),
+        delegation={"factory_block": 22368737, "last_synced_block": 22500000},
         output_files=[],
     )
 
@@ -236,7 +238,7 @@ def test_build_entry_is_json_serializable():
             drift_warnings=["w1", "w2"],
             api_delegate_count=2,
         ),
-        dune=(6604139, None),
+        delegation={"factory_block": 22368737, "last_synced_block": 22500000},
         output_files=[Path("/o/a.csv")],
     )
 
