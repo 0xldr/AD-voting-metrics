@@ -28,6 +28,7 @@ dev = [
     "pandas-stubs",
     "types-requests",
     "types-PyYAML",
+    "pre-commit>=3.0",
 ]
 
 [tool.setuptools.packages.find]
