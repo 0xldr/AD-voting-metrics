@@ -1,10 +1,11 @@
 """Orchestration for the `fetch` and `finalize` subcommands.
 
 Imports are wired so that:
-  - `fetch` pulls SKY balances from Dune + poll/spell vote data from vote.sky.money, writes CSV outputs to OUTPUT_DIR,
+  - `fetch` pulls SKY balances from on-chain delegation events + poll/spell vote
+    data from vote.sky.money, writes CSV outputs to OUTPUT_DIR,
     and (best-effort) writes the Participation/Communication/Daily tabs to the workbook.
-  - `finalize` reads the operator-reviewed Communication Master + the other workbook tabs, computes eligibility and
-    compensation, and writes the Compensation tab.
+  - `finalize` reads the operator-reviewed Communication Master + the other workbook tabs,
+    computes eligibility and compensation, and writes the Compensation tab.
 """
 
 import argparse
@@ -23,7 +24,7 @@ from .eligibility import DailyEligibility, DelegateMetricsInput, compute_daily_e
 from .period import MonthPeriod
 from .reconciliation import build_entry, write_entry
 from .roster import Delegate, build_roster_for_period, to_dataframe
-from .sources import dune, sky_executive, sky_executive_onchain, sky_polling
+from .sources import delegation, sky_executive, sky_executive_onchain, sky_polling
 from .sources.delegates import fetch_aligned_delegates
 
 logger = logging.getLogger(__name__)
@@ -150,14 +151,15 @@ def _compute_daily_results(
 def _build_sky_and_ranking_frames(
     df: pd.DataFrame,
     period: MonthPeriod,
-    cache_hours: int | None,
+    *,
+    rebuild: bool,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """Pull Dune SKY data and build the sorted sky + ranking dataframes.
+    """Pull on-chain SKY delegation data and build the sorted sky + ranking dataframes.
 
     Returns:
         Tuple of (df_sky, df_ranking) sorted for downstream writers.
     """
-    daily = dune.get_delegate_list_sky(df, period, cache_max_age_hours=cache_hours)
+    daily = delegation.get_delegate_list_sky(df, period, rebuild=rebuild)
 
     df_sky = daily[["contract", "date", "sky"]].sort_values(
         by=["date", "sky", "contract"],
@@ -229,7 +231,7 @@ def _write_fetch_workbook_tabs(
 
 
 def run_fetch(args: argparse.Namespace) -> None:
-    """Pull data from Dune + APIs, write CSVs and workbook tabs."""
+    """Pull data from on-chain + APIs, write CSVs and workbook tabs."""
     period = args.month
 
     logger.info("Querying %s (%s through %s)", period, period.start.isoformat(), period.end.isoformat())
@@ -244,8 +246,8 @@ def run_fetch(args: argparse.Namespace) -> None:
     df = to_dataframe(delegates)
 
     logger.info("Getting RANKING...")
-    df_sky, df_ranking = _build_sky_and_ranking_frames(df, period, args.cache_hours)
-    sky_lookup = dune.build_sky_lookup(df_sky)
+    df_sky, df_ranking = _build_sky_and_ranking_frames(df, period, rebuild=args.rebuild)
+    sky_lookup = delegation.build_sky_lookup(df_sky)
 
     logger.info("Getting POLL IDS...")
     poll_info = sky_polling.get_poll_ids(period)
@@ -270,7 +272,7 @@ def run_fetch(args: argparse.Namespace) -> None:
         period=period,
         yaml_path=YAML_PATH,
         roster=roster_result,
-        dune=(dune.DUNE_SKY_QUERY_ID, args.cache_hours),
+        delegation=delegation.read_sync_state(),
         output_files=output_files,
     )
     write_entry(RECONCILIATION_LOG_PATH, period, entry)
@@ -399,7 +401,7 @@ def run_finalize(args: argparse.Namespace) -> None:
         period=period,
         yaml_path=YAML_PATH,
         roster=roster_result,
-        dune=(dune.DUNE_SKY_QUERY_ID, None),
+        delegation=None,
         output_files=[Path(f"workbook:{sheets.compensation_tab_title(period)}")],
     )
     write_entry(RECONCILIATION_LOG_PATH, period, entry)

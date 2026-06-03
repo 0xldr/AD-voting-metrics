@@ -234,7 +234,7 @@ def test_run_finalize_logs_drift_warnings(finalize_mocks):
 
 
 # ---------------------------------------------------------------------------
-# _build_sky_and_ranking_frames — pure Dune-output transform
+# _build_sky_and_ranking_frames — pure delegation-output transform
 # ---------------------------------------------------------------------------
 
 
@@ -253,12 +253,12 @@ def test_build_sky_and_ranking_frames_sorts_sky_and_ranks_delegates():
     })
 
     with patch(
-        "ad_voting_metrics.pipeline.dune.get_delegate_list_sky",
+        "ad_voting_metrics.pipeline.delegation.get_delegate_list_sky",
         return_value=canned,
-    ) as dune_mock:
-        df_sky, df_ranking = _build_sky_and_ranking_frames(df_input, period, cache_hours=24)
+    ) as delegation_mock:
+        df_sky, df_ranking = _build_sky_and_ranking_frames(df_input, period, rebuild=False)
 
-    dune_mock.assert_called_once_with(df_input, period, cache_max_age_hours=24)
+    delegation_mock.assert_called_once_with(df_input, period, rebuild=False)
 
     # df_sky: highest sky first (300), then 200, then 100.
     assert df_sky.iloc[0]["sky"] == 300.0
@@ -384,16 +384,17 @@ def test_write_fetch_workbook_tabs_continues_after_gspread_api_error():
 
 def _make_fetch_args(
     month: MonthPeriod | None = None,
-    cache_hours: int | None = None,
+    *,
+    rebuild: bool = False,
 ) -> argparse.Namespace:
     return argparse.Namespace(
         command="fetch",
         month=month or MonthPeriod(year=2026, month=4),
-        cache_hours=cache_hours,
+        rebuild=rebuild,
     )
 
 
-def _canned_dune_outputs(period: MonthPeriod, contract: str, name: str) -> pd.DataFrame:
+def _canned_delegation_outputs(period: MonthPeriod, contract: str, name: str) -> pd.DataFrame:
     """Return a sky_protocol-shaped DataFrame covering one delegate for every day in period."""
     days = list(pd.date_range(period.start, period.end, freq="D").date)
     return pd.DataFrame([{"contract": contract, "name": name, "date": d, "sky": 100.0} for d in days])
@@ -409,11 +410,11 @@ def test_run_fetch_writes_csvs_and_workbook_tabs(tmp_path, monkeypatch):
     delegates = [
         Delegate(name="alpha", vote_delegate_address=contract, start_date=date(2024, 1, 1)),
     ]
-    canned = _canned_dune_outputs(period, contract, "alpha")
+    canned = _canned_delegation_outputs(period, contract, "alpha")
 
     with (
         patch("ad_voting_metrics.pipeline.build_roster_for_period") as mock_roster,
-        patch("ad_voting_metrics.pipeline.dune.get_delegate_list_sky", return_value=canned),
+        patch("ad_voting_metrics.pipeline.delegation.get_delegate_list_sky", return_value=canned),
         patch("ad_voting_metrics.pipeline.sky_polling.get_poll_ids", return_value=[]),
         patch("ad_voting_metrics.pipeline.sky_executive.get_executive_ids", return_value=[]),
         patch(
@@ -437,7 +438,7 @@ def test_run_fetch_writes_csvs_and_workbook_tabs(tmp_path, monkeypatch):
             api_delegate_count=1,
             api_fetch_succeeded=True,
         )
-        run_fetch(_make_fetch_args(period, cache_hours=24))
+        run_fetch(_make_fetch_args(period, rebuild=False))
 
     assert (tmp_path / "sky.csv").exists()
     assert (tmp_path / "vote_participation.csv").exists()
@@ -457,11 +458,11 @@ def test_run_fetch_logs_drift_warnings(tmp_path, monkeypatch):
     delegates = [
         Delegate(name="beta", vote_delegate_address=contract, start_date=date(2024, 1, 1)),
     ]
-    canned = _canned_dune_outputs(period, contract, "beta")
+    canned = _canned_delegation_outputs(period, contract, "beta")
 
     with (
         patch("ad_voting_metrics.pipeline.build_roster_for_period") as mock_roster,
-        patch("ad_voting_metrics.pipeline.dune.get_delegate_list_sky", return_value=canned),
+        patch("ad_voting_metrics.pipeline.delegation.get_delegate_list_sky", return_value=canned),
         patch("ad_voting_metrics.pipeline.sky_polling.get_poll_ids", return_value=[]),
         patch("ad_voting_metrics.pipeline.sky_executive.get_executive_ids", return_value=[]),
         patch(

@@ -1,6 +1,5 @@
 """Tests for cli argparse callbacks, build_arg_parser, check_period_has_ended, and main dispatch."""
 
-import argparse
 from datetime import date
 from unittest.mock import patch
 
@@ -10,28 +9,8 @@ from ad_voting_metrics.cli import (
     build_arg_parser,
     check_period_has_ended,
     main,
-    parse_cache_hours,
 )
 from ad_voting_metrics.period import MonthPeriod
-
-
-@pytest.mark.parametrize(("value", "expected"), [("0", 0), ("24", 24)])
-def test_parse_cache_hours_accepts_non_negative_integers(value, expected):
-    assert parse_cache_hours(value) == expected
-
-
-@pytest.mark.parametrize(
-    ("value", "match"),
-    [
-        ("-1", "negative"),
-        ("twelve", "not an integer"),
-        ("12.5", "not an integer"),
-    ],
-)
-def test_parse_cache_hours_rejects_invalid(value, match):
-    with pytest.raises(argparse.ArgumentTypeError, match=match):
-        parse_cache_hours(value)
-
 
 # ---------------------------------------------------------------------------
 # check_period_has_ended
@@ -109,25 +88,25 @@ def test_check_period_has_ended_handles_leap_year():
 # ---------------------------------------------------------------------------
 
 
-def test_parser_fetch_subcommand_parses_month_and_cache_hours():
-    """The fetch subcommand takes --month and --cache-hours."""
+def test_parser_fetch_subcommand_parses_month_and_rebuild():
+    """The fetch subcommand takes --month and --rebuild."""
     parser = build_arg_parser()
-    args = parser.parse_args(["fetch", "--month", "April 2026", "--cache-hours", "24"])
+    args = parser.parse_args(["fetch", "--month", "April 2026", "--rebuild"])
 
     assert args.command == "fetch"
     assert isinstance(args.month, MonthPeriod)
     assert args.month.year == 2026
     assert args.month.month == 4
-    assert args.cache_hours == 24
+    assert args.rebuild is True
 
 
-def test_parser_fetch_subcommand_cache_hours_optional():
-    """--cache-hours defaults to None when omitted."""
+def test_parser_fetch_subcommand_rebuild_defaults_to_false():
+    """--rebuild defaults to False when omitted."""
     parser = build_arg_parser()
     args = parser.parse_args(["fetch", "--month", "April 2026"])
 
     assert args.command == "fetch"
-    assert args.cache_hours is None
+    assert args.rebuild is False
 
 
 def test_parser_finalize_subcommand_parses_month():

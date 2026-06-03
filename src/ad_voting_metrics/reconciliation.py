@@ -4,8 +4,8 @@ Each successful run writes one JSON file to output_data/reconciliation/, named <
 period queried first, the run timestamp second, both sortable.
 
 The log captures structured metadata about a run: YAML and API delegate counts, whether the API call succeeded, drift
-warnings, which Dune query was executed, amd which files were produced. Lets operators answer "what happened during this
-run" without re-running.
+warnings, the on-chain delegation sync state, and which files were produced. Lets operators answer "what happened during
+this run" without re-running.
 
 Writing is soft-fail: if the log can't be written (permission denied, disk full, etc.), a warning is logged and the
 script continues. CSV outputs are the primary artifacts; the log is supplementary.
@@ -42,9 +42,9 @@ class ReconciliationEntry(TypedDict):
     api_fetch_succeeded: bool
     active_during_period: int
     drift_warnings: list[str]
-    dune_query_id: int
-    dune_execution_mode: str
-    dune_cache_max_age_hours: int | None
+    delegation_source: str
+    delegation_factory_block: int | None
+    delegation_last_synced_block: int | None
     output_files: list[str]
 
 
@@ -53,13 +53,13 @@ def build_entry(
     period: MonthPeriod,
     yaml_path: Path,
     roster: RosterResult,
-    dune: tuple[int, int | None],
+    delegation: dict[str, int] | None,
     output_files: list[Path],
 ) -> ReconciliationEntry:
     """Construct a reconciliation log entry from this run's facts.
 
-    `dune` is (query_id, cache_max_age_hours). cache_max_age_hours is None when Dune was run fresh, or an integer N when
-    --cache-hours N was used.
+    `delegation` is the on-chain sync state {factory_block, last_synced_block} when delegation data was
+    fetched (fetch), or None when it wasn't (finalize). A None records source 'n/a' with null block fields.
 
     `roster.api_delegate_count` is 0 when api_fetch_succeeded is False (the API call raised and was soft-failed).
 
@@ -72,9 +72,6 @@ def build_entry(
     yaml_config = roster.yaml_config
     yaml_active = sum(1 for d in yaml_config.delegates if d.end_date is None)
     yaml_exited = sum(1 for d in yaml_config.delegates if d.end_date is not None)
-
-    dune_query_id, dune_cache_max_age_hours = dune
-    dune_execution_mode = "fresh" if dune_cache_max_age_hours is None else "cached"
 
     return {
         "run_timestamp": datetime.now(UTC).isoformat(),
@@ -89,9 +86,9 @@ def build_entry(
         "api_fetch_succeeded": roster.api_fetch_succeeded,
         "active_during_period": len(roster.active_delegates),
         "drift_warnings": list(roster.drift_warnings),
-        "dune_query_id": dune_query_id,
-        "dune_execution_mode": dune_execution_mode,
-        "dune_cache_max_age_hours": dune_cache_max_age_hours,
+        "delegation_source": "onchain" if delegation is not None else "n/a",
+        "delegation_factory_block": delegation["factory_block"] if delegation is not None else None,
+        "delegation_last_synced_block": delegation["last_synced_block"] if delegation is not None else None,
         "output_files": [str(p) for p in output_files],
     }
 

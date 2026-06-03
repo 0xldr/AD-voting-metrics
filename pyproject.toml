@@ -13,7 +13,6 @@ dependencies = [
     "python-dotenv>=1.2,<2",
     "pydantic>=2.0,<3",
     "pyyaml>=6.0,<7",
-    "dune-client>=1.10,<2",
     "gspread>=6.0,<7",
     "gspread-dataframe>=4.0,<5",
     "google-auth>=2.0,<3",
