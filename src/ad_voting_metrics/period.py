@@ -1,5 +1,6 @@
 """Domain type for a single calendar month."""
 
+import calendar
 from dataclasses import dataclass
 from datetime import date
 
@@ -28,27 +29,28 @@ class MonthPeriod:
         Raises:
             ValueError: if the (normalized) year is before the project's lower bound.
         """
-        normalized = pd.Period(year=self.year, month=self.month, freq="M")
-        if (normalized.year, normalized.month) != (self.year, self.month):
-            object.__setattr__(self, "year", normalized.year)
-            object.__setattr__(self, "month", normalized.month)
+        # Collapse (year, month) to a zero-based month index, then split it back out so
+        # an out-of-range month carries into the year (month=13 -> next Jan, month=0 -> prev Dec).
+        month_index = self.year * 12 + (self.month - 1)
+        norm_year, norm_month_zero = divmod(month_index, 12)
+        norm_month = norm_month_zero + 1
+        if (norm_year, norm_month) != (self.year, self.month):
+            object.__setattr__(self, "year", norm_year)
+            object.__setattr__(self, "month", norm_month)
         if self.year < YEAR_LOWER_BOUND:
             msg = f"year must be >= {YEAR_LOWER_BOUND}, got {self.year}"
             raise ValueError(msg)
 
     @property
-    def _period(self) -> pd.Period:
-        return pd.Period(year=self.year, month=self.month, freq="M")
-
-    @property
     def start(self) -> date:
         """First day of the month."""
-        return self._period.start_time.date()
+        return date(self.year, self.month, 1)
 
     @property
     def end(self) -> date:
         """Last day of the month, accounting for variable month length."""
-        return self._period.end_time.date()
+        last_day = calendar.monthrange(self.year, self.month)[1]
+        return date(self.year, self.month, last_day)
 
     def __str__(self) -> str:
         """Render as April 2026 rather than "MonthPeriod(year=2026, month=4)".
@@ -56,7 +58,7 @@ class MonthPeriod:
         Returns:
             The human-readable form.
         """
-        return self._period.strftime("%B %Y")
+        return date(self.year, self.month, 1).strftime("%B %Y")
 
     @classmethod
     def from_string(cls, value: str) -> "MonthPeriod":
