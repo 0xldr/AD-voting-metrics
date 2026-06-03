@@ -42,11 +42,17 @@ def _sky(*values: float) -> dict[date, float]:
         pytest.param(_sky(0, 0, 0, 1), False, _AFTER_CLOSE, "No Delegated SKY", id="grief vector: 1 SKY on close day"),
         # --- Closed poll: partial sky data ---------------------------------
         pytest.param(
-            {date(2026, 4, 4): 1000.0}, False, _AFTER_CLOSE, "No Delegated SKY",
+            {date(2026, 4, 4): 1000.0},
+            False,
+            _AFTER_CLOSE,
+            "No Delegated SKY",
             id="only close day present",
         ),
         pytest.param(
-            {date(2026, 4, 2): 1000.0}, False, _AFTER_CLOSE, "No Delegated SKY",
+            {date(2026, 4, 2): 1000.0},
+            False,
+            _AFTER_CLOSE,
+            "No Delegated SKY",
             id="only pre-close day present",
         ),
         # --- Open poll: current_datetime < 16:00 UTC on close day ----------
@@ -56,15 +62,24 @@ def _sky(*values: float) -> dict[date, float]:
         pytest.param(_sky(0, 0, 0, 0), True, _DURING_VOTING, "Yes", id="open poll, voted with no sky"),
         # --- Close-day time-of-day boundary --------------------------------
         pytest.param(
-            _sky(1000, 1000, 1000, 1000), False, _CLOSE_DAY_BEFORE_1600, "Voting Open",
+            _sky(1000, 1000, 1000, 1000),
+            False,
+            _CLOSE_DAY_BEFORE_1600,
+            "Voting Open",
             id="15:00 UTC → still open",
         ),
         pytest.param(
-            _sky(1000, 1000, 1000, 1000), False, _CLOSE_DAY_AT_1600, "No",
+            _sky(1000, 1000, 1000, 1000),
+            False,
+            _CLOSE_DAY_AT_1600,
+            "No",
             id="16:00 UTC → closed",
         ),
         pytest.param(
-            _sky(1000, 1000, 1000, 1000), False, _CLOSE_DAY_AFTER_1600, "No",
+            _sky(1000, 1000, 1000, 1000),
+            False,
+            _CLOSE_DAY_AFTER_1600,
+            "No",
             id="17:00 UTC → closed",
         ),
     ],

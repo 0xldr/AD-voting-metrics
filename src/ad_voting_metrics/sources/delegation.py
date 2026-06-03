@@ -61,9 +61,7 @@ def _load_cache(path: Path) -> dict[str, Any]:
         data: dict[str, Any] = json.load(f)
     # Normalize contract addresses to lowercase in the events dict.
     if "events" in data:
-        data["events"] = {
-            contract.lower(): events for contract, events in data["events"].items()
-        }
+        data["events"] = {contract.lower(): events for contract, events in data["events"].items()}
     return data
 
 
@@ -109,22 +107,18 @@ def _fetch_event_logs(
         while chunk_size >= MIN_CHUNK_BLOCKS:
             to_block = min(block + chunk_size - 1, safe_head)
             try:
-                logs_lock = w3.eth.get_logs(
-                    {
-                        "fromBlock": block,
-                        "toBlock": to_block,
-                        "address": contracts_checksummed,
-                        "topics": [LOCK_TOPIC],
-                    }
-                )
-                logs_free = w3.eth.get_logs(
-                    {
-                        "fromBlock": block,
-                        "toBlock": to_block,
-                        "address": contracts_checksummed,
-                        "topics": [FREE_TOPIC],
-                    }
-                )
+                logs_lock = w3.eth.get_logs({
+                    "fromBlock": block,
+                    "toBlock": to_block,
+                    "address": contracts_checksummed,
+                    "topics": [LOCK_TOPIC],
+                })
+                logs_free = w3.eth.get_logs({
+                    "fromBlock": block,
+                    "toBlock": to_block,
+                    "address": contracts_checksummed,
+                    "topics": [FREE_TOPIC],
+                })
             except Web3RPCError as e:
                 if chunk_size <= MIN_CHUNK_BLOCKS:
                     msg = f"eth_getLogs failed even at minimum chunk size: {e}"
@@ -313,28 +307,25 @@ def _build_daily_series(cache: dict[str, Any]) -> pd.DataFrame:
         for dt in pd.date_range(sorted_dates[0], sorted_dates[-1], freq="D").date:
             if dt in cumulative_by_date:
                 current_balance = cumulative_by_date[dt]
-            rows.append(
-                {
-                    "delegation_contract": contract,
-                    "dt": dt,
-                    "running_total_balance_wei": current_balance,
-                }
-            )
+            rows.append({
+                "delegation_contract": contract,
+                "dt": dt,
+                "running_total_balance_wei": current_balance,
+            })
 
     if not rows:
         # No events for any contract; return empty DataFrame with correct shape.
-        return pd.DataFrame(
-            columns=["delegation_contract", "dt", "running_total_balance_wei"]
-        ).set_index(["delegation_contract", "dt"])
+        return pd.DataFrame(columns=["delegation_contract", "dt", "running_total_balance_wei"]).set_index([
+            "delegation_contract",
+            "dt",
+        ])
 
     df = pd.DataFrame(rows)
     df["dt"] = pd.to_datetime(df["dt"]).dt.date
     df = df.set_index(["delegation_contract", "dt"])
 
     # Convert wei to human-readable SKY.
-    df["running_total_balance"] = df["running_total_balance_wei"].apply(
-        lambda wei: float(Web3.from_wei(wei, "ether"))
-    )
+    df["running_total_balance"] = df["running_total_balance_wei"].apply(lambda wei: float(Web3.from_wei(wei, "ether")))
     return df[["running_total_balance"]]
 
 
@@ -425,24 +416,15 @@ def get_delegate_list_sky(
         for contract, name in zip(df["Delegate Contract"], df["Delegate Name"], strict=True)
     }
 
-    target = pd.MultiIndex.from_product(
-        [contracts, days], names=["delegation_contract", "dt"]
-    )
-    filled = (
-        all_sky_delegated["running_total_balance"]
-        .reindex(target, fill_value=0.0)
-        .astype(float)
-        .reset_index()
-    )
+    target = pd.MultiIndex.from_product([contracts, days], names=["delegation_contract", "dt"])
+    filled = all_sky_delegated["running_total_balance"].reindex(target, fill_value=0.0).astype(float).reset_index()
 
-    return pd.DataFrame(
-        {
-            "contract": filled["delegation_contract"],
-            "name": filled["delegation_contract"].map(names_by_contract),
-            "date": filled["dt"],
-            "sky": filled["running_total_balance"],
-        }
-    )
+    return pd.DataFrame({
+        "contract": filled["delegation_contract"],
+        "name": filled["delegation_contract"].map(names_by_contract),
+        "date": filled["dt"],
+        "sky": filled["running_total_balance"],
+    })
 
 
 def build_sky_lookup(df_sky: pd.DataFrame) -> dict[tuple[str, date], float]:

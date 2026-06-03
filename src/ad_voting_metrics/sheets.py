@@ -643,12 +643,7 @@ def write_communication_master(
     # (and rows that are in this fetch but not yet in the tab), fall back to
     # defaults. `combine_first` does the cell-level fill + index/column union
     # in one shot once empty/whitespace cells are treated as null.
-    merged = (
-        existing.map(str.strip)
-        .replace("", pd.NA)
-        .combine_first(defaults)
-        .fillna("")
-    )
+    merged = existing.map(str.strip).replace("", pd.NA).combine_first(defaults).fillna("")
 
     merged = merged.sort_values(
         "Start Date",
