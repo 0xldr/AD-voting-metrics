@@ -106,23 +106,23 @@ class Delegate(BaseModel):
         for la in self.levels:
             if la.start_date < self.start_date:
                 msg = (
-                    f"LevelAssignment star_dDate {la.start_date} for delegate "
+                    f"LevelAssignment start_date {la.start_date} for delegate "
                     f"{self.name} is before alignment start_date {self.start_date}"
                 )
                 raise ValueError(msg)
             if la.end_date is not None and self.end_date is not None and la.end_date > self.end_date:
-                msg_0 = (
+                msg = (
                     f"LevelAssignment end_date {la.end_date} for delegate "
                     f"{self.name} is after alignment end_date {self.end_date}"
                 )
-                raise ValueError(msg_0)
+                raise ValueError(msg)
             # An open-ended LevelAssignment on an exited delegate is invalid.
             if la.end_date is None and self.end_date is not None:
-                msg_1 = (
+                msg = (
                     f"LevelAssignment for delegate {self.name} has no end_date but the delegate's alignment ends on "
                     f"{self.end_date}; set the LevelAssignment end_date too."
                 )
-                raise ValueError(msg_1)
+                raise ValueError(msg)
         return self
 
     @model_validator(mode="after")
@@ -147,11 +147,11 @@ class Delegate(BaseModel):
                 )
                 raise ValueError(msg)
             if prev.end_date >= curr.start_date:
-                msg_0 = (
+                msg = (
                     f"LevelAssignments for delegate {self.name} overlap period ending {prev.end_date} overlaps with "
                     f"period starting {curr.start_date}."
                 )
-                raise ValueError(msg_0)
+                raise ValueError(msg)
         return self
 
     def is_active_during(self, period_start: date, period_end: date) -> bool:
