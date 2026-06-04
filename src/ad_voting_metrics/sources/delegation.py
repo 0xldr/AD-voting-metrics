@@ -104,7 +104,7 @@ def _fetch_event_logs(
     block = from_block
     while block <= safe_head:
         chunk_size = INITIAL_CHUNK_BLOCKS
-        while chunk_size >= MIN_CHUNK_BLOCKS:
+        while True:
             to_block = min(block + chunk_size - 1, safe_head)
             try:
                 logs_lock = w3.eth.get_logs({
@@ -121,9 +121,10 @@ def _fetch_event_logs(
                 })
             except Web3RPCError as e:
                 if chunk_size <= MIN_CHUNK_BLOCKS:
-                    msg = f"eth_getLogs failed even at minimum chunk size: {e}"
+                    msg = f"eth_getLogs failed even at the minimum chunk size of {MIN_CHUNK_BLOCKS} blocks: {e}"
                     raise RuntimeError(msg) from e
-                chunk_size //= 2
+                # Clamp to MIN so halving can't step past it and loop forever.
+                chunk_size = max(chunk_size // 2, MIN_CHUNK_BLOCKS)
                 logger.debug(
                     "getLogs range error on blocks %d-%d; halving to %d and retrying",
                     block,
