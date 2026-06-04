@@ -217,6 +217,66 @@ def test_run_finalize_eligibility_tie_at_cutoff_exits(finalize_mocks):
         run_finalize(_make_finalize_args())
 
 
+def test_run_finalize_includes_delegate_who_exited_mid_period(finalize_mocks):
+    """A delegate who exits mid-period earned slot-days and must get a compensation row, not crash finalize.
+
+    Regression: final_metrics was sourced from the last day's eligibility, which omits a mid-period
+    exiter; compute_period_compensation then raised on the missing entry and aborted the whole run.
+    """
+    delegates = [
+        Delegate(name="Stayer", vote_delegate_address=f"0x{'a' * 39}1", start_date=date(2024, 1, 1)),
+        Delegate(
+            name="Exiter",
+            vote_delegate_address=f"0x{'b' * 39}2",
+            start_date=date(2024, 1, 1),
+            end_date=date(2026, 4, 15),  # exits mid-April; absent on the period's last day
+        ),
+    ]
+    # Stayer is ranked every day; Exiter only through April 15 (when they were still active).
+    daily_rows = [
+        {"Date": date(2026, 4, d), "Delegate": "Stayer", "Total Delegation": 200.0, "Rank": 1} for d in range(1, 31)
+    ] + [{"Date": date(2026, 4, d), "Delegate": "Exiter", "Total Delegation": 100.0, "Rank": 2} for d in range(1, 16)]
+    finalize_mocks.read_daily.return_value = pd.DataFrame(daily_rows)
+    finalize_mocks.read_participation.return_value = pd.DataFrame([
+        {
+            "Delegate": name,
+            "Poll Id": f"poll_{j}",
+            "Start Date": date(2026, 2, 1),
+            "End Date": date(2026, 2, 2),
+            "Title": "",
+            "Participation Status": "Yes",
+        }
+        for name in ("Stayer", "Exiter")
+        for j in range(3)
+    ])
+    finalize_mocks.read_communication.return_value = pd.DataFrame([
+        {
+            "Delegate": name,
+            "Poll Id": f"poll_{j}",
+            "Start Date": date(2026, 2, 1),
+            "End Date": date(2026, 2, 2),
+            "Title": "",
+            "Communication Status": "Yes",
+        }
+        for name in ("Stayer", "Exiter")
+        for j in range(3)
+    ])
+    finalize_mocks.build_roster.return_value = MagicMock(
+        active_delegates=delegates,
+        drift_warnings=[],
+        yaml_config=MagicMock(delegates=delegates),
+        api_delegate_count=0,
+        api_fetch_succeeded=True,
+    )
+
+    run_finalize(_make_finalize_args())  # must not SystemExit
+
+    finalize_mocks.write_compensation.assert_called_once()
+    _, period_comp = finalize_mocks.write_compensation.call_args.args
+    names = {r.name for r in period_comp.per_delegate}
+    assert names == {"Stayer", "Exiter"}
+
+
 def test_run_finalize_logs_drift_warnings(finalize_mocks):
     """Drift warnings from the roster are emitted via logger.warning."""
     finalize_mocks.build_roster.return_value = MagicMock(
