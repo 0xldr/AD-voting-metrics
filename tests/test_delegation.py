@@ -8,6 +8,7 @@ from unittest.mock import MagicMock, patch
 
 import pandas as pd
 import pytest
+from web3.exceptions import Web3RPCError
 
 from ad_voting_metrics.period import MonthPeriod
 from ad_voting_metrics.sources import delegation
@@ -82,6 +83,35 @@ def test_get_all_sky_delegated_rebuild_resyncs_from_factory_block(monkeypatch, t
         assert sync_mock.call_args[1]["rebuild"] is True
 
 
+def test_get_all_sky_delegated_raises_when_getlogs_always_fails(tmp_path):
+    """A provider that rejects every getLogs range surfaces a RuntimeError, not an infinite loop."""
+    cache_path = tmp_path / "delegation_cache.json"
+    mock_w3 = MagicMock()
+    mock_w3.eth.block_number = delegation.V3_FACTORY_BLOCK + 100_000
+    mock_w3.eth.get_logs.side_effect = Web3RPCError("range too large")
+
+    with pytest.raises(RuntimeError, match="minimum chunk size"):
+        delegation.get_all_sky_delegated(["0x" + "a" * 40], w3=mock_w3, cache_path=cache_path, rebuild=True)
+
+
+def test_get_all_sky_delegated_recovers_by_shrinking_chunk(tmp_path):
+    """getLogs ranges that are too large are retried at smaller sizes until one succeeds."""
+    cache_path = tmp_path / "delegation_cache.json"
+
+    def get_logs(params: dict) -> list:
+        if params["toBlock"] - params["fromBlock"] + 1 > delegation.MIN_CHUNK_BLOCKS:
+            raise Web3RPCError("range too large")
+        return []
+
+    mock_w3 = MagicMock()
+    mock_w3.eth.block_number = delegation.V3_FACTORY_BLOCK + 5_000
+    mock_w3.eth.get_logs.side_effect = get_logs
+
+    result = delegation.get_all_sky_delegated(["0x" + "a" * 40], w3=mock_w3, cache_path=cache_path, rebuild=True)
+    assert isinstance(result, pd.DataFrame)
+    assert result.empty
+
+
 # ---------------------------------------------------------------------------
 # get_delegate_list_sky — per-day rows + zero-fill
 # ---------------------------------------------------------------------------
@@ -116,14 +146,14 @@ def test_get_delegate_list_sky_returns_one_row_per_delegate_per_day():
     assert list(result.columns) == ["contract", "name", "date", "sky"]
 
 
-def test_get_delegate_list_sky_fills_missing_days_with_zero():
-    """Period has 3 days; cached data only 1 day; days 1 and 3 are zero."""
+def test_get_delegate_list_sky_carries_balance_forward_and_zeros_before_first_event():
+    """Balance set on day 2 is zero on day 1 (before first event) and carried forward to day 3."""
     df = pd.DataFrame([
         {"Delegate Name": "Alice", "Delegate Contract": "0xaaa", "Start Date": "2024-01-01"},
     ])
     fake_all_sky = _sky_df_indexed([
         ("0xaaa", "2026-04-02", 1500.0),
-        # days 1 and 3 missing
+        # day 1 precedes the first event; day 3 has no new event.
     ])
     period_3day = _period_stub(date(2026, 4, 1), date(2026, 4, 3))
 
@@ -131,9 +161,24 @@ def test_get_delegate_list_sky_fills_missing_days_with_zero():
         result = delegation.get_delegate_list_sky(df, period_3day)
 
     by_date = dict(zip(result["date"], result["sky"], strict=True))
-    assert by_date[date(2026, 4, 1)] == 0.0
+    assert by_date[date(2026, 4, 1)] == 0.0  # before first event: no balance yet
     assert by_date[date(2026, 4, 2)] == 1500.0
-    assert by_date[date(2026, 4, 3)] == 0.0
+    assert by_date[date(2026, 4, 3)] == 1500.0  # carried forward from the last known balance
+
+
+def test_get_delegate_list_sky_carries_pre_period_balance_across_whole_period():
+    """A delegate whose last Lock/Free predates the period keeps that balance every in-period day."""
+    df = pd.DataFrame([
+        {"Delegate Name": "Alice", "Delegate Contract": "0xaaa", "Start Date": "2024-01-01"},
+    ])
+    # Last (and only) event is in March; the queried period is April, with no April events.
+    fake_all_sky = _sky_df_indexed([("0xaaa", "2026-03-15", 1_000_000.0)])
+    period_april = _period_stub(date(2026, 4, 1), date(2026, 4, 3))
+
+    with patch.object(delegation, "get_all_sky_delegated", return_value=fake_all_sky):
+        result = delegation.get_delegate_list_sky(df, period_april)
+
+    assert list(result["sky"]) == [1_000_000.0, 1_000_000.0, 1_000_000.0]
 
 
 def test_get_delegate_list_sky_lowercases_name():
