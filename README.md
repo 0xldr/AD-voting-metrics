@@ -1,12 +1,12 @@
 # AD Voting Metrics
 
-Python pipeline for computing monthly compensation for SKY DAO Aligned Delegates fron their on-chain voting participation and off-chain communication record.
+Python pipeline for computing monthly compensation for SKY DAO Aligned Delegates from their on-chain voting participation and off-chain communication record.
 
 ## How It Works
 
 The pipeline is two-step, with operator review in between:
 
-1. **`fetch`** pulls SKY delegations from DUNE and poll/spell vote data from vote.sky.money for a given month. It writes per-delegate ranks, participation statuses, and a starting communication record to the configured Google Sheets workbook.
+1. **`fetch`** pulls SKY delegations from on-chain Lock/Free events and poll/spell vote data from vote.sky.money for a given month. It writes per-delegate ranks, participation statuses, and a starting communication record to the configured Google Sheets workbook.
 2. An operator reviews the **Communication Master** tab in the workbook, marking each (delegate, poll) cell as `Yes`, `No`, `Did not vote`, or `Pending verification` based on whether the delegate communicated their vote rationale in time.
 3. **`finalize`** reads back the reviewed workbook tabs, evaluates each delegate's 6-month participation and communication track record, runs Level 3 slot eligibility, applies the metrics modifier (linear ramp 0→1 between 75% and 95% on each dimension, multiplied), and writes a **Compensation** tab for the month.
 
@@ -15,7 +15,7 @@ Compensation is pro-rata by days held at each level (L1/L2/L3) and scaled by the
 ## Requirements
 
 - Python 3.11 or later.
-- A Dune Analytics API key
+- A mainnet JSON-RPC endpoint (Alchemy, Infura, or any public RPC)
 - A Google Cloud service account with access to a Google Sheets workbook
 
 ## Installation
@@ -32,11 +32,11 @@ pip install -e .
 
 ### Environment Variables
 
-The script needs a Dune Analytics API key to fetch delegated amounts.
+The script needs a mainnet JSON-RPC endpoint to fetch on-chain delegation events (and to verify "Pending verification" executive votes).
 
 Copy `.env.example` to `.env` and fill in:
 
-- `DUNE_API_KEY` - from https://dune.com/settings/api
+- `SKY_RPC_URL` - a mainnet JSON-RPC endpoint (Alchemy, Infura, or any public RPC)
 - `GOOGLE_SERVICE_ACCOUNT_FILE` - path to a service account JSON key file (create in Google Cloud Console, store outside the repo)
 - `SHEETS_WORKBOOK_ID` — the long ID in the workbook URL between `/d/` and `/edit`
 
@@ -75,9 +75,9 @@ python -m ad_voting_metrics fetch --month "April 2026"
 # Step 2: review the Communication Master tab in the workbook, then:
 python -m ad_voting_metrics finalize --month "April 2026"
 ```
- 
+
 Output CSVs are written to `output_data/`.
-`fetch` accepts `--cache-hours N` to reuse a Dune execution at most N hours old. Omit for fresh executions (recommended for monthly production runs).
+`fetch` syncs only new blocks since the last run by default, reusing cached on-chain events. Pass `--rebuild` to discard the cache and resync the full delegation history from the V3 factory block.
 
 The month argument accepts either natural form (`"April 2026"`) or ISO (`"2026-04"`).
 
@@ -86,7 +86,7 @@ The month argument accepts either natural form (`"April 2026"`) or ISO (`"2026-0
 **`fetch`** writes:
 
 - Workbook tabs: `Daily Data` (workbook-wide), `Communication Master` (workbook-wide), `Participation Raw Data <Month Year>` (per-period)
-- CSVs in `output_data/`: `sky.csv` (raw Dune output), `vote_participation.csv` (per-delegate poll matrix)
+- CSVs in `output_data/`: `sky.csv` (per-delegate daily SKY balances), `vote_participation.csv` (per-delegate poll matrix)
 - A reconciliation log entry in `output_data/reconciliation/`
 
 **`finalize`** writes:
