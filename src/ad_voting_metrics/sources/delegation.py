@@ -394,7 +394,9 @@ def get_delegate_list_sky(
 ) -> pd.DataFrame:
     """Build one row per (delegate, day) with SKY balance for the period.
 
-    Missing daily rows from on-chain are filled with zero.
+    Each day reflects the delegate's most recent on-chain balance, carried forward: a delegate
+    whose last Lock/Free predates the period still holds that balance every day. Days before a
+    delegate's first-ever Lock/Free event (no balance yet) are zero.
 
     Args:
         df: roster DataFrame with columns "Delegate Contract", "Delegate Name", "Start Date".
@@ -417,8 +419,15 @@ def get_delegate_list_sky(
         for contract, name in zip(df["Delegate Contract"], df["Delegate Name"], strict=True)
     }
 
+    # Forward-fill over event days plus period days so a pre-period balance carries in, then
+    # restrict to the period; days before a contract's first event stay 0.
+    balances = all_sky_delegated["running_total_balance"]
+    all_days = sorted(set(balances.index.get_level_values("dt")) | set(days))
+    full_index = pd.MultiIndex.from_product([contracts, all_days], names=["delegation_contract", "dt"])
+    carried = balances.reindex(full_index).groupby(level="delegation_contract").ffill()
+
     target = pd.MultiIndex.from_product([contracts, days], names=["delegation_contract", "dt"])
-    filled = all_sky_delegated["running_total_balance"].reindex(target, fill_value=0.0).astype(float).reset_index()
+    filled = carried.reindex(target).fillna(0.0).astype(float).reset_index()
 
     return pd.DataFrame({
         "contract": filled["delegation_contract"],
