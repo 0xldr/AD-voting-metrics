@@ -337,10 +337,9 @@ def _compute_period_compensation_for_window(
         daily_ranks_df=daily_df,
         metrics_input=metrics_input,
     )
-    final_metrics: dict[str, tuple[float | None, float | None]] = {
-        name: (entry.participation_pct, entry.communication_pct)
-        for name, entry in daily_results[-1].per_delegate.items()
-    }
+    # Use period-level metrics, which cover every delegate active at any point. The last day's
+    # slice omits mid-period exiters, so compute_period_compensation would raise on them.
+    final_metrics = compute_period_metrics(window, delegates, metrics_input)
     return _required_step(
         "compute compensation",
         compute_period_compensation,
