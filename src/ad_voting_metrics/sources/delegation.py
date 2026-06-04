@@ -28,8 +28,8 @@ logger = logging.getLogger(__name__)
 V3_FACTORY_BLOCK = 22368737
 
 # Event topic hashes (keccak256 of "Lock(address,uint256)" and "Free(address,uint256)").
-LOCK_TOPIC = Web3.keccak(text="Lock(address,uint256)").hex()
-FREE_TOPIC = Web3.keccak(text="Free(address,uint256)").hex()
+LOCK_TOPIC = Web3.to_hex(Web3.keccak(text="Lock(address,uint256)"))
+FREE_TOPIC = Web3.to_hex(Web3.keccak(text="Free(address,uint256)"))
 
 # Reorg safety: only sync up to (block_number - this many).
 FINALITY_BLOCKS = 12

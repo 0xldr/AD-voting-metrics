@@ -24,6 +24,13 @@ def _period_stub(start: date, end: date) -> MonthPeriod:
     return cast("MonthPeriod", SimpleNamespace(start=start, end=end, year=start.year, month=start.month))
 
 
+def test_event_topics_are_0x_prefixed_32_byte_hashes():
+    """eth_getLogs rejects bare-hex topics; hexbytes>=1.0 .hex() drops the 0x prefix."""
+    for topic in (delegation.LOCK_TOPIC, delegation.FREE_TOPIC):
+        assert topic.startswith("0x")
+        assert len(topic) == 66  # "0x" + 32 bytes * 2 hex chars
+
+
 # ---------------------------------------------------------------------------
 # get_all_sky_delegated — event sync, cache load/save, daily series
 # ---------------------------------------------------------------------------
