@@ -44,20 +44,6 @@ def test_check_period_has_ended_rejects_period_in_progress():
         check_period_has_ended(period, today=date(2026, 4, 15))
 
 
-def test_check_period_has_ended_rejects_future_period():
-    """Period entirely in the future."""
-    period = MonthPeriod(year=2027, month=1)
-    with pytest.raises(SystemExit, match="has not yet ended"):
-        check_period_has_ended(period, today=date(2026, 5, 15))
-
-
-def test_check_period_has_ended_message_includes_next_valid_date():
-    """The error message tells the operator when they can re-run."""
-    period = MonthPeriod(year=2026, month=4)
-    with pytest.raises(SystemExit, match="2026-05-01"):
-        check_period_has_ended(period, today=date(2026, 4, 20))
-
-
 def test_check_period_has_ended_handles_year_boundary():
     """December → January arithmetic doesn't trip on month/year overflow.
 

@@ -4,20 +4,10 @@ from datetime import date
 from unittest.mock import MagicMock, patch
 
 import pandas as pd
-import pytest
 import responses
 
 from ad_voting_metrics.period import MonthPeriod
-from ad_voting_metrics.sources import http as http_module
 from ad_voting_metrics.sources import sky_executive
-
-
-@pytest.fixture(autouse=True)
-def _reset_session():
-    """Clear the cached requests.Session before and after every test in this module."""
-    http_module.get_session.cache_clear()
-    yield
-    http_module.get_session.cache_clear()
 
 
 # Helper for building sky_lookup dicts in sky_executive tests.

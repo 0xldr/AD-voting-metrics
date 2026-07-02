@@ -13,18 +13,9 @@ import pytest
 from hexbytes import HexBytes
 from web3.exceptions import ContractLogicError
 
-from ad_voting_metrics.sources import http as http_module
 from ad_voting_metrics.sources import sky_executive_onchain as onchain
 
 PENDING = "Pending verification"
-
-
-@pytest.fixture(autouse=True)
-def _reset_session():
-    """Clear the cached requests.Session before and after every test in this module."""
-    http_module.get_session.cache_clear()
-    yield
-    http_module.get_session.cache_clear()
 
 
 def _ts(d: date) -> int:
@@ -90,16 +81,16 @@ def _make_w3_with_slates(slate_addresses: list[str]) -> MagicMock:
     return w3
 
 
-def test_resolve_slate_walks_until_revert():
+def test_resolve_slate_walks_until_revert_and_lowercases():
     w3 = _make_w3_with_slates([
         "0x1111111111111111111111111111111111111111",
-        "0x2222222222222222222222222222222222222222",
+        "0xAABBccDDeeFF00112233445566778899AABBCCDD",  # mixed case from the RPC
         "0x3333333333333333333333333333333333333333",
     ])
     out = onchain._resolve_slate(w3, "0xabcd")
     assert out == [
         "0x1111111111111111111111111111111111111111",
-        "0x2222222222222222222222222222222222222222",
+        "0xaabbccddeeff00112233445566778899aabbccdd",
         "0x3333333333333333333333333333333333333333",
     ]
 
@@ -113,12 +104,6 @@ def test_resolve_slate_stops_at_zero_address():
     ])
     out = onchain._resolve_slate(w3, "0xabcd")
     assert out == ["0x1111111111111111111111111111111111111111"]
-
-
-def test_resolve_slate_returns_lowercased_addresses():
-    w3 = _make_w3_with_slates(["0xAABBccDDeeFF00112233445566778899AABBCCDD"])
-    out = onchain._resolve_slate(w3, "0xabcd")
-    assert out == ["0xaabbccddeeff00112233445566778899aabbccdd"]
 
 
 def test_resolve_slate_safety_cap_on_runaway():
@@ -282,100 +267,39 @@ def test_identify_pending_pairs_skips_missing_columns():
 # ---------------------------------------------------------------------------
 
 
-def _slate_with(spell_addr: str) -> dict:
-    return {"0xabcd": [spell_addr]}
-
-
-def test_delegate_voted_for_spell_no_events():
+@pytest.mark.parametrize(
+    ("events", "spell_address", "slate_cache", "expected"),
+    [
+        pytest.param([], "0xspell", {}, False, id="no events"),
+        pytest.param(
+            [("0xabcd", date(2026, 4, 3))], "0xspell", {"0xabcd": ["0xspell"]}, True, id="in-window matching slate"
+        ),
+        pytest.param(
+            [("0xabcd", date(2026, 3, 31))], "0xspell", {"0xabcd": ["0xspell"]}, False, id="event before start date"
+        ),
+        pytest.param(
+            [("0xabcd", date(2026, 4, 9))], "0xspell", {"0xabcd": ["0xspell"]}, False, id="event past 7-day deadline"
+        ),
+        pytest.param(
+            [("0xabcd", date(2026, 4, 3))], "0xspell", {"0xabcd": ["0xother"]}, False, id="slate lacks the spell"
+        ),
+        pytest.param(
+            [("0xabcd", date(2026, 4, 3))], "0xSPELL", {"0xabcd": ["0xspell"]}, True, id="address case-insensitive"
+        ),
+        pytest.param([("0xunknown", date(2026, 4, 3))], "0xspell", {}, False, id="uncached slate contains nothing"),
+    ],
+)
+def test_delegate_voted_for_spell(events, spell_address, slate_cache, expected):
+    """In-window slate membership decides the flip; window is [start, start + 7 days]."""
     assert (
         onchain._delegate_voted_for_spell(
-            events=[],
-            spell_address="0xspell",
+            events=events,
+            spell_address=spell_address,
             start_date=date(2026, 4, 1),
             deadline=date(2026, 4, 8),
-            slate_cache={},
+            slate_cache=slate_cache,
         )
-        is False
-    )
-
-
-def test_delegate_voted_for_spell_event_in_window_with_matching_slate():
-    assert (
-        onchain._delegate_voted_for_spell(
-            events=[("0xabcd", date(2026, 4, 3))],
-            spell_address="0xspell",
-            start_date=date(2026, 4, 1),
-            deadline=date(2026, 4, 8),
-            slate_cache=_slate_with("0xspell"),
-        )
-        is True
-    )
-
-
-def test_delegate_voted_for_spell_event_before_start_date_ignored():
-    assert (
-        onchain._delegate_voted_for_spell(
-            events=[("0xabcd", date(2026, 3, 31))],
-            spell_address="0xspell",
-            start_date=date(2026, 4, 1),
-            deadline=date(2026, 4, 8),
-            slate_cache=_slate_with("0xspell"),
-        )
-        is False
-    )
-
-
-def test_delegate_voted_for_spell_event_past_deadline_ignored():
-    """7-day cutoff: an otherwise-matching vote on day 8+ does not count."""
-    assert (
-        onchain._delegate_voted_for_spell(
-            events=[("0xabcd", date(2026, 4, 9))],  # 8 days after start
-            spell_address="0xspell",
-            start_date=date(2026, 4, 1),
-            deadline=date(2026, 4, 8),
-            slate_cache=_slate_with("0xspell"),
-        )
-        is False
-    )
-
-
-def test_delegate_voted_for_spell_slate_missing_spell_ignored():
-    assert (
-        onchain._delegate_voted_for_spell(
-            events=[("0xabcd", date(2026, 4, 3))],
-            spell_address="0xspell",
-            start_date=date(2026, 4, 1),
-            deadline=date(2026, 4, 8),
-            slate_cache={"0xabcd": ["0xother"]},
-        )
-        is False
-    )
-
-
-def test_delegate_voted_for_spell_address_case_insensitive():
-    assert (
-        onchain._delegate_voted_for_spell(
-            events=[("0xabcd", date(2026, 4, 3))],
-            spell_address="0xSPELL",
-            start_date=date(2026, 4, 1),
-            deadline=date(2026, 4, 8),
-            slate_cache={"0xabcd": ["0xspell"]},
-        )
-        is True
-    )
-
-
-def test_delegate_voted_for_spell_unknown_slate_ignored():
-    """A slate not in the cache is treated as containing nothing."""
-    assert (
-        onchain._delegate_voted_for_spell(
-            events=[("0xunknown", date(2026, 4, 3))],
-            spell_address="0xspell",
-            start_date=date(2026, 4, 1),
-            deadline=date(2026, 4, 8),
-            slate_cache={},
-        )
-        is False
+        is expected
     )
 
 
