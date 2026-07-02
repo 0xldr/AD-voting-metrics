@@ -305,7 +305,13 @@ def _read_finalize_workbook_data(
     daily_df = _required_step("read Daily Data", sheets.read_daily_data, workbook, period)
     logger.info("Daily Data has rank rows for %d days in %s", daily_df["Date"].nunique(), period)
 
-    participation_df = sheets.read_participation_for_window(workbook, window[0], window[1])
+    participation_df = _required_step(
+        "read window participation",
+        sheets.read_participation_for_window,
+        workbook,
+        window[0],
+        window[1],
+    )
     logger.info(
         "Window participation: %d (delegate, poll) entries across %d delegates",
         len(participation_df),
