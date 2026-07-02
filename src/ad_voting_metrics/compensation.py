@@ -20,10 +20,12 @@ Buffer columns (carry-in, payment, post-payment) are stubs returning 0.0.
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 
-from .eligibility import DailyEligibility
+from .eligibility import ELIGIBILITY_THRESHOLD, DailyEligibility
 from .period import MonthPeriod
 
-_BUDGET_FLOOR = 0.75
+# The modifier ramp starts at the same 75% the eligibility gate uses — one
+# governance parameter, defined once in eligibility.
+_BUDGET_FLOOR = ELIGIBILITY_THRESHOLD
 _BUDGET_CEILING = 0.95
 _RAMP_WIDTH = _BUDGET_CEILING - _BUDGET_FLOOR
 
