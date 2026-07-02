@@ -211,7 +211,7 @@ def load_delegates(path: Path) -> DelegatesConfig:
     return DelegatesConfig.model_validate(raw)
 
 
-def merge_with_api(
+def detect_roster_drift(
     yaml_config: DelegatesConfig,
     api_response: list[dict],
 ) -> list[str]:
@@ -302,7 +302,7 @@ def build_roster_for_period(
         try:
             api_response = api_fetcher()
             api_fetch_succeeded = True
-            warnings = merge_with_api(yaml_config, api_response)
+            warnings = detect_roster_drift(yaml_config, api_response)
         except Exception as e:  # noqa: BLE001 — api_fetcher is caller-supplied; any failure degrades to YAML-only
             warnings = [
                 (

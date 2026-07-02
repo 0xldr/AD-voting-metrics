@@ -25,7 +25,7 @@ SKY_EXECUTIVES_PAGE_SIZE = 100
 SKY_EXECUTIVES_PAGINATION_HARD_CAP = 10_000_000
 
 
-def get_executive_ids(period: MonthPeriod) -> list[dict]:
+def fetch_spells_for_period(period: MonthPeriod) -> list[dict]:
     """Fetch executive spells from vote.sky.money that occurred within the period.
 
     Returns:
@@ -58,7 +58,7 @@ def get_executive_ids(period: MonthPeriod) -> list[dict]:
     return spell_info
 
 
-def get_vote_executive_ids(
+def add_spell_vote_statuses(
     spell_info: list[dict],
     df: pd.DataFrame,
     sky_lookup: dict[tuple[str, date], float],
