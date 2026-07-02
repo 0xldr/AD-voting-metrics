@@ -229,7 +229,7 @@ def _sync_events(
 
     logger.info(
         "Synced %d new events across %d blocks; last_synced_block=%d",
-        sum(len(events) for events in cache["events"].values()),
+        sum(len(events) for events in events_by_contract.values()),
         len(new_blocks),
         safe_head,
     )
