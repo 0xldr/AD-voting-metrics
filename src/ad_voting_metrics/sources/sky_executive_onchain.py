@@ -77,8 +77,8 @@ DEFAULT_SLATE_CACHE_PATH = SLATE_CACHE_PATH
 def _load_slate_cache(path: Path) -> dict[str, list[str]]:
     """Load the slate-hash -> [executive addresses] cache from disk.
 
-    Returns:
-        The cache, with hashes and addresses lowercased; empty dict if the file doesn't exist.
+    Returns the cache, with hashes and addresses lowercased; empty dict if the file doesn't exist.
+
     """
     data = load_json_cache(path)
     return {k.lower(): [a.lower() for a in v] for k, v in data.items()}
@@ -103,10 +103,8 @@ def _resolve_slate(w3: Web3, slate_hash: str) -> list[str]:
       - Web3RPCError: provider rejected the call
       - ValueError: web3 raised on undecodable return data
 
-    Returns:
-        Lowercased executive addresses, in slate order. Empty list if
-        the slate is empty (which shouldn't happen for slates a delegate
-        has actually voted for).
+    Returns lowercased executive addresses, in slate order. Empty list if the slate is empty (which shouldn't happen
+    for slates a delegate has actually voted for).
     """
     contract = w3.eth.contract(
         address=Web3.to_checksum_address(CHIEF_ADDRESS),
@@ -166,8 +164,8 @@ def _fetch_vote_events(
     voters together, then groups them client-side by lowercased voter address. Voters with no events in the window get
     an empty list. web3's contract.events handles topic encoding and decoding.
 
-    Returns:
-        Lowercased voter address -> list of (slate_hash, event_date) tuples.
+    Returns lowercased voter address -> list of (slate_hash, event_date) tuples.
+
     """
     result: dict[str, list[tuple[str, date]]] = {v.lower(): [] for v in voters}
     if not voters:
@@ -208,9 +206,8 @@ def _identify_pending_pairs(
 ) -> dict[str, list[int]]:
     """Find the row indices in df where each spell column is "Pending verification".
 
-    Returns:
-        Mapping of spell address to the list of df row indices needing
-        on-chain verification.
+    Returns a mapping of spell address to the list of df row indices needing on-chain verification.
+
     """
     pending: dict[str, list[int]] = {}
     for spell_addr in spell_addresses:
@@ -248,8 +245,8 @@ def _flip_eligible_cells(
 ) -> int:
     """Mutate df: set Pending cells to "Yes" where a slate confirms the vote.
 
-    Returns:
-        The count of cells flipped.
+    Returns the count of cells flipped.
+
     """
     flipped = 0
     for spell in spell_info:

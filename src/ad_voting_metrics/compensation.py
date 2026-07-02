@@ -101,9 +101,8 @@ def _aggregate_daily_eligibility(
 ) -> tuple[dict[str, dict[int, int]], dict[str, tuple[int | None, int | None]]]:
     """Collect per-delegate level-day counts and (rank, level) on the final day.
 
-    Returns:
-        Tuple of (day_counts, end_state). day_counts maps name to {1: count, 2: count, 3: count}. end_state maps name to
-        (rank, assigned_level) from the period's last day.
+    Returns a tuple of (day_counts, end_state). day_counts maps name to {1: count, 2: count, 3: count}. end_state maps
+    name to (rank, assigned_level) from the period's last day.
     """
     day_counts: dict[str, dict[int, int]] = {}
     end_state: dict[str, tuple[int | None, int | None]] = {}
@@ -127,11 +126,7 @@ def _build_delegate_compensation(  # noqa: PLR0913 — six narrow args read clea
     days_in_period: int,
     config: CompensationConfig,
 ) -> DelegateCompensation:
-    """Build a single DelegateCompensation row from aggregated inputs.
-
-    Returns:
-        The DelegateCompensation row for `name`.
-    """
+    """Build a single DelegateCompensation row from aggregated inputs."""
     d1, d2, d3 = counts[1], counts[2], counts[3]
     entitlement = (
         (d1 / days_in_period) * config.l1_usds

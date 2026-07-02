@@ -140,11 +140,7 @@ def _compute_partial_results(
     daily_ranks: Mapping[str, int],
     period_metrics: Mapping[str, tuple[float | None, float | None]],
 ) -> dict[str, _PartialResult]:
-    """Combine each active delegate's precomputed period metrics with today's rank and YAML level.
-
-    Returns:
-        Mapping of delegate name to _PartialResult.
-    """
+    """Combine each active delegate's precomputed period metrics with today's rank and YAML level."""
     per_delegate_partial: dict[str, _PartialResult] = {}
     for delegate in active_delegates:
         p, c = period_metrics[delegate.name]
@@ -166,8 +162,7 @@ def _assign_l3_slots(
 ) -> tuple[int, set[str]]:
     """Determine L3 slot capacity and which candidates get slots.
 
-    Returns:
-        (l3_slots_available, set of delegate names assigned an L3 slot).
+    Returns (l3_slots_available, set of delegate names assigned an L3 slot).
 
     Raises:
         ValueError: if a rank tie spans the L3 slot cutoff.

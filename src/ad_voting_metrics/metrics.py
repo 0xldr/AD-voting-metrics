@@ -23,7 +23,7 @@ alignment timing and SKY balance during the voting window:
     script.
   - "Pending verification": spell vote recorded but not yet verified; also used in Communication Master for cells
     awaiting operator review.
-  - "Did Not Vote": derived value used in communication when participation = "No". Discountedfrom the communication
+  - "Did not vote": derived value used in communication when participation = "No". Discounted from the communication
     percentage. Only appears in communication contexts.
 
 ## Participation Percentage

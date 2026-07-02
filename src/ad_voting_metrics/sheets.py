@@ -183,9 +183,6 @@ def _open_required_tab(
 ) -> gspread.Worksheet:
     """Open the named tab or raise RuntimeError with an operator-friendly message.
 
-    Returns:
-        The worksheet.
-
     Raises:
         RuntimeError: if the tab doesn't exist.
     """
@@ -207,8 +204,8 @@ def _read_sheet_as_strings(worksheet: gspread.Worksheet) -> pd.DataFrame:
     Empty cells come through as "" rather than NaN; trailing all-blank rows and columns are dropped by
     gspread-dataframe.
 
-    Returns:
-        DataFrame with string cells, or empty DataFrame if the tab is empty.
+    Returns a DataFrame with string cells, or empty DataFrame if the tab is empty.
+
     """
     df = cast("pd.DataFrame", get_as_dataframe(worksheet, dtype=str, na_filter=False, header=0))
     df.fillna("", inplace=True)  # noqa: PD002 — keep DataFrame type concrete for downstream callers
@@ -220,8 +217,7 @@ def _coerce_date(value: date | datetime | None) -> str:
 
     None becomes empty string. Datetimes (and pd.Timestamp, which subclasses datetime) collapse to their date portion.
 
-    Returns:
-        The ISO date string, or empty string for None.
+
     """
     d = _to_date_value(value)
     return "" if d is None else d.isoformat()
@@ -230,9 +226,8 @@ def _coerce_date(value: date | datetime | None) -> str:
 def _metadata_by_id(poll_info: list[dict], spell_info: list[dict]) -> dict[str, dict]:
     """Index poll and spell records by stringified ID/address for O(1) lookup.
 
-    Returns:
-        Mapping of str(pollId) / str(address) to its record. Polls win an (unexpected) key collision, matching the
-        poll-first search order this replaces.
+    Returns a mapping of str(pollId) / str(address) to its record. Polls win an (unexpected) key collision, matching
+    the poll-first search order this replaces.
     """
     out: dict[str, dict] = {str(spell["address"]): spell for spell in spell_info}
     out.update({str(poll["pollId"]): poll for poll in poll_info})
@@ -254,8 +249,8 @@ def _existing_daily_data(worksheet: gspread.Worksheet) -> pd.DataFrame:
     Returns an empty DataFrame (with the expected columns) when the tab is empty, has an unrecognised header, or has no
     parseable rows. The caller can then treat it as a fresh write.
 
-    Returns:
-        DataFrame with columns Date (date), Delegate (str), Total Delegation (float), Rank (int).
+    Returns a DataFrame with columns Date (date), Delegate (str), Total Delegation (float), Rank (int).
+
     """
     df = _read_sheet_as_strings(worksheet)
     if df.empty or list(df.columns[: len(DAILY_DATA_COLUMNS)]) != list(DAILY_DATA_COLUMNS):
@@ -276,8 +271,8 @@ def _row_counts_by_date(frame: pd.DataFrame) -> dict[date, int]:
 
     Callers pass frames whose Date column already holds date objects (nulls, if any, are dropped by value_counts).
 
-    Returns:
-        Mapping of date to the number of rows on that date.
+    Returns a mapping of date to the number of rows on that date.
+
     """
     return {cast("date", d): int(n) for d, n in frame["Date"].value_counts().items()}
 
@@ -397,8 +392,8 @@ def _to_date_value(value: date | datetime | str | None) -> date | None:
 
     Strings are parsed as ISO dates; datetimes (incl. pd.Timestamp) collapse to their date portion; None stays None.
 
-    Returns:
-        date or None if value can't be parsed.
+    Returns date or None if value can't be parsed.
+
     """
     if value is None or (isinstance(value, float) and pd.isna(value)):
         return None
@@ -528,8 +523,8 @@ def _existing_comm_master(worksheet: gspread.Worksheet) -> pd.DataFrame:
     DataFrame with no columns; the writer detects this and seeds the
     header from the current roster.
 
-    Returns:
-        DataFrame indexed by Poll Id (string), or empty DataFrame.
+    Returns a DataFrame indexed by Poll Id (string), or empty DataFrame.
+
     """
     df = _read_sheet_as_strings(worksheet)
     if df.empty or "Poll Id" not in df.columns:
@@ -554,8 +549,8 @@ def _build_comm_defaults(
     Per-cell defaults follow the cross-reference rule for in-roster
     delegates; out-of-roster columns stay blank.
 
-    Returns:
-        DataFrame indexed by poll_id (string) with the given columns.
+    Returns a DataFrame indexed by poll_id (string) with the given columns.
+
     """
     df_by_delegate = df.set_index("Delegate Name")
     in_roster = set(df_by_delegate.index)
@@ -707,8 +702,7 @@ def _parse_poll_history_tab(worksheet: gspread.Worksheet, value_col_name: str) -
     Empty tabs and tabs without delegate columns return an empty DataFrame with the expected columns. Blank-poll-id rows
     and rows with unparseable Start Date are dropped.
 
-    Returns:
-        Long-form DataFrame.
+
     """
     wide = _read_sheet_as_strings(worksheet)
     out_cols = ["Delegate", "Poll Id", "Start Date", "End Date", "Title", value_col_name]
@@ -892,8 +886,8 @@ def _compensation_header_block(period_comp: "PeriodCompensation", total_final: f
 
     The total is precomputed in Python (no =SUM formula) so the tab is fully self-describing on its own.
 
-    Returns:
-        Eight rows, each padded to 8 columns.
+    Returns eight rows, each padded to 8 columns.
+
     """
     period = period_comp.period
     config = period_comp.config
@@ -924,8 +918,8 @@ def _compensation_header_block(period_comp: "PeriodCompensation", total_final: f
 def _compensation_data_dataframe(period_comp: "PeriodCompensation") -> pd.DataFrame:
     """Build the data table (one row per delegate) for the Compensation tab.
 
-    Returns:
-        DataFrame with COMPENSATION_COLUMNS in order.
+    Returns a DataFrame with COMPENSATION_COLUMNS in order.
+
     """
     rows = [
         {
