@@ -7,20 +7,18 @@ import pytest
 
 from ad_voting_metrics.eligibility import (
     ELIGIBILITY_THRESHOLD,
-    TOTAL_SLOTS,
     DelegateMetricsInput,
     compute_daily_eligibility,
     compute_period_metrics,
 )
 from ad_voting_metrics.roster import Delegate, LevelAssignment
 
+# Slot count used throughout these tests; production reads it from the workbook Config tab.
+TOTAL_SLOTS = 6
+
 # ---------------------------------------------------------------------------
 # Pinned constants
 # ---------------------------------------------------------------------------
-
-
-def test_total_slots_constant():
-    assert TOTAL_SLOTS == 6
 
 
 def test_eligibility_threshold_constant():
@@ -53,6 +51,7 @@ def _daily(
         delegates=delegates,
         daily_ranks=daily_ranks,
         period_metrics=period_metrics,
+        total_slots=TOTAL_SLOTS,
     )
 
 

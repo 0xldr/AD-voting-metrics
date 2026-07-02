@@ -117,29 +117,29 @@ def _ranks_by_day(daily_ranks_df: pd.DataFrame) -> dict[date, dict[str, int]]:
 
 def _compute_daily_results(
     period: MonthPeriod,
-    window: tuple[date, date],
     *,
     delegates: list[Delegate],
     daily_ranks_df: pd.DataFrame,
-    metrics_input: dict[str, DelegateMetricsInput],
+    period_metrics: dict[str, tuple[float | None, float | None]],
+    total_slots: int,
 ) -> list[DailyEligibility]:
     """Compute eligibility for each day in the period.
 
-    The 6-month metric window is constant across the period, so we compute (p_pct, c_pct) per delegate once via
-    `compute_period_metrics` and reuse it across every day. The only per-day inputs are the rank table and the
-    day's L3 slot competition.
+    The 6-month metric window is constant across the period, so the caller computes (p_pct, c_pct) per delegate once
+    via `compute_period_metrics` and passes it in for reuse across every day. The only per-day inputs are the rank
+    table and the day's L3 slot competition. `total_slots` comes from the workbook Config tab.
 
     Returns:
         List of DailyEligibility, one per day in period.start..period.end inclusive.
     """
     ranks_by_day = _ranks_by_day(daily_ranks_df)
-    period_metrics = compute_period_metrics(window, delegates, metrics_input)
     return [
         compute_daily_eligibility(
             day=day,
             delegates=delegates,
             daily_ranks=ranks_by_day.get(day, {}),
             period_metrics=period_metrics,
+            total_slots=total_slots,
         )
         for day in pd.date_range(period.start, period.end, freq="D").date
     ]
@@ -364,25 +364,31 @@ def _compute_period_compensation_for_window(
     """
     daily_df, participation_df, communication_df = workbook_data
     metrics_input = _build_metrics_input(delegates, participation_df, communication_df)
+    # Period-level metrics cover every delegate active at any point (the last day's slice omits
+    # mid-period exiters). Computed once and shared by daily eligibility and compensation.
+    period_metrics = _required_step(
+        "compute period metrics",
+        compute_period_metrics,
+        window,
+        delegates,
+        metrics_input,
+    )
     daily_results = _required_step(
         "compute eligibility",
         _compute_daily_results,
         period,
-        window,
         delegates=delegates,
         daily_ranks_df=daily_df,
-        metrics_input=metrics_input,
+        period_metrics=period_metrics,
+        total_slots=config.total_slots,
     )
-    # Use period-level metrics, which cover every delegate active at any point. The last day's
-    # slice omits mid-period exiters, so compute_period_compensation would raise on them.
-    final_metrics = compute_period_metrics(window, delegates, metrics_input)
     return _required_step(
         "compute compensation",
         compute_period_compensation,
         period=period,
         daily_eligibility=daily_results,
         config=config,
-        final_metrics=final_metrics,
+        final_metrics=period_metrics,
     )
 
 
