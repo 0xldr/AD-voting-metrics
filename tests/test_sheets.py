@@ -828,26 +828,22 @@ def test_participation_metadata_columns_pinned():
 
 
 # ---------------------------------------------------------------------------
-# Internal helpers — _lookup_poll_or_spell, _coerce_date
+# Internal helpers — _metadata_by_id, _coerce_date
 # ---------------------------------------------------------------------------
 
 
-def test_lookup_poll_or_spell_finds_poll():
-    poll_info = _make_poll_info()
-    result = sheets._lookup_poll_or_spell("12345", poll_info, [])
-    assert result is not None
-    assert result["title"] == "Approve SubDAO X"
+def test_metadata_by_id_finds_poll():
+    lookup = sheets._metadata_by_id(_make_poll_info(), [])
+    assert lookup["12345"]["title"] == "Approve SubDAO X"
 
 
-def test_lookup_poll_or_spell_finds_spell():
-    spell_info = _make_spell_info()
-    result = sheets._lookup_poll_or_spell("0xspell001", [], spell_info)
-    assert result is not None
-    assert result["title"] == "Spell: April risk adjustment"
+def test_metadata_by_id_finds_spell():
+    lookup = sheets._metadata_by_id([], _make_spell_info())
+    assert lookup["0xspell001"]["title"] == "Spell: April risk adjustment"
 
 
-def test_lookup_poll_or_spell_returns_none_when_missing():
-    assert sheets._lookup_poll_or_spell("nope", _make_poll_info(), _make_spell_info()) is None
+def test_metadata_by_id_missing_key_absent():
+    assert "nope" not in sheets._metadata_by_id(_make_poll_info(), _make_spell_info())
 
 
 @pytest.mark.parametrize(

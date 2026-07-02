@@ -223,30 +223,20 @@ def _coerce_date(value: date | datetime | None) -> str:
     Returns:
         The ISO date string, or empty string for None.
     """
-    if value is None:
-        return ""
-    if isinstance(value, datetime):
-        return value.date().isoformat()
-    return value.isoformat()
+    d = _to_date_value(value)
+    return "" if d is None else d.isoformat()
 
 
-def _lookup_poll_or_spell(
-    identifier: str,
-    poll_info: list[dict],
-    spell_info: list[dict],
-) -> dict | None:
-    """Find a poll or spell record by ID/address; compare as strings.
+def _metadata_by_id(poll_info: list[dict], spell_info: list[dict]) -> dict[str, dict]:
+    """Index poll and spell records by stringified ID/address for O(1) lookup.
 
     Returns:
-        The matching record, or None if no match.
+        Mapping of str(pollId) / str(address) to its record. Polls win an (unexpected) key collision, matching the
+        poll-first search order this replaces.
     """
-    for poll in poll_info:
-        if str(poll["pollId"]) == identifier:
-            return poll
-    for spell in spell_info:
-        if str(spell["address"]) == identifier:
-            return spell
-    return None
+    out: dict[str, dict] = {str(spell["address"]): spell for spell in spell_info}
+    out.update({str(poll["pollId"]): poll for poll in poll_info})
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -282,19 +272,14 @@ def _existing_daily_data(worksheet: gspread.Worksheet) -> pd.DataFrame:
 
 
 def _row_counts_by_date(frame: pd.DataFrame) -> dict[date, int]:
-    """Count rows per Date in a Daily Data frame, keyed by coerced date.
+    """Count rows per Date in a Daily Data frame.
 
-    Rows whose Date can't be coerced to a date are skipped.
+    Callers pass frames whose Date column already holds date objects (nulls, if any, are dropped by value_counts).
 
     Returns:
         Mapping of date to the number of rows on that date.
     """
-    out: dict[date, int] = {}
-    for d, n in frame.groupby("Date").size().items():
-        day = _to_date_value(d) if isinstance(d, (date, datetime, str)) else None
-        if day is not None:
-            out[day] = int(n)
-    return out
+    return {cast("date", d): int(n) for d, n in frame["Date"].value_counts().items()}
 
 
 def write_daily_data(
@@ -477,9 +462,10 @@ def build_participation_dataframe(
         return pd.DataFrame(columns=columns)
 
     df_by_delegate = df.set_index("Delegate Name")
+    metadata_by_id = _metadata_by_id(poll_info, spell_info)
     rows: list[dict] = []
     for poll_id in poll_columns:
-        metadata = _lookup_poll_or_spell(str(poll_id), poll_info, spell_info) or {}
+        metadata = metadata_by_id.get(str(poll_id), {})
         row: dict = {
             "Poll Id": str(poll_id),
             "Start Date": _coerce_date(metadata.get("startDate")),
@@ -573,10 +559,11 @@ def _build_comm_defaults(
     """
     df_by_delegate = df.set_index("Delegate Name")
     in_roster = set(df_by_delegate.index)
+    metadata_by_id = _metadata_by_id(poll_info, spell_info)
 
     rows: dict[str, dict] = {}
     for poll_id in poll_columns:
-        metadata = _lookup_poll_or_spell(poll_id, poll_info, spell_info) or {}
+        metadata = metadata_by_id.get(poll_id, {})
         row: dict = {
             "Start Date": _coerce_date(metadata.get("startDate")),
             "End Date": _coerce_date(metadata.get("endDate")),
