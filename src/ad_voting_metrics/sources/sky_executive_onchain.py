@@ -152,7 +152,12 @@ def _block_from_date(target: date) -> int:
         timeout=HTTP_TIMEOUT,
     )
     response.raise_for_status()
-    return int(response.json()["result"])
+    result = response.json()["result"]
+    # Blockscout wraps the block number in {"blockNumber": "..."}; the
+    # Etherscan-compatible form returns the number as a bare string.
+    if isinstance(result, dict):
+        result = result["blockNumber"]
+    return int(result)
 
 
 def _fetch_vote_events(
