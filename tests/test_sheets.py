@@ -30,12 +30,9 @@ from ad_voting_metrics.period import MonthPeriod
 # ---------------------------------------------------------------------------
 
 
-def test_scopes_are_sheets_and_drive():
-    """Sheets scope for cell I/O; Drive scope required for open_by_key."""
-    assert sheets.SCOPES == (
-        "https://www.googleapis.com/auth/spreadsheets",
-        "https://www.googleapis.com/auth/drive",
-    )
+def test_scopes_are_sheets_only():
+    """Sheets scope covers cell I/O and open_by_key; no Drive scope, keeping the grant minimal."""
+    assert sheets.SCOPES == ("https://www.googleapis.com/auth/spreadsheets",)
 
 
 # ---------------------------------------------------------------------------
