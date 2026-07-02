@@ -157,7 +157,9 @@ def _fetch_block_timestamps(
         if block_key in block_timestamps:
             continue
         try:
-            block_data = w3.eth.get_block(block_num)
+            # `timestamp` is NotRequired on BlockData per web3-stubs, but full
+            # blocks always carry it at runtime; widen to plain dict for access.
+            block_data = cast("dict[str, Any]", w3.eth.get_block(block_num))
         except Web3RPCError as e:
             msg = f"get_block({block_num}) failed: {e}"
             raise RuntimeError(msg) from e
