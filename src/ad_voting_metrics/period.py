@@ -21,25 +21,30 @@ class MonthPeriod:
     month: int
 
     def __post_init__(self) -> None:
-        """Normalize out-of-range months into adjacent years; reject pre-2022 years.
+        """Reject out-of-range months and pre-2022 years.
 
-        Constructing with month outside 1..12 rolls into the neighboring year (e.g. month=13 becomes the next January,
-        month=0 becomes the previous December).
+        Month arithmetic that crosses year boundaries goes through minus_months(), not the constructor.
 
         Raises:
-            ValueError: if the (normalized) year is before the project's lower bound.
+            ValueError: if month is outside 1..12 or year is before the project's lower bound.
         """
-        # Collapse (year, month) to a zero-based month index, then split it back out so
-        # an out-of-range month carries into the year (month=13 -> next Jan, month=0 -> prev Dec).
-        month_index = self.year * 12 + (self.month - 1)
-        norm_year, norm_month_zero = divmod(month_index, 12)
-        norm_month = norm_month_zero + 1
-        if (norm_year, norm_month) != (self.year, self.month):
-            object.__setattr__(self, "year", norm_year)
-            object.__setattr__(self, "month", norm_month)
+        if not 1 <= self.month <= 12:  # noqa: PLR2004 — calendar bounds
+            msg = f"month must be in 1..12, got {self.month}; use minus_months() for month arithmetic"
+            raise ValueError(msg)
         if self.year < YEAR_LOWER_BOUND:
             msg = f"year must be >= {YEAR_LOWER_BOUND}, got {self.year}"
             raise ValueError(msg)
+
+    def minus_months(self, n: int) -> "MonthPeriod":
+        """Return the MonthPeriod n calendar months before this one (negative n moves forward).
+
+        A shift landing before the project's year lower bound raises ValueError from the constructor.
+
+        Returns:
+            The shifted MonthPeriod.
+        """
+        year, month_zero = divmod(self.year * 12 + (self.month - 1) - n, 12)
+        return MonthPeriod(year=year, month=month_zero + 1)
 
     @property
     def start(self) -> date:

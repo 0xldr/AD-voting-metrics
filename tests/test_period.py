@@ -13,20 +13,11 @@ from ad_voting_metrics.period import MonthPeriod
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize(
-    ("year", "month", "expected"),
-    [
-        (2026, 13, (2027, 1)),  # rolls into next January
-        (2026, 0, (2025, 12)),  # rolls into previous December
-        (2026, -1, (2025, 11)),
-        (2026, 24, (2027, 12)),
-        (2026, 25, (2028, 1)),
-    ],
-)
-def test_out_of_range_month_normalizes_into_adjacent_year(year, month, expected):
-    """MonthPeriod wraps over/underflow months into neighboring years."""
-    p = MonthPeriod(year=year, month=month)
-    assert (p.year, p.month) == expected
+@pytest.mark.parametrize("month", [13, 0, -1, 24])
+def test_out_of_range_month_rejected(month):
+    """The constructor doesn't do month arithmetic; out-of-range months are errors."""
+    with pytest.raises(ValueError, match=r"month must be in 1\.\.12"):
+        MonthPeriod(year=2026, month=month)
 
 
 def test_unreasonable_year_rejected():
@@ -34,10 +25,25 @@ def test_unreasonable_year_rejected():
         MonthPeriod(year=1800, month=4)
 
 
-def test_normalization_can_push_year_below_lower_bound():
-    """A wraparound that crosses the YEAR_LOWER_BOUND boundary is rejected."""
+@pytest.mark.parametrize(
+    ("year", "month", "n", "expected"),
+    [
+        (2026, 4, 5, (2025, 11)),  # the 6-month-window case
+        (2026, 4, 0, (2026, 4)),
+        (2026, 1, 1, (2025, 12)),  # crosses a year boundary
+        (2026, 4, 24, (2024, 4)),
+        (2026, 4, -9, (2027, 1)),  # negative n moves forward
+    ],
+)
+def test_minus_months(year, month, n, expected):
+    p = MonthPeriod(year=year, month=month).minus_months(n)
+    assert (p.year, p.month) == expected
+
+
+def test_minus_months_below_year_lower_bound_rejected():
+    """A shift that crosses the YEAR_LOWER_BOUND boundary is rejected."""
     with pytest.raises(ValueError, match="year must be"):
-        MonthPeriod(year=2022, month=-30)
+        MonthPeriod(year=2022, month=6).minus_months(12)
 
 
 def test_far_future_year_accepted_at_type_level():
