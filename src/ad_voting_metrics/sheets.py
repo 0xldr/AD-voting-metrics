@@ -27,12 +27,9 @@ from .period import MonthPeriod
 if TYPE_CHECKING:
     from .compensation import PeriodCompensation
 
-# Scopes required to read/write spreadsheets and open them by ID. The Drive
-# scope is needed because gspread uses Drive APIs for open_by_key.
-SCOPES = (
-    "https://www.googleapis.com/auth/spreadsheets",
-    "https://www.googleapis.com/auth/drive",
-)
+# Scope required to read/write spreadsheets opened by ID. open_by_key uses
+# the Sheets API only; Drive scopes are needed only for open-by-title/listing.
+SCOPES = ("https://www.googleapis.com/auth/spreadsheets",)
 
 
 # ---------------------------------------------------------------------------
@@ -339,7 +336,9 @@ def write_daily_data(
     merged["Date"] = merged["Date"].apply(_coerce_date)
 
     clear_tab(worksheet)
-    set_with_dataframe(worksheet, merged, include_index=False, include_column_header=True, resize=False)
+    set_with_dataframe(
+        worksheet, merged, include_index=False, include_column_header=True, resize=False, allow_formulas=False
+    )
     return worksheet
 
 
@@ -488,7 +487,9 @@ def write_participation_raw_data(
     )
 
     clear_tab(worksheet)
-    set_with_dataframe(worksheet, out_df, include_index=False, include_column_header=True, resize=False)
+    set_with_dataframe(
+        worksheet, out_df, include_index=False, include_column_header=True, resize=False, allow_formulas=False
+    )
     return worksheet
 
 
@@ -663,7 +664,9 @@ def write_communication_master(
     out = merged.reset_index()
 
     clear_tab(worksheet)
-    set_with_dataframe(worksheet, out, include_index=False, include_column_header=True, resize=False)
+    set_with_dataframe(
+        worksheet, out, include_index=False, include_column_header=True, resize=False, allow_formulas=False
+    )
     return worksheet
 
 
@@ -964,5 +967,6 @@ def write_compensation_tab(
         include_index=False,
         include_column_header=True,
         resize=False,
+        allow_formulas=False,
     )
     return worksheet
