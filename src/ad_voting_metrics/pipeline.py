@@ -23,6 +23,7 @@ from web3.exceptions import Web3Exception
 from . import sheets
 from .compensation import CompensationConfig, PeriodCompensation, compute_period_compensation
 from .eligibility import DailyEligibility, DelegateMetricsInput, compute_daily_eligibility, compute_period_metrics
+from .paths import OUTPUT_DIR, RECONCILIATION_LOG_PATH, YAML_PATH
 from .period import MonthPeriod
 from .reconciliation import build_entry, write_entry
 from .roster import Delegate, build_roster_for_period, to_dataframe
@@ -36,12 +37,6 @@ T = TypeVar("T")
 # Per-period workbook state read out of the Compensation Sheet for `finalize`.
 # All three DataFrames are read directly from the workbook by sheets.read_*.
 _WorkbookData: TypeAlias = tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]
-
-# Locate data and output directories relative to the repo root.
-REPO_ROOT = Path(__file__).resolve().parent.parent.parent
-OUTPUT_DIR = REPO_ROOT / "output_data"
-YAML_PATH = REPO_ROOT / "delegates.yaml"
-RECONCILIATION_LOG_PATH = OUTPUT_DIR / "reconciliation"
 
 
 def _required_step(description: str, fn: Callable[..., T], *args: object, **kwargs: object) -> T:
