@@ -88,9 +88,11 @@ def _build_metrics_input(
     )
     merged["Communication Status"] = merged["Communication Status"].fillna("")
 
+    rows_by_delegate = dict(tuple(merged.groupby("Delegate")))
+    empty = merged.iloc[0:0]
     metrics_input: dict[str, DelegateMetricsInput] = {}
     for delegate in delegates:
-        rows = merged[merged["Delegate"] == delegate.name]
+        rows = rows_by_delegate.get(delegate.name, empty)
         metrics_input[delegate.name] = DelegateMetricsInput(
             poll_starts=rows["Start Date"].tolist(),
             participation_statuses=rows["Participation Status"].tolist(),
@@ -313,7 +315,7 @@ def _window_start_for_period(period: MonthPeriod) -> date:
 
     For April 2026 (month=4): start is November 1, 2025.
     """
-    return MonthPeriod(year=period.year, month=period.month - 5).start
+    return period.minus_months(5).start
 
 
 def _read_finalize_workbook_data(
