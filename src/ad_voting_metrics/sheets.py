@@ -144,11 +144,6 @@ def get_or_create_tab(
         return workbook.add_worksheet(title=title, rows=rows, cols=cols)
 
 
-def clear_tab(worksheet: gspread.Worksheet) -> None:
-    """Wipe all cell values in the worksheet, leaving formatting intact."""
-    worksheet.clear()
-
-
 # Local pre-clear backups of workbook-wide tabs. Module-level (not the paths
 # constant directly) so tests can redirect it to a tmp dir.
 BACKUP_DIR = _DEFAULT_BACKUP_DIR
@@ -349,7 +344,7 @@ def write_daily_data(
 
     if not existing.empty:
         _backup_tab_before_clear(existing, DAILY_DATA_TAB_TITLE)
-    clear_tab(worksheet)
+    worksheet.clear()
     set_with_dataframe(
         worksheet, merged, include_index=False, include_column_header=True, resize=False, allow_formulas=False
     )
@@ -501,7 +496,7 @@ def write_participation_raw_data(
         cols=max(len(out_df.columns), len(PARTICIPATION_METADATA_COLUMNS) + 1),
     )
 
-    clear_tab(worksheet)
+    worksheet.clear()
     set_with_dataframe(
         worksheet, out_df, include_index=False, include_column_header=True, resize=False, allow_formulas=False
     )
@@ -681,7 +676,7 @@ def write_communication_master(
 
     if not existing.empty:
         _backup_tab_before_clear(existing.reset_index(), COMMUNICATION_MASTER_TAB_TITLE)
-    clear_tab(worksheet)
+    worksheet.clear()
     set_with_dataframe(
         worksheet, out, include_index=False, include_column_header=True, resize=False, allow_formulas=False
     )
@@ -870,17 +865,6 @@ def read_config(workbook: gspread.Spreadsheet) -> "CompensationConfig":
 _LEVEL_LABELS: dict[int | None, str] = {1: "Level 1", 2: "Level 2", 3: "Level 3"}
 
 
-def _format_pct(pct: float | None) -> str | float:
-    """Format a fractional pct for the Compensation tab.
-
-    Returns:
-        The float unchanged for numeric values, or "No Data" for None.
-    """
-    if pct is None:
-        return "No Data"
-    return pct
-
-
 def _compensation_header_block(period_comp: "PeriodCompensation", total_final: float) -> list[list[object]]:
     """Build rows 1-8 of the Compensation tab.
 
@@ -924,8 +908,8 @@ def _compensation_data_dataframe(period_comp: "PeriodCompensation") -> pd.DataFr
     rows = [
         {
             "Delegate": r.name,
-            "Participation 6-month %": _format_pct(r.participation_pct),
-            "Communication 6-month %": _format_pct(r.communication_pct),
+            "Participation 6-month %": "No Data" if r.participation_pct is None else r.participation_pct,
+            "Communication 6-month %": "No Data" if r.communication_pct is None else r.communication_pct,
             "Metrics Modifier": r.metrics_modifier,
             "Ranked During Month?": _LEVEL_LABELS.get(r.level_at_period_end, "No"),
             "Days As Ranked": r.days_as_l1 + r.days_as_l2 + r.days_as_l3,
@@ -975,7 +959,7 @@ def write_compensation_tab(
         cols=len(COMPENSATION_COLUMNS),
     )
 
-    clear_tab(worksheet)
+    worksheet.clear()
     worksheet.update(values=header_block, range_name="A1:H8")
     set_with_dataframe(
         worksheet,

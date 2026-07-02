@@ -66,9 +66,6 @@ _CHIEF_ABI = [
     },
 ]
 
-DEFAULT_SLATE_CACHE_PATH = SLATE_CACHE_PATH
-
-
 # ---------------------------------------------------------------------------
 # Slate cache
 # ---------------------------------------------------------------------------
@@ -300,7 +297,7 @@ def resolve_pending_executive_votes(
             return df
         w3 = Web3(Web3.HTTPProvider(rpc_url))
 
-    cache_path = cache_path or DEFAULT_SLATE_CACHE_PATH
+    cache_path = cache_path or SLATE_CACHE_PATH
     slate_cache = _load_slate_cache(cache_path)
     initial_cache_size = len(slate_cache)
 
