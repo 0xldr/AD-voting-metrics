@@ -74,8 +74,10 @@ def _fetch_event_logs(
 ) -> tuple[dict[str, list[list[Any]]], set[int]]:
     """Fetch Lock/Free logs across a block range using adaptive chunking.
 
-    Starts at INITIAL_CHUNK_BLOCKS; on an eth_getLogs range/size error, halves the
-    window and retries down to MIN_CHUNK_BLOCKS.
+    Both event types are fetched in a single eth_getLogs call per chunk (an OR-filter on topic0) and signed by topic
+    afterwards. Chunks start at INITIAL_CHUNK_BLOCKS; on an eth_getLogs range/size error, the window halves and
+    retries down to MIN_CHUNK_BLOCKS. A size that worked carries over to subsequent chunks so a provider with a low
+    limit isn't re-probed on every window.
 
     Returns:
         Tuple of (events_by_contract, new_blocks). events_by_contract maps a
@@ -91,22 +93,16 @@ def _fetch_event_logs(
     new_blocks: set[int] = set()
 
     block = from_block
+    chunk_size = INITIAL_CHUNK_BLOCKS
     while block <= safe_head:
-        chunk_size = INITIAL_CHUNK_BLOCKS
         while True:
             to_block = min(block + chunk_size - 1, safe_head)
             try:
-                logs_lock = w3.eth.get_logs({
+                logs = w3.eth.get_logs({
                     "fromBlock": block,
                     "toBlock": to_block,
                     "address": contracts_checksummed,
-                    "topics": [LOCK_TOPIC],
-                })
-                logs_free = w3.eth.get_logs({
-                    "fromBlock": block,
-                    "toBlock": to_block,
-                    "address": contracts_checksummed,
-                    "topics": [FREE_TOPIC],
+                    "topics": [[LOCK_TOPIC, FREE_TOPIC]],
                 })
             except Web3RPCError as e:
                 if chunk_size <= MIN_CHUNK_BLOCKS:
@@ -122,15 +118,12 @@ def _fetch_event_logs(
                 )
                 continue
 
-            for log in logs_lock:
+            for log in logs:
                 contract_lower = log["address"].lower()
                 wad = Web3.to_int(log["data"])
+                if Web3.to_hex(log["topics"][0]) == FREE_TOPIC:
+                    wad = -wad
                 events_by_contract.setdefault(contract_lower, []).append([log["blockNumber"], str(wad)])
-                new_blocks.add(log["blockNumber"])
-            for log in logs_free:
-                contract_lower = log["address"].lower()
-                wad = Web3.to_int(log["data"])
-                events_by_contract.setdefault(contract_lower, []).append([log["blockNumber"], str(-wad)])
                 new_blocks.add(log["blockNumber"])
 
             block = to_block + 1
@@ -146,24 +139,40 @@ def _fetch_block_timestamps(
 ) -> dict[str, int]:
     """Fetch UNIX timestamps for any blocks not already in block_timestamps.
 
+    Missing blocks are requested in a single JSON-RPC batch; providers that reject batch requests fall back to one
+    get_block call per block.
+
     Returns:
         The block_timestamps dict, extended with newly fetched entries.
 
     Raises:
-        RuntimeError: if a get_block call fails.
+        RuntimeError: if a sequential get_block call fails.
     """
-    for block_num in sorted(blocks):
-        block_key = str(block_num)
-        if block_key in block_timestamps:
-            continue
-        try:
+    missing = [b for b in sorted(blocks) if str(b) not in block_timestamps]
+    if not missing:
+        return block_timestamps
+
+    try:
+        with w3.batch_requests() as batch:
+            for block_num in missing:
+                batch.add(w3.eth.get_block(block_num))
+            blocks_data = batch.execute()
+    except (Web3RPCError, ValueError) as e:
+        logger.debug("Batched get_block failed (%s); falling back to sequential fetches", e)
+    else:
+        for block_num, batched_block in zip(missing, blocks_data, strict=True):
             # `timestamp` is NotRequired on BlockData per web3-stubs, but full
             # blocks always carry it at runtime; widen to plain dict for access.
-            block_data = cast("dict[str, Any]", w3.eth.get_block(block_num))
+            block_timestamps[str(block_num)] = cast("dict[str, Any]", batched_block)["timestamp"]
+        return block_timestamps
+
+    for block_num in missing:
+        try:
+            fetched_block = cast("dict[str, Any]", w3.eth.get_block(block_num))
         except Web3RPCError as e:
             msg = f"get_block({block_num}) failed: {e}"
             raise RuntimeError(msg) from e
-        block_timestamps[block_key] = block_data["timestamp"]
+        block_timestamps[str(block_num)] = fetched_block["timestamp"]
     return block_timestamps
 
 
