@@ -29,6 +29,9 @@ logger = logging.getLogger(__name__)
 V3_FACTORY_BLOCK = 22368737
 
 # Event topic hashes (keccak256 of "Lock(address,uint256)" and "Free(address,uint256)").
+# Raw eth_getLogs with hand-built topics (rather than ABI-based contract.events.X.get_logs,
+# as sky_executive_onchain uses) because one raw call filters across every delegate contract
+# at once; ContractEvent.get_logs binds to a single contract address.
 LOCK_TOPIC = Web3.to_hex(Web3.keccak(text="Lock(address,uint256)"))
 FREE_TOPIC = Web3.to_hex(Web3.keccak(text="Free(address,uint256)"))
 
@@ -38,9 +41,6 @@ FINALITY_BLOCKS = 12
 # Adaptive getLogs chunking: start here, halve on range error down to MIN.
 INITIAL_CHUNK_BLOCKS = 100_000
 MIN_CHUNK_BLOCKS = 2_000
-
-DEFAULT_CACHE_PATH = DELEGATION_CACHE_PATH
-
 
 # ---------------------------------------------------------------------------
 # Cache load/save
@@ -176,7 +176,7 @@ def _sync_events(
     w3: Web3,
     contracts: list[str],
     *,
-    cache_path: Path = DEFAULT_CACHE_PATH,
+    cache_path: Path = DELEGATION_CACHE_PATH,
     rebuild: bool = False,
 ) -> dict[str, Any]:
     """Fetch Lock/Free events from the chain, update cache, return updated cache.
@@ -362,7 +362,7 @@ def get_all_sky_delegated(
             )
         w3 = Web3(Web3.HTTPProvider(rpc_url))
 
-    cache_path = cache_path or DEFAULT_CACHE_PATH
+    cache_path = cache_path or DELEGATION_CACHE_PATH
 
     logger.info("Syncing delegation events%s...", " (rebuild)" if rebuild else "")
     cache = _sync_events(w3, contracts, cache_path=cache_path, rebuild=rebuild)
@@ -446,7 +446,7 @@ def read_sync_state(cache_path: Path | None = None) -> dict[str, Any]:
     Returns:
         Dict with keys: last_synced_block, factory_block.
     """
-    cache_path = cache_path or DEFAULT_CACHE_PATH
+    cache_path = cache_path or DELEGATION_CACHE_PATH
     cache = _load_cache(cache_path)
     return {
         "last_synced_block": cache.get("last_synced_block", V3_FACTORY_BLOCK),

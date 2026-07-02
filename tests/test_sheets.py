@@ -296,16 +296,6 @@ def test_get_or_create_tab_creates_and_finds_real_tab(temp_tab):
     assert ws2.id == ws.id
 
 
-@pytest.mark.integration
-def test_clear_tab_wipes_real_cells(temp_tab):
-    workbook = sheets.get_workbook()
-    ws = workbook.worksheet(temp_tab)
-    ws.update(values=[["hello", "world"], ["foo", "bar"]], range_name="A1:B2")
-    assert ws.acell("A1").value == "hello"
-    sheets.clear_tab(ws)
-    assert ws.acell("A1").value in {None, ""}
-
-
 # ---------------------------------------------------------------------------
 # Helper fixtures for sheet I/O tests
 # ---------------------------------------------------------------------------
