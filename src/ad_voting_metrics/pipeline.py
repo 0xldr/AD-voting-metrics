@@ -259,25 +259,25 @@ def run_fetch(args: argparse.Namespace) -> None:
         logger.warning(warning)
     logger.info("Roster has %d delegates active during %s", len(delegates), period)
 
-    df = to_dataframe(delegates)
+    metrics = to_dataframe(delegates)
 
     logger.info("Getting RANKING...")
-    df_sky, df_ranking = _build_sky_and_ranking_frames(df, period, rebuild=args.rebuild)
+    df_sky, df_ranking = _build_sky_and_ranking_frames(metrics, period, rebuild=args.rebuild)
     sky_lookup = delegation.build_sky_lookup(df_sky)
 
     logger.info("Getting POLL IDS...")
     poll_info = sky_polling.fetch_polls_for_period(period)
     logger.info("Getting VOTE FROM POLLS...")
-    df = sky_polling.add_poll_vote_statuses(poll_info, df, sky_lookup, current_datetime=datetime.now(UTC))
+    metrics = sky_polling.add_poll_vote_statuses(poll_info, metrics, sky_lookup, current_datetime=datetime.now(UTC))
 
     logger.info("Getting SPELL addresses...")
     spell_info = sky_executive.fetch_spells_for_period(period)
     logger.info("Getting VOTE FROM SPELL...")
-    df = sky_executive.add_spell_vote_statuses(spell_info, df, sky_lookup)
+    metrics = sky_executive.add_spell_vote_statuses(spell_info, metrics, sky_lookup)
 
     logger.info("Verifying Pending executive votes on-chain...")
     try:
-        df = sky_executive_onchain.resolve_pending_executive_votes(df, spell_info)
+        metrics = sky_executive_onchain.resolve_pending_executive_votes(metrics, spell_info)
     except (requests.exceptions.RequestException, Web3Exception):
         # Transient network/RPC failures are tolerable: leave cells Pending for
         # operator adjudication. Anything else (schema drift, decode/logic bugs)
@@ -285,8 +285,8 @@ def run_fetch(args: argparse.Namespace) -> None:
         # silently no-op'ing every time.
         logger.exception("On-chain executive-vote verification failed; leaving Pending cells as-is")
 
-    output_files = _write_fetch_csvs(df, df_sky, poll_info, spell_info)
-    _write_fetch_workbook_tabs(period, df, df_ranking, poll_info, spell_info)
+    output_files = _write_fetch_csvs(metrics, df_sky, poll_info, spell_info)
+    _write_fetch_workbook_tabs(period, metrics, df_ranking, poll_info, spell_info)
 
     entry = build_entry(
         period=period,
