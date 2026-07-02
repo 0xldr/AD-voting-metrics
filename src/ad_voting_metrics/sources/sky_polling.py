@@ -20,12 +20,12 @@ SKY_POLL_ID_URL = "https://vote.sky.money/api/polling/tally"
 # The API's default page size for the all-polls endpoint.
 SKY_POLL_PAGE_SIZE = 30
 
-# Max concurrent voter-list fetches in get_vote_poll_ids. vote.sky.money
+# Max concurrent voter-list fetches in add_poll_vote_statuses. vote.sky.money
 # tolerates this comfortably; raising it gives diminishing returns.
 _POLL_VOTER_FETCH_CONCURRENCY = 8
 
 
-def get_poll_ids(period: MonthPeriod) -> list[dict]:
+def fetch_polls_for_period(period: MonthPeriod) -> list[dict]:
     """Fetch polls from vote.sky.money that started within the period.
 
     Each poll has startDate and endDate normalized to `date` objects.
@@ -85,7 +85,7 @@ def _fetch_poll_voters(poll: dict) -> tuple[int, set[str]]:
     return poll["pollId"], {vote["voter"].lower() for vote in data.get("votesByAddress", [])}
 
 
-def get_vote_poll_ids(
+def add_poll_vote_statuses(
     poll_info: list[dict],
     df: pd.DataFrame,
     sky_lookup: dict[tuple[str, date], float],

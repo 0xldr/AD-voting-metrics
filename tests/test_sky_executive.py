@@ -26,7 +26,7 @@ def _sky_lookup(rows: list[tuple[str, date, float]]) -> dict[tuple[str, date], f
 
 
 # ---------------------------------------------------------------------------
-# get_vote_executive_ids — per-spell vote status, supporter-set normalization
+# add_spell_vote_statuses — per-spell vote status, supporter-set normalization
 # ---------------------------------------------------------------------------
 
 
@@ -43,7 +43,7 @@ def _mock_executive_supporters_response(supporters_by_spell: dict[str, list[str]
     return response
 
 
-def test_get_vote_executive_ids_adds_column_per_spell():
+def test_add_spell_vote_statuses_adds_column_per_spell():
     """Each spell in spell_info gets its own column on df, keyed by spell address."""
     df = pd.DataFrame([
         {"Delegate Name": "Alice", "Delegate Contract": "0xaaa", "Start Date": "2024-01-01"},
@@ -56,13 +56,13 @@ def test_get_vote_executive_ids_adds_column_per_spell():
 
     with patch("ad_voting_metrics.sources.sky_executive.get_session") as mock_session:
         mock_session.return_value.get.return_value = _mock_executive_supporters_response({})
-        result = sky_executive.get_vote_executive_ids(spell_info, df, sky_lookup)
+        result = sky_executive.add_spell_vote_statuses(spell_info, df, sky_lookup)
 
     assert "0xspell1" in result.columns
     assert "0xspell2" in result.columns
 
 
-def test_get_vote_executive_ids_supporter_with_sky_returns_yes():
+def test_add_spell_vote_statuses_supporter_with_sky_returns_yes():
     """Delegate in supporters + non-zero SKY on startDate → 'Yes'."""
     df = pd.DataFrame([
         {"Delegate Name": "Alice", "Delegate Contract": "0xaaa", "Start Date": "2024-01-01"},
@@ -74,12 +74,12 @@ def test_get_vote_executive_ids_supporter_with_sky_returns_yes():
         mock_session.return_value.get.return_value = _mock_executive_supporters_response(
             {"0xspell1": ["0xaaa"]},
         )
-        result = sky_executive.get_vote_executive_ids(spell_info, df, sky_lookup)
+        result = sky_executive.add_spell_vote_statuses(spell_info, df, sky_lookup)
 
     assert result.loc[0, "0xspell1"] == "Yes"
 
 
-def test_get_vote_executive_ids_not_supporter_with_sky_returns_pending():
+def test_add_spell_vote_statuses_not_supporter_with_sky_returns_pending():
     """Delegate NOT in supporters + non-zero SKY on startDate → 'Pending verification'."""
     df = pd.DataFrame([
         {"Delegate Name": "Alice", "Delegate Contract": "0xaaa", "Start Date": "2024-01-01"},
@@ -91,12 +91,12 @@ def test_get_vote_executive_ids_not_supporter_with_sky_returns_pending():
         mock_session.return_value.get.return_value = _mock_executive_supporters_response(
             {"0xspell1": []},  # no supporters
         )
-        result = sky_executive.get_vote_executive_ids(spell_info, df, sky_lookup)
+        result = sky_executive.add_spell_vote_statuses(spell_info, df, sky_lookup)
 
     assert result.loc[0, "0xspell1"] == "Pending verification"
 
 
-def test_get_vote_executive_ids_zero_sky_returns_no_delegated_sky():
+def test_add_spell_vote_statuses_zero_sky_returns_no_delegated_sky():
     """SKY balance is 0 on startDate → 'No Delegated SKY'."""
     df = pd.DataFrame([
         {"Delegate Name": "Alice", "Delegate Contract": "0xaaa", "Start Date": "2024-01-01"},
@@ -108,12 +108,12 @@ def test_get_vote_executive_ids_zero_sky_returns_no_delegated_sky():
         mock_session.return_value.get.return_value = _mock_executive_supporters_response(
             {"0xspell1": ["0xaaa"]},  # delegate IS a supporter, but no SKY
         )
-        result = sky_executive.get_vote_executive_ids(spell_info, df, sky_lookup)
+        result = sky_executive.add_spell_vote_statuses(spell_info, df, sky_lookup)
 
     assert result.loc[0, "0xspell1"] == "No Delegated SKY"
 
 
-def test_get_vote_executive_ids_not_started_if_spell_started_before_delegate():
+def test_add_spell_vote_statuses_not_started_if_spell_started_before_delegate():
     """spell startDate < delegate Start Date → 'Not Started' (overrides everything)."""
     df = pd.DataFrame([
         {"Delegate Name": "Alice", "Delegate Contract": "0xaaa", "Start Date": "2026-05-01"},
@@ -125,12 +125,12 @@ def test_get_vote_executive_ids_not_started_if_spell_started_before_delegate():
         mock_session.return_value.get.return_value = _mock_executive_supporters_response(
             {"0xspell1": ["0xaaa"]},
         )
-        result = sky_executive.get_vote_executive_ids(spell_info, df, sky_lookup)
+        result = sky_executive.add_spell_vote_statuses(spell_info, df, sky_lookup)
 
     assert result.loc[0, "0xspell1"] == "Not Started"
 
 
-def test_get_vote_executive_ids_normalizes_supporter_address_case():
+def test_add_spell_vote_statuses_normalizes_supporter_address_case():
     """Mixed-case supporter addresses from the API are lowercased at the boundary.
 
     The API may return supporter addresses in any case (the spells list
@@ -148,13 +148,13 @@ def test_get_vote_executive_ids_normalizes_supporter_address_case():
         mock_session.return_value.get.return_value = _mock_executive_supporters_response(
             {"0xspell1": ["0xAAA"]},  # API returns mixed-case
         )
-        result = sky_executive.get_vote_executive_ids(spell_info, df, sky_lookup)
+        result = sky_executive.add_spell_vote_statuses(spell_info, df, sky_lookup)
 
     # Despite API casing mismatch, the boundary-lowercase makes this work.
     assert result.loc[0, "0xspell1"] == "Yes"
 
 
-def test_get_vote_executive_ids_empty_spell_info_leaves_df_unchanged():
+def test_add_spell_vote_statuses_empty_spell_info_leaves_df_unchanged():
     """No spells → df is returned unchanged and the supporters HTTP call is skipped."""
     df = pd.DataFrame([
         {"Delegate Name": "Alice", "Delegate Contract": "0xaaa", "Start Date": "2024-01-01"},
@@ -163,14 +163,14 @@ def test_get_vote_executive_ids_empty_spell_info_leaves_df_unchanged():
     original_columns = list(df.columns)
 
     with patch("ad_voting_metrics.sources.sky_executive.get_session") as mock_session:
-        result = sky_executive.get_vote_executive_ids([], df, sky_lookup)
+        result = sky_executive.add_spell_vote_statuses([], df, sky_lookup)
 
     assert list(result.columns) == original_columns
     mock_session.return_value.get.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
-# get_executive_ids — pagination and date filtering against vote.sky.money
+# fetch_spells_for_period — pagination and date filtering against vote.sky.money
 # ---------------------------------------------------------------------------
 
 
@@ -180,7 +180,7 @@ def _executive_dict(address: str, date_iso: str, title: str = "Test spell") -> d
 
 
 @responses.activate
-def test_get_executive_ids_filters_to_period_and_lowercases_address():
+def test_fetch_spells_for_period_filters_to_period_and_lowercases_address():
     """Spells outside the period are dropped; address is lowercased; date typed."""
     period = MonthPeriod(year=2025, month=4)
     responses.add(
@@ -196,7 +196,7 @@ def test_get_executive_ids_filters_to_period_and_lowercases_address():
     # Second page empty → terminates loop.
     responses.add(responses.GET, sky_executive.SKY_EXECUTIVE_URL, json=[], status=200)
 
-    result = sky_executive.get_executive_ids(period)
+    result = sky_executive.fetch_spells_for_period(period)
 
     assert len(result) == 1
     spell = result[0]
@@ -206,7 +206,7 @@ def test_get_executive_ids_filters_to_period_and_lowercases_address():
 
 
 @responses.activate
-def test_get_executive_ids_advances_start_until_empty():
+def test_fetch_spells_for_period_advances_start_until_empty():
     """The `start` query advances by SKY_EXECUTIVES_PAGE_SIZE until the API returns []."""
     period = MonthPeriod(year=2025, month=4)
     responses.add(
@@ -223,7 +223,7 @@ def test_get_executive_ids_advances_start_until_empty():
     )
     responses.add(responses.GET, sky_executive.SKY_EXECUTIVE_URL, json=[], status=200)
 
-    result = sky_executive.get_executive_ids(period)
+    result = sky_executive.fetch_spells_for_period(period)
 
     assert len(result) == 2
     assert len(responses.calls) == 3
@@ -238,12 +238,12 @@ def test_get_executive_ids_advances_start_until_empty():
 
 
 @responses.activate
-def test_get_executive_ids_empty_first_page_returns_empty():
+def test_fetch_spells_for_period_empty_first_page_returns_empty():
     """An empty first-page response terminates immediately and returns []."""
     period = MonthPeriod(year=2025, month=4)
     responses.add(responses.GET, sky_executive.SKY_EXECUTIVE_URL, json=[], status=200)
 
-    result = sky_executive.get_executive_ids(period)
+    result = sky_executive.fetch_spells_for_period(period)
 
     assert result == []
     assert len(responses.calls) == 1

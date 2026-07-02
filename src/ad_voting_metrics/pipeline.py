@@ -269,14 +269,14 @@ def run_fetch(args: argparse.Namespace) -> None:
     sky_lookup = delegation.build_sky_lookup(df_sky)
 
     logger.info("Getting POLL IDS...")
-    poll_info = sky_polling.get_poll_ids(period)
+    poll_info = sky_polling.fetch_polls_for_period(period)
     logger.info("Getting VOTE FROM POLLS...")
-    df = sky_polling.get_vote_poll_ids(poll_info, df, sky_lookup, current_datetime=datetime.now(UTC))
+    df = sky_polling.add_poll_vote_statuses(poll_info, df, sky_lookup, current_datetime=datetime.now(UTC))
 
     logger.info("Getting SPELL addresses...")
-    spell_info = sky_executive.get_executive_ids(period)
+    spell_info = sky_executive.fetch_spells_for_period(period)
     logger.info("Getting VOTE FROM SPELL...")
-    df = sky_executive.get_vote_executive_ids(spell_info, df, sky_lookup)
+    df = sky_executive.add_spell_vote_statuses(spell_info, df, sky_lookup)
 
     logger.info("Verifying Pending executive votes on-chain...")
     try:
