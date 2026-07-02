@@ -335,6 +335,17 @@ def sheet_io():
         yield get_mock, set_mock
 
 
+@pytest.fixture(autouse=True)
+def backup_dir(tmp_path, monkeypatch):
+    """Redirect pre-clear tab backups into the test's tmp dir instead of output_data/.
+
+    Yields the backup directory so tests can assert on written backup files.
+    """
+    backup_dir = tmp_path / "backups"
+    monkeypatch.setattr(sheets, "BACKUP_DIR", backup_dir)
+    return backup_dir
+
+
 # ---------------------------------------------------------------------------
 # write_daily_data — schema enforcement + merge behavior
 # ---------------------------------------------------------------------------
@@ -457,6 +468,57 @@ def test_write_daily_data_overwrites_existing_rows_for_current_dates(empty_exist
     assert len(written) == 2
     assert set(written["Total Delegation"]) == {100.0, 50.0}
     assert 999 not in set(written["Rank"])
+
+
+def test_write_daily_data_backs_up_existing_before_clear(empty_existing_ws, sheet_io, backup_dir):
+    """Non-empty existing data is saved to a local CSV before the tab is cleared."""
+    workbook, _ = empty_existing_ws
+    existing = pd.DataFrame({
+        "Date": ["2026-03-31", "2026-03-31"],
+        "Delegate": ["alpha", "beta"],
+        "Total Delegation": ["100", "50"],
+        "Rank": ["1", "2"],
+    })
+
+    get_mock, _ = sheet_io
+    get_mock.return_value = existing
+    sheets.write_daily_data(workbook, MonthPeriod(year=2026, month=4), _make_ranking_df())
+
+    backups = list(backup_dir.glob("Daily Data_*.csv"))
+    assert len(backups) == 1
+    backup = pd.read_csv(backups[0])
+    assert len(backup) == 2
+    assert set(backup["Delegate"]) == {"alpha", "beta"}
+
+
+def test_write_daily_data_first_write_makes_no_backup(empty_existing_ws, sheet_io, backup_dir):
+    """An empty tab has nothing to lose; no backup file is written."""
+    workbook, _ = empty_existing_ws
+
+    sheets.write_daily_data(workbook, MonthPeriod(year=2026, month=4), _make_ranking_df())
+
+    assert not backup_dir.exists()
+
+
+def test_write_daily_data_backup_failure_aborts_clear(empty_existing_ws, sheet_io, tmp_path, monkeypatch):
+    """If the backup can't be written, the destructive clear must not happen."""
+    workbook, fake_ws = empty_existing_ws
+    blocked = tmp_path / "blocked"
+    blocked.write_text("a file where the backup dir should go")
+    monkeypatch.setattr(sheets, "BACKUP_DIR", blocked)
+    existing = pd.DataFrame({
+        "Date": ["2026-03-31"],
+        "Delegate": ["alpha"],
+        "Total Delegation": ["100"],
+        "Rank": ["1"],
+    })
+
+    get_mock, _ = sheet_io
+    get_mock.return_value = existing
+    with pytest.raises(RuntimeError, match="pre-clear backup"):
+        sheets.write_daily_data(workbook, MonthPeriod(year=2026, month=4), _make_ranking_df())
+
+    fake_ws.clear.assert_not_called()
 
 
 def test_write_daily_data_raises_on_roster_drift(empty_existing_ws):
@@ -1061,6 +1123,30 @@ def test_write_communication_master_preserves_operator_edits(empty_existing_ws, 
     row = written[written["Poll Id"] == "12345"].iloc[0]
     assert row["BLUE"] == "Operator-set value"
     assert row["Cloaky"] == "Did not vote"
+
+
+def test_write_communication_master_backs_up_existing_before_clear(empty_existing_ws, sheet_io, backup_dir):
+    """Non-empty existing data (with operator edits) is saved to a local CSV before the tab is cleared."""
+    existing = pd.DataFrame({
+        "Poll Id": ["12345"],
+        "Start Date": ["2026-04-05"],
+        "End Date": ["2026-04-07"],
+        "Title": ["Approve SubDAO X"],
+        "BLUE": ["Operator-set value"],
+        "Cloaky": [""],
+        "BONAPUBLICA": [""],
+    })
+    df = _make_participation_df()
+    workbook, _ = empty_existing_ws
+    get_mock, _ = sheet_io
+    get_mock.return_value = existing
+    sheets.write_communication_master(workbook, df, _make_poll_info(), _make_spell_info())
+
+    backups = list(backup_dir.glob("Communication Master_*.csv"))
+    assert len(backups) == 1
+    backup = pd.read_csv(backups[0])
+    assert list(backup["Poll Id"].astype(str)) == ["12345"]
+    assert list(backup["BLUE"]) == ["Operator-set value"]
 
 
 def test_write_communication_master_preserves_historical_polls(empty_existing_ws, sheet_io):
