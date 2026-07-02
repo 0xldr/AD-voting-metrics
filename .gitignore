@@ -27,6 +27,7 @@ venv/
 
 # Generated outputs (scripts write CSVs here at runtime)
 output_data/reconciliation/*.json
+output_data/backups/
 output_data/*.csv
 output_data/*.json
 
