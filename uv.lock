@@ -45,7 +45,7 @@ requires-dist = [
     { name = "python-dotenv", specifier = ">=1.2,<2" },
     { name = "pyyaml", specifier = ">=6.0,<7" },
     { name = "requests", specifier = ">=2.31,<3" },
-    { name = "web3", specifier = ">=6,<8" },
+    { name = "web3", specifier = ">=7,<8" },
 ]
 
 [package.metadata.requires-dev]
