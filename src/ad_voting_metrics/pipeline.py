@@ -10,10 +10,11 @@ Imports are wired so that:
 
 import argparse
 import logging
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from datetime import UTC, date, datetime
 from pathlib import Path
-from typing import TypeAlias, TypeVar
+from typing import TypeAlias
 
 import gspread
 import pandas as pd
@@ -32,24 +33,20 @@ from .sources.delegates import fetch_aligned_delegates
 
 logger = logging.getLogger(__name__)
 
-T = TypeVar("T")
-
 # Per-period workbook state read out of the Compensation Sheet for `finalize`.
 # All three DataFrames are read directly from the workbook by sheets.read_*.
 _WorkbookData: TypeAlias = tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]
 
 
-def _required_step(description: str, fn: Callable[..., T], *args: object, **kwargs: object) -> T:
-    """Run an IO/compute step; on failure, log, and exit.
-
-    Returns:
-        Whatever fn(*args, **kwargs) returns.
+@contextmanager
+def _required(description: str) -> Iterator[None]:
+    """Log and exit the run when the enclosed IO/compute step raises a recoverable error.
 
     Raises:
-        SystemExit: on any caught exception.
+        SystemExit: when the enclosed block raises RuntimeError, ValueError, or a gspread APIError.
     """
     try:
-        return fn(*args, **kwargs)
+        yield
     except (RuntimeError, ValueError, gspread.exceptions.APIError) as e:
         logger.exception("Could not %s", description)
         raise SystemExit(1) from e
@@ -314,32 +311,21 @@ def _read_finalize_workbook_data(
     period: MonthPeriod,
     window: tuple[date, date],
 ) -> _WorkbookData:
-    """Read Daily Data, window participation, and Communication Master from the workbook.
-
-    Returns:
-        Tuple of (daily_df, participation_df, communication_df).
-    """
-    daily_df = _required_step("read Daily Data", sheets.read_daily_data, workbook, period)
+    """Read Daily Data, window participation, and Communication Master from the workbook."""
+    with _required("read Daily Data"):
+        daily_df = sheets.read_daily_data(workbook, period)
     logger.info("Daily Data has rank rows for %d days in %s", daily_df["Date"].nunique(), period)
 
-    participation_df = _required_step(
-        "read window participation",
-        sheets.read_participation_for_window,
-        workbook,
-        window[0],
-        window[1],
-    )
+    with _required("read window participation"):
+        participation_df = sheets.read_participation_for_window(workbook, window[0], window[1])
     logger.info(
         "Window participation: %d (delegate, poll) entries across %d delegates",
         len(participation_df),
         participation_df["Delegate"].nunique() if not participation_df.empty else 0,
     )
 
-    communication_df = _required_step(
-        "read Communication Master",
-        sheets.read_communication_master,
-        workbook,
-    )
+    with _required("read Communication Master"):
+        communication_df = sheets.read_communication_master(workbook)
     return daily_df, participation_df, communication_df
 
 
@@ -355,30 +341,23 @@ def _compute_period_compensation_for_window(
     metrics_input = _build_metrics_input(delegates, participation_df, communication_df)
     # Period-level metrics cover every delegate active at any point (the last day's slice omits
     # mid-period exiters). Computed once and shared by daily eligibility and compensation.
-    period_metrics = _required_step(
-        "compute period metrics",
-        compute_period_metrics,
-        window,
-        delegates,
-        metrics_input,
-    )
-    daily_results = _required_step(
-        "compute eligibility",
-        _compute_daily_results,
-        period,
-        delegates=delegates,
-        daily_ranks_df=daily_df,
-        period_metrics=period_metrics,
-        total_slots=config.total_slots,
-    )
-    return _required_step(
-        "compute compensation",
-        compute_period_compensation,
-        period=period,
-        daily_eligibility=daily_results,
-        config=config,
-        final_metrics=period_metrics,
-    )
+    with _required("compute period metrics"):
+        period_metrics = compute_period_metrics(window, delegates, metrics_input)
+    with _required("compute eligibility"):
+        daily_results = _compute_daily_results(
+            period,
+            delegates=delegates,
+            daily_ranks_df=daily_df,
+            period_metrics=period_metrics,
+            total_slots=config.total_slots,
+        )
+    with _required("compute compensation"):
+        return compute_period_compensation(
+            period=period,
+            daily_eligibility=daily_results,
+            config=config,
+            final_metrics=period_metrics,
+        )
 
 
 def run_finalize(args: argparse.Namespace) -> None:
@@ -393,8 +372,10 @@ def run_finalize(args: argparse.Namespace) -> None:
         window[1],
     )
 
-    workbook = _required_step("open Sheets workbook", sheets.get_workbook)
-    config = _required_step("read Config tab", sheets.read_config, workbook)
+    with _required("open Sheets workbook"):
+        workbook = sheets.get_workbook()
+    with _required("read Config tab"):
+        config = sheets.read_config(workbook)
     logger.info(
         "Config: L1=%s L2=%s L3=%s total_slots=%d",
         config.l1_usds,
@@ -424,7 +405,8 @@ def run_finalize(args: argparse.Namespace) -> None:
         period_comp.validation.get("slot_days_check"),
     )
 
-    _required_step("write Compensation tab", sheets.write_compensation_tab, workbook, period_comp)
+    with _required("write Compensation tab"):
+        sheets.write_compensation_tab(workbook, period_comp)
     logger.info("Compensation tab written for %s", period)
 
     entry = build_entry(
