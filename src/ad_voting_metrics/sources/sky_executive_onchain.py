@@ -9,9 +9,7 @@ operator adjudication.
 Slate -> address-list resolution is cached persistently because slates are immutable once etched.
 """
 
-import json
 import logging
-import os
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import Any, cast
@@ -24,7 +22,9 @@ from web3.exceptions import BadFunctionCallOutput, ContractLogicError, Web3RPCEr
 
 from ad_voting_metrics.metrics import PENDING_VERIFICATION
 from ad_voting_metrics.paths import SLATE_CACHE_PATH
+from ad_voting_metrics.settings import EnvSettings
 from ad_voting_metrics.sources.http import HEADERS, HTTP_TIMEOUT, get_session
+from ad_voting_metrics.sources.json_cache import load_json_cache, save_json_cache
 
 logger = logging.getLogger(__name__)
 
@@ -78,20 +78,15 @@ def _load_slate_cache(path: Path) -> dict[str, list[str]]:
     """Load the slate-hash -> [executive addresses] cache from disk.
 
     Returns:
-        The cache; empty dict if the file doesn't exist.
+        The cache, with hashes and addresses lowercased; empty dict if the file doesn't exist.
     """
-    if not path.exists():
-        return {}
-    with path.open(encoding="utf-8") as f:
-        data = json.load(f)
+    data = load_json_cache(path)
     return {k.lower(): [a.lower() for a in v] for k, v in data.items()}
 
 
 def _save_slate_cache(cache: dict[str, list[str]], path: Path) -> None:
-    """Persist the slate cache to disk, creating the parent dir if needed."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("w", encoding="utf-8") as f:
-        json.dump(cache, f, indent=2, sort_keys=True)
+    """Persist the slate cache to disk atomically, creating the parent dir if needed."""
+    save_json_cache(cast("dict[str, Any]", cache), path)
 
 
 # ---------------------------------------------------------------------------
@@ -298,7 +293,7 @@ def resolve_pending_executive_votes(
         return df
 
     if w3 is None:
-        rpc_url = os.environ.get("SKY_RPC_URL")
+        rpc_url = EnvSettings().sky_rpc_url
         if not rpc_url:
             logger.warning(
                 "SKY_RPC_URL is not set; leaving %d Pending Verification cell(s) as-is. "
