@@ -5,8 +5,8 @@ participation %, communication %, eligibility flag, and assigned level for one d
 
 Slot model:
   - L1/L2 come from the YAML roster (`Delegate.levels`).
-  - L3 slots = TOTAL_SLOTS - active_L1 - active_L2_, recomputed daily. A mid-period promotion shrinks L3 capacity,
-    dropping the lowest-ranked L3 candidate.
+  - L3 slots = total_slots - active_L1 - active_L2, recomputed daily from the workbook Config tab's TOTAL_SLOTS value.
+    A mid-period promotion shrinks L3 capacity, dropping the lowest-ranked L3 candidate.
   - L3 slots go to eligible delegates with the best ranks. Ties that cross the slot cutoff raise ValueError.
 
 A delegate is eligible if participation_pct >= 0.75 AND communication_pct >= 0.75 over the trailing 6-month window. A
@@ -23,7 +23,6 @@ from datetime import date
 from .metrics import communication_pct_for_window, participation_pct_for_window
 from .roster import Delegate
 
-TOTAL_SLOTS = 6
 ELIGIBILITY_THRESHOLD = 0.75
 
 
@@ -163,6 +162,7 @@ def _compute_partial_results(
 def _assign_l3_slots(
     day: date,
     per_delegate_partial: Mapping[str, _PartialResult],
+    total_slots: int,
 ) -> tuple[int, set[str]]:
     """Determine L3 slot capacity and which candidates get slots.
 
@@ -174,7 +174,7 @@ def _assign_l3_slots(
     """
     l1_count = sum(1 for r in per_delegate_partial.values() if r.yaml_level == 1)
     l2_count = sum(1 for r in per_delegate_partial.values() if r.yaml_level == 2)  # noqa: PLR2004
-    l3_slots_available = max(TOTAL_SLOTS - l1_count - l2_count, 0)
+    l3_slots_available = max(total_slots - l1_count - l2_count, 0)
 
     l3_candidates = sorted(
         ((name, r) for name, r in per_delegate_partial.items() if r.yaml_level is None and r.eligible),
@@ -202,11 +202,15 @@ def compute_daily_eligibility(
     delegates: Sequence[Delegate],
     daily_ranks: Mapping[str, int],
     period_metrics: Mapping[str, tuple[float | None, float | None]],
+    total_slots: int,
 ) -> DailyEligibility:
     """Compute eligibility and slot assignment for every active delegate on `day`.
 
     `period_metrics` is the precomputed (p_pct, c_pct) per delegate for the 6-month window — period-level, not per-day.
     Callers build it once via `compute_period_metrics` and reuse it across every day in the period.
+
+    `total_slots` is the workbook Config tab's TOTAL_SLOTS value — the same number the compensation step validates
+    slot-days against, so eligibility and the slot-days check can't disagree.
 
     Active delegates are those where `is_active_during(day, day)` holds. Inactive delegates are silently excluded from
     the result, even if present in `daily_ranks` or `period_metrics` - callers reuse the same maps across many days.
@@ -220,7 +224,7 @@ def compute_daily_eligibility(
     _validate_inputs_present(day, [d.name for d in active_delegates], daily_ranks, period_metrics)
 
     per_delegate_partial = _compute_partial_results(day, active_delegates, daily_ranks, period_metrics)
-    l3_slots_available, l3_assigned_names = _assign_l3_slots(day, per_delegate_partial)
+    l3_slots_available, l3_assigned_names = _assign_l3_slots(day, per_delegate_partial, total_slots)
 
     per_delegate: dict[str, DelegateEligibility] = {}
     for name, r in per_delegate_partial.items():
