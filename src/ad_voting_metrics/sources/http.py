@@ -1,7 +1,7 @@
 """Shared HTTP session for all outbound requests.
 
 A single module-cached `requests.Session` is reused across all external API calls, giving us connection pooling,
-uniform retry behavior, and one placeto adjust timeouts. Use `get_session()`; don't instantiate `requests.Session()`
+uniform retry behavior, and one place to adjust timeouts. Use `get_session()`; don't instantiate `requests.Session()`
 directly.
 """
 
@@ -18,7 +18,7 @@ HTTP_TIMEOUT = (5, 30)
 # Default request headers for external JSON APIs (vote.sky.money, etc.).
 HEADERS = {"User-Agent": "ad-voting-metrics/0.1", "Accept": "application/json"}
 
-# Transiet HTTP statuses worth retrying. 429 (rate limit) and 5xx.
+# Transient HTTP statuses worth retrying. 429 (rate limit) and 5xx.
 _RETRY_STATUSES = (429, 500, 502, 503, 504)
 
 
