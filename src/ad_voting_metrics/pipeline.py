@@ -179,6 +179,31 @@ def _build_sky_and_ranking_frames(
     return df_sky, df_ranking
 
 
+# Leading characters that spreadsheet applications interpret as a formula (or,
+# for \t and \r, as field separators that can smuggle one in) when a CSV is
+# opened directly in Excel/LibreOffice/Sheets.
+_CSV_FORMULA_PREFIXES = ("=", "+", "-", "@", "\t", "\r")
+
+
+def _defuse_csv_formulas(df: pd.DataFrame) -> pd.DataFrame:
+    """Prefix formula-like cells with a quote so spreadsheet apps treat them as text.
+
+    Poll/spell titles come from external APIs, so a title like "=IMPORTDATA(...)" must not execute when the CSV is
+    opened in a spreadsheet application. The apostrophe is the spreadsheet convention for "literal text"; apps hide it
+    on display.
+
+    Returns:
+        A copy of df with formula-like string cells prefixed; non-string cells unchanged.
+    """
+
+    def defuse(value: object) -> object:
+        if isinstance(value, str) and value.startswith(_CSV_FORMULA_PREFIXES):
+            return f"'{value}"
+        return value
+
+    return df.map(defuse)
+
+
 def _write_fetch_csvs(
     df: pd.DataFrame,
     df_sky: pd.DataFrame,
@@ -186,6 +211,10 @@ def _write_fetch_csvs(
     spell_info: list[dict],
 ) -> list[Path]:
     """Write the sky and participation CSVs.
+
+    Participation cells are run through _defuse_csv_formulas; the CSVs are for humans and spreadsheet apps, so
+    formula-like values from external APIs are neutralized at this boundary (the workbook writers neutralize
+    separately via allow_formulas=False).
 
     Returns:
         The list of CSV paths written, in write order.
@@ -196,7 +225,7 @@ def _write_fetch_csvs(
 
     participation_csv = OUTPUT_DIR / "vote_participation.csv"
     participation_df = sheets.build_participation_dataframe(df, poll_info, spell_info)
-    participation_df.to_csv(participation_csv, index=False)
+    _defuse_csv_formulas(participation_df).to_csv(participation_csv, index=False)
     logger.info("Participation vote data saved to %s", participation_csv)
     return [sky_csv, participation_csv]
 
