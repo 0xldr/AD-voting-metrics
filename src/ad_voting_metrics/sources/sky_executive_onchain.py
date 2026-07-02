@@ -23,7 +23,6 @@ from web3.exceptions import BadFunctionCallOutput, ContractLogicError, Web3RPCEr
 from ad_voting_metrics.metrics import PENDING_VERIFICATION
 from ad_voting_metrics.paths import SLATE_CACHE_PATH
 from ad_voting_metrics.settings import EnvSettings
-from ad_voting_metrics.sources.http import HEADERS, HTTP_TIMEOUT, get_session
 from ad_voting_metrics.sources.json_cache import load_json_cache, save_json_cache
 
 logger = logging.getLogger(__name__)
@@ -36,10 +35,6 @@ VOTE_DEADLINE_DAYS = 7
 
 # Defensive cap; no real slate has approached this length.
 MAX_SLATE_LENGTH = 50
-
-# Blockscout's Etherscan-compatible endpoint for resolving a unix
-# timestamp to a block number. Used to seed `eth_getLogs`'s fromBlock.
-BLOCKSCOUT_API_URL = "https://eth.blockscout.com/api"
 
 # Minimal chief ABI: the `slates` getter for slate -> address-list
 # resolution, and the `Vote` event so contract.events.Vote can encode
@@ -120,34 +115,25 @@ def _resolve_slate(w3: Web3, slate_hash: str) -> list[str]:
     return addresses
 
 
-def _block_from_date(target: date) -> int:
+def _block_from_date(w3: Web3, target: date) -> int:
     """Return the first block number at or after midnight UTC on `target`.
 
-    Used to seed `eth_getLogs`'s fromBlock — events are still filtered per-event by exact date afterwards, so the only
-    requirement is that the block is no later than the earliest event we care about.
-
-    Returns:
-        The block number returned by Blockscout's getblocknobytime endpoint.
+    Binary search over block timestamps via the RPC (~25 get_block calls for mainnet). Seeds `eth_getLogs`'s
+    fromBlock — events are still filtered per-event by exact date afterwards, so the only requirement is that the
+    block is no later than the earliest event we care about.
     """
     target_ts = int(datetime.combine(target, datetime.min.time(), tzinfo=UTC).timestamp())
-    response = get_session().get(
-        BLOCKSCOUT_API_URL,
-        params={
-            "module": "block",
-            "action": "getblocknobytime",
-            "timestamp": str(target_ts),
-            "closest": "after",
-        },
-        headers=HEADERS,
-        timeout=HTTP_TIMEOUT,
-    )
-    response.raise_for_status()
-    result = response.json()["result"]
-    # Blockscout wraps the block number in {"blockNumber": "..."}; the
-    # Etherscan-compatible form returns the number as a bare string.
-    if isinstance(result, dict):
-        result = result["blockNumber"]
-    return int(result)
+    lo, hi = 1, int(w3.eth.block_number)
+    while lo < hi:
+        mid = (lo + hi) // 2
+        # `timestamp` is NotRequired on BlockData per web3-stubs, but full
+        # blocks always carry it at runtime; widen to plain dict for access.
+        mid_ts = cast("dict[str, Any]", w3.eth.get_block(mid))["timestamp"]
+        if mid_ts < target_ts:
+            lo = mid + 1
+        else:
+            hi = mid
+    return lo
 
 
 def _fetch_vote_events(
@@ -302,7 +288,7 @@ def resolve_pending_executive_votes(
     initial_cache_size = len(slate_cache)
 
     earliest_start = min(s["startDate"] for s in spell_info)
-    from_block = _block_from_date(earliest_start)
+    from_block = _block_from_date(w3, earliest_start)
     logger.info("Verifying executive votes on-chain from block %d onwards", from_block)
 
     voters: set[str] = {
