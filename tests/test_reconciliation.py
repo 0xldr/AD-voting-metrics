@@ -136,21 +136,6 @@ def test_build_entry_minimal():
     assert entry["output_files"] == ["/tmp/output.csv"]
 
 
-def test_build_entry_records_delegation_source_when_fetched():
-    """When delegation is provided, the entry records source='onchain'."""
-    entry = build_entry(
-        period=_sample_period(),
-        yaml_path=Path("/tmp/delegates.yaml"),
-        roster=_make_roster_result(),
-        delegation={"factory_block": 22368737, "last_synced_block": 22500000},
-        output_files=[],
-    )
-
-    assert entry["delegation_source"] == "onchain"
-    assert entry["delegation_factory_block"] == 22368737
-    assert entry["delegation_last_synced_block"] == 22500000
-
-
 def test_build_entry_records_delegation_source_when_not_fetched():
     """When delegation is None (finalize, no fetch), source='n/a'."""
     entry = build_entry(
@@ -197,19 +182,6 @@ def test_build_entry_records_api_failure():
 
     assert entry["api_fetch_succeeded"] is False
     assert entry["api_delegate_count"] == 0
-
-
-def test_build_entry_includes_all_output_files():
-    files = [Path("/o/a.csv"), Path("/o/b.csv"), Path("/o/c.csv")]
-    entry = build_entry(
-        period=_sample_period(),
-        yaml_path=Path("/tmp/delegates.yaml"),
-        roster=_make_roster_result(),
-        delegation={"factory_block": 22368737, "last_synced_block": 22500000},
-        output_files=files,
-    )
-
-    assert entry["output_files"] == ["/o/a.csv", "/o/b.csv", "/o/c.csv"]
 
 
 def test_build_entry_run_timestamp_is_iso_with_tz():

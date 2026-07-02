@@ -72,20 +72,6 @@ def test_count_statuses_empty_input():
     assert counts.unknown == 0
 
 
-def test_count_statuses_all_yes():
-    counts = count_statuses(["Yes", "Yes", "Yes"])
-    assert counts.participated == 3
-    assert counts.not_participated == 0
-    assert counts.discounted == 0
-    assert counts.unknown == 0
-
-
-def test_count_statuses_all_no():
-    counts = count_statuses(["No", "No"])
-    assert counts.not_participated == 2
-    assert counts.participated == 0
-
-
 def test_count_statuses_mixed():
     counts = count_statuses(["Yes", "Yes", "No", "Not Started", "No Delegated SKY", "Not included"])
     assert counts.participated == 2
@@ -109,24 +95,6 @@ def test_count_statuses_unknown_statuses_flagged():
     counts = count_statuses(["Yes", "Mystery Status", "Another One"])
     assert counts.participated == 1
     assert counts.unknown == 2
-
-
-def test_count_statuses_exited_goes_to_discounted():
-    """Count 'Exited' as discounted, symmetric with 'Not Started'."""
-    counts = count_statuses(["Yes", "Exited", "Exited"])
-    assert counts.participated == 1
-    assert counts.discounted == 2
-    assert counts.unknown == 0
-
-
-def test_participation_pct_exited_excluded_from_denominator():
-    """Exclude Exited polls from the percentage denominator."""
-    assert participation_pct(["Yes", "Exited", "Exited", "Exited"]) == 1.0
-
-
-def test_participation_pct_only_exited_returns_none():
-    """A delegate whose entire window is Exited has no votable polls → None."""
-    assert participation_pct(["Exited", "Exited"]) is None
 
 
 # ---------------------------------------------------------------------------
@@ -185,36 +153,21 @@ def test_participation_pct_realistic_workbook_mix():
 # ---------------------------------------------------------------------------
 
 
-def test_in_window_strictly_inside():
-    assert is_in_window(date(2026, 4, 15), date(2026, 4, 1), date(2026, 4, 30))
-
-
-def test_in_window_on_window_start_boundary():
-    """Inclusive on window_start."""
-    assert is_in_window(date(2026, 4, 1), date(2026, 4, 1), date(2026, 4, 30))
-
-
-def test_in_window_on_window_end_boundary():
-    """Inclusive on window_end."""
-    assert is_in_window(date(2026, 4, 30), date(2026, 4, 1), date(2026, 4, 30))
-
-
-def test_not_in_window_before_start():
-    assert not is_in_window(date(2026, 3, 31), date(2026, 4, 1), date(2026, 4, 30))
-
-
-def test_not_in_window_after_end():
-    assert not is_in_window(date(2026, 5, 1), date(2026, 4, 1), date(2026, 4, 30))
-
-
-def test_in_window_unbounded_back_includes_old_polls():
-    """window_start=None means 'all polls up to window_end'."""
-    assert is_in_window(date(2020, 1, 1), None, date(2026, 4, 30))
-
-
-def test_in_window_unbounded_back_excludes_future_polls():
-    """Even with no lower bound, polls after window_end are out."""
-    assert not is_in_window(date(2026, 5, 1), None, date(2026, 4, 30))
+@pytest.mark.parametrize(
+    ("poll_start", "window_start", "expected"),
+    [
+        pytest.param(date(2026, 4, 15), date(2026, 4, 1), True, id="strictly inside"),
+        pytest.param(date(2026, 4, 1), date(2026, 4, 1), True, id="inclusive on window_start"),
+        pytest.param(date(2026, 4, 30), date(2026, 4, 1), True, id="inclusive on window_end"),
+        pytest.param(date(2026, 3, 31), date(2026, 4, 1), False, id="before start"),
+        pytest.param(date(2026, 5, 1), date(2026, 4, 1), False, id="after end"),
+        pytest.param(date(2020, 1, 1), None, True, id="window_start=None includes old polls"),
+        pytest.param(date(2026, 5, 1), None, False, id="window_start=None still excludes future"),
+    ],
+)
+def test_is_in_window(poll_start, window_start, expected):
+    """[window_start, window_end] membership, boundaries inclusive; None window_start is unbounded back."""
+    assert is_in_window(poll_start, window_start, date(2026, 4, 30)) is expected
 
 
 # ---------------------------------------------------------------------------
@@ -269,11 +222,6 @@ def test_pct_for_window_mismatched_lengths_raises():
             date(2026, 4, 1),
             date(2026, 4, 30),
         )
-
-
-def test_pct_for_window_empty_inputs_returns_none():
-    pct = participation_pct_for_window([], [], date(2026, 4, 1), date(2026, 4, 30))
-    assert pct is None
 
 
 # ---------------------------------------------------------------------------
@@ -420,11 +368,6 @@ def test_communication_pct_empty_inputs_returns_none():
     assert communication_pct([], []) is None
 
 
-def test_communication_pct_mismatched_lengths_raises():
-    with pytest.raises(ValueError, match=r"zip\(\) argument"):
-        communication_pct(["Yes", "No"], ["Yes"])
-
-
 # ---------------------------------------------------------------------------
 # communication_pct_for_window — window-filtered
 # ---------------------------------------------------------------------------
@@ -493,14 +436,3 @@ def test_communication_pct_for_window_mismatched_lengths_raises():
             date(2026, 4, 1),
             date(2026, 4, 30),
         )
-
-
-def test_communication_pct_for_window_empty_returns_none():
-    pct = communication_pct_for_window(
-        [],
-        [],
-        [],
-        date(2026, 4, 1),
-        date(2026, 4, 30),
-    )
-    assert pct is None

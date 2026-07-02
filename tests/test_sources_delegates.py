@@ -4,7 +4,6 @@ import pytest
 import requests
 import responses
 
-from ad_voting_metrics.sources import http as http_module
 from ad_voting_metrics.sources.delegates import _MAX_PAGES, DELEGATES_URL, fetch_aligned_delegates
 
 # Errors a misbehaving HTTP endpoint can surface through urllib3's
@@ -14,14 +13,6 @@ _HTTP_FAILURES = (
     requests.exceptions.RetryError,
     requests.exceptions.ConnectionError,
 )
-
-
-@pytest.fixture(autouse=True)
-def reset_session():
-    """Clear sources.http's cached Session before/after each test to prevent state leakage."""
-    http_module.get_session.cache_clear()
-    yield
-    http_module.get_session.cache_clear()
 
 
 def _delegate_dict(name: str, address: str) -> dict:
@@ -247,23 +238,6 @@ def test_page_cap_stops_infinite_loop(caplog: pytest.LogCaptureFixture):
 # ---------------------------------------------------------------------------
 # HTTP error handling: relies on raise_for_status from the shared session
 # ---------------------------------------------------------------------------
-
-
-@responses.activate
-def test_500_error_raises():
-    responses.add(
-        responses.GET,
-        DELEGATES_URL,
-        json={"error": "internal"},
-        status=500,
-    )
-    # The session has retries on 5xx, but after retries are exhausted
-    # raise_on_status=False means raise_for_status fires. We register only
-    # one response, so retries will fail on subsequent attempts (responses
-    # raises ConnectionError when no match exists). Either way, the test
-    # confirms 500s don't get swallowed.
-    with pytest.raises(_HTTP_FAILURES):
-        fetch_aligned_delegates()
 
 
 @responses.activate

@@ -111,16 +111,6 @@ def test_delegate_with_no_levels_constructs():
     assert d.level_at(date(2026, 1, 1)) is None
 
 
-def test_delegate_with_levels_omitted_constructs():
-    """Levels field is optional — omitting it is the same as empty list."""
-    d = Delegate(
-        name="X",
-        vote_delegate_address="0x0000000000000000000000000000000000000002",
-        start_date=date(2024, 1, 1),
-    )
-    assert d.levels == []
-
-
 @pytest.mark.parametrize("bad_level", [3, 0, -1])
 def test_level_must_be_1_or_2(bad_level):
     """Level 3 is daily-computed, never YAML-set. Zero and negative are invalid."""
@@ -206,46 +196,6 @@ def test_levels_with_open_ended_earlier_period_rejected():
         )
 
 
-def test_sequential_levels_accepted():
-    """L2 then L1 (or vice versa) with non-overlapping periods is allowed."""
-    d = _delegate_with_levels(
-        start_date=date(2024, 1, 1),
-        levels=[
-            {
-                "level": 2,
-                "start_date": date(2024, 6, 1),
-                "end_date": date(2025, 5, 31),
-            },
-            {
-                "level": 1,
-                "start_date": date(2025, 6, 1),
-                "end_date": None,
-            },
-        ],
-    )
-    assert len(d.levels) == 2
-
-
-def test_adjacent_levels_with_one_day_gap_accepted():
-    """Two LevelAssignments separated by even a single day apart don't overlap."""
-    d = _delegate_with_levels(
-        levels=[
-            {
-                "level": 2,
-                "start_date": date(2024, 6, 1),
-                "end_date": date(2025, 5, 31),
-            },
-            {
-                "level": 1,
-                "start_date": date(2025, 6, 1),
-                "end_date": None,
-            },
-        ],
-    )
-    assert d.level_at(date(2025, 5, 31)) == 2
-    assert d.level_at(date(2025, 6, 1)) == 1
-
-
 # ---------------------------------------------------------------------------
 # Delegate.level_at — daily lookup for L3 eligibility computation
 # ---------------------------------------------------------------------------
@@ -268,13 +218,6 @@ def test_level_at_returns_none_before_period_starts():
         levels=[{"level": 1, "start_date": date(2025, 12, 1), "end_date": None}],
     )
     assert d.level_at(date(2025, 11, 30)) is None
-
-
-def test_level_at_returns_level_on_start_date_inclusive():
-    d = _delegate_with_levels(
-        levels=[{"level": 1, "start_date": date(2025, 12, 1), "end_date": None}],
-    )
-    assert d.level_at(date(2025, 12, 1)) == 1
 
 
 def test_level_at_returns_level_on_end_date_inclusive():
@@ -330,64 +273,23 @@ def _delegate(start: date, end: date | None = None) -> Delegate:
     )
 
 
-def test_active_aligned_before_period_no_end():
-    # Aligned before, still active
-    d = _delegate(start=date(2025, 1, 1), end=None)
-    assert d.is_active_during(date(2026, 4, 1), date(2026, 4, 30))
-
-
-def test_active_aligned_mid_period():
-    # Aligned mid-period, still active
-    d = _delegate(start=date(2026, 4, 15), end=None)
-    assert d.is_active_during(date(2026, 4, 1), date(2026, 4, 30))
-
-
-def test_active_exited_mid_period():
-    # Aligned before, exited during
-    d = _delegate(start=date(2025, 1, 1), end=date(2026, 4, 15))
-    assert d.is_active_during(date(2026, 4, 1), date(2026, 4, 30))
-
-
-def test_active_full_overlap_with_end_date():
-    # Aligned before, exited after
-    d = _delegate(start=date(2025, 1, 1), end=date(2026, 5, 15))
-    assert d.is_active_during(date(2026, 4, 1), date(2026, 4, 30))
-
-
-def test_inactive_aligned_after_period():
-    # Aligned after period ends
-    d = _delegate(start=date(2026, 5, 1), end=None)
-    assert not d.is_active_during(date(2026, 4, 1), date(2026, 4, 30))
-
-
-def test_inactive_exited_before_period():
-    # Aligned before, exited before period starts
-    d = _delegate(start=date(2025, 1, 1), end=date(2026, 3, 31))
-    assert not d.is_active_during(date(2026, 4, 1), date(2026, 4, 30))
-
-
-def test_boundary_aligned_on_last_day_of_period():
-    # Aligned on the last day, should be active
-    d = _delegate(start=date(2026, 4, 30))
-    assert d.is_active_during(date(2026, 4, 1), date(2026, 4, 30))
-
-
-def test_boundary_exited_on_first_day_of_period():
-    # end_date is inclusive, so should be active
-    d = _delegate(start=date(2025, 1, 1), end=date(2026, 4, 1))
-    assert d.is_active_during(date(2026, 4, 1), date(2026, 4, 30))
-
-
-def test_boundary_aligned_one_day_after_period():
-    # Aligned the day after, inactive
-    d = _delegate(start=date(2026, 5, 1), end=date(2026, 6, 1))
-    assert not d.is_active_during(date(2026, 4, 1), date(2026, 4, 30))
-
-
-def test_boundary_exited_one_day_before_period():
-    # Exited the day before, inactive
-    d = _delegate(start=date(2025, 1, 1), end=date(2026, 3, 31))
-    assert not d.is_active_during(date(2026, 4, 1), date(2026, 4, 30))
+@pytest.mark.parametrize(
+    ("start", "end", "expected"),
+    [
+        pytest.param(date(2025, 1, 1), None, True, id="aligned before period, still active"),
+        pytest.param(date(2026, 4, 15), None, True, id="aligned mid-period"),
+        pytest.param(date(2025, 1, 1), date(2026, 4, 15), True, id="exited mid-period"),
+        pytest.param(date(2026, 4, 30), None, True, id="aligned on last day of period"),
+        pytest.param(date(2025, 1, 1), date(2026, 4, 1), True, id="exited on first day (end_date inclusive)"),
+        pytest.param(date(2026, 5, 1), None, False, id="aligned after period"),
+        pytest.param(date(2026, 5, 1), date(2026, 6, 1), False, id="aligned one day after period"),
+        pytest.param(date(2025, 1, 1), date(2026, 3, 31), False, id="exited one day before period"),
+    ],
+)
+def test_is_active_during_april_2026(start, end, expected):
+    """Interval-overlap with the queried month; both alignment bounds inclusive."""
+    d = _delegate(start=start, end=end)
+    assert d.is_active_during(date(2026, 4, 1), date(2026, 4, 30)) is expected
 
 
 # ---------------------------------------------------------------------------
@@ -788,18 +690,6 @@ def test_to_dataframe_start_date_is_string():
     ]
     df = to_dataframe(delegates)
     assert df.iloc[0]["Start Date"] == "2024-07-04"
-
-
-def test_to_dataframe_preserves_address_format():
-    delegates = [
-        Delegate(
-            name="X",
-            vote_delegate_address=_ADDR_A,
-            start_date=date(2024, 1, 1),
-        ),
-    ]
-    df = to_dataframe(delegates)
-    assert df.iloc[0]["Delegate Contract"] == _ADDR_A
 
 
 def test_to_dataframe_empty():

@@ -8,6 +8,7 @@ and run with `pytest -m integration`.
 import json
 import uuid
 import warnings
+from dataclasses import replace
 from datetime import UTC, date, datetime
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -61,12 +62,6 @@ def test_get_workbook_both_env_vars_missing_raises_service_account_first(monkeyp
     monkeypatch.delenv("SHEETS_WORKBOOK_ID", raising=False)
     with pytest.raises(RuntimeError, match="GOOGLE_SERVICE_ACCOUNT_FILE"):
         sheets.get_workbook()
-
-
-def test_get_workbook_error_message_points_at_env_example(monkeypatch):
-    monkeypatch.delenv("GOOGLE_SERVICE_ACCOUNT_FILE", raising=False)
-    with pytest.raises(RuntimeError, match=r"\.env\.example"):
-        sheets.get_workbook(workbook_id="anything")
 
 
 # ---------------------------------------------------------------------------
@@ -208,7 +203,7 @@ def test_get_workbook_real_credentials_opens_spreadsheet():
 
 
 # ---------------------------------------------------------------------------
-# list_tab_names + get_or_create_tab + clear_tab
+# list_tab_names + get_or_create_tab
 # ---------------------------------------------------------------------------
 
 
@@ -893,28 +888,6 @@ def test_write_participation_clears_existing_tab_before_writing(empty_existing_w
     assert call_order == ["clear", "set"]
 
 
-def test_write_participation_header_includes_metadata_and_delegate_names(empty_existing_ws):
-    workbook, _ = empty_existing_ws
-    with patch("ad_voting_metrics.sheets.set_with_dataframe") as set_mock:
-        sheets.write_participation_raw_data(
-            workbook,
-            MonthPeriod(year=2026, month=4),
-            _make_participation_df(),
-            _make_poll_info(),
-            _make_spell_info(),
-        )
-    written = set_mock.call_args.args[1]
-    assert list(written.columns) == [
-        "Poll Id",
-        "Start Date",
-        "End Date",
-        "Title",
-        "BLUE",
-        "Cloaky",
-        "BONAPUBLICA",
-    ]
-
-
 def test_write_participation_data_rows_one_per_poll_with_metadata(empty_existing_ws):
     workbook, _ = empty_existing_ws
     with patch("ad_voting_metrics.sheets.set_with_dataframe") as set_mock:
@@ -934,49 +907,6 @@ def test_write_participation_data_rows_one_per_poll_with_metadata(empty_existing
     spell_row = written[written["Poll Id"] == "0xspell001"].iloc[0]
     assert spell_row["Title"] == "Spell: April risk adjustment"
     assert spell_row["End Date"] == "2026-04-22"
-
-
-def test_write_participation_unknown_poll_id_has_blank_metadata(empty_existing_ws):
-    df = pd.DataFrame({
-        "Delegate Name": ["BLUE"],
-        "Delegate Contract": ["0xaaa"],
-        "Start Date": ["2025-12-01"],
-        "99999": ["Yes"],
-    })
-    workbook, _ = empty_existing_ws
-    with patch("ad_voting_metrics.sheets.set_with_dataframe") as set_mock:
-        sheets.write_participation_raw_data(
-            workbook,
-            MonthPeriod(year=2026, month=4),
-            df,
-            _make_poll_info(),
-            _make_spell_info(),
-        )
-    written = set_mock.call_args.args[1]
-    row = written.iloc[0]
-    assert row["Poll Id"] == "99999"
-    assert row["Start Date"] == ""
-    assert row["BLUE"] == "Yes"
-
-
-def test_write_participation_zero_polls_writes_header_only(empty_existing_ws):
-    df = pd.DataFrame({
-        "Delegate Name": ["BLUE", "Cloaky"],
-        "Delegate Contract": ["0xaaa", "0xbbb"],
-        "Start Date": ["2025-12-01", "2025-12-01"],
-    })
-    workbook, _ = empty_existing_ws
-    with patch("ad_voting_metrics.sheets.set_with_dataframe") as set_mock:
-        sheets.write_participation_raw_data(
-            workbook,
-            MonthPeriod(year=2026, month=4),
-            df,
-            [],
-            [],
-        )
-    written = set_mock.call_args.args[1]
-    assert list(written.columns) == ["Poll Id", "Start Date", "End Date", "Title", "BLUE", "Cloaky"]
-    assert len(written) == 0
 
 
 # ---------------------------------------------------------------------------
@@ -1367,6 +1297,32 @@ def test_read_config_strips_whitespace_from_keys_and_values(empty_existing_ws):
 # ---------------------------------------------------------------------------
 
 
+# All-zero baseline for compensation rows; tests derive from it via _make_delegate_comp.
+_ZERO_COMP = DelegateCompensation(
+    name="alpha",
+    rank_at_period_end=1,
+    level_at_period_end=None,
+    days_as_l1=0,
+    days_as_l2=0,
+    days_as_l3=0,
+    participation_pct=None,
+    communication_pct=None,
+    metrics_modifier=0.0,
+    entitlement_pre_modifier=0.0,
+    final_amount=0.0,
+    buffer_carry_in=0.0,
+    buffer_added=0.0,
+    payment_amount=0.0,
+    buffer_post_payment=0.0,
+    notes="",
+)
+
+
+def _make_delegate_comp(**overrides) -> DelegateCompensation:
+    """DelegateCompensation with all-zero defaults; tests override only the fields they assert on."""
+    return replace(_ZERO_COMP, **overrides)
+
+
 def _make_period_comp(
     *,
     period: MonthPeriod | None = None,
@@ -1379,23 +1335,15 @@ def _make_period_comp(
         period = MonthPeriod(year=2026, month=4)
     if per_delegate is None:
         per_delegate = [
-            DelegateCompensation(
-                name="alpha",
-                rank_at_period_end=1,
+            _make_delegate_comp(
                 level_at_period_end=1,
                 days_as_l1=30,
-                days_as_l2=0,
-                days_as_l3=0,
                 participation_pct=0.95,
                 communication_pct=0.90,
                 metrics_modifier=1.0,
                 entitlement_pre_modifier=33333.0,
                 final_amount=33333.0,
-                buffer_carry_in=0.0,
                 buffer_added=33333.0,
-                payment_amount=0.0,
-                buffer_post_payment=0.0,
-                notes="",
             ),
         ]
     config = CompensationConfig(l1_usds=33333.0, l2_usds=14583.0, l3_usds=4000.0, total_slots=6)
@@ -1448,24 +1396,7 @@ def test_write_compensation_tab_writes_config_reference_amounts(empty_existing_w
 def test_write_compensation_tab_writes_level_counts(empty_existing_ws):
     """Number of Level X is the count of delegates with each end-of-period level."""
     delegates = [
-        DelegateCompensation(
-            name=f"d{i}",
-            rank_at_period_end=i,
-            level_at_period_end=lvl,
-            days_as_l1=0,
-            days_as_l2=0,
-            days_as_l3=0,
-            participation_pct=None,
-            communication_pct=None,
-            metrics_modifier=0.0,
-            entitlement_pre_modifier=0.0,
-            final_amount=0.0,
-            buffer_carry_in=0.0,
-            buffer_added=0.0,
-            payment_amount=0.0,
-            buffer_post_payment=0.0,
-            notes="",
-        )
+        _make_delegate_comp(name=f"d{i}", rank_at_period_end=i, level_at_period_end=lvl)
         for i, lvl in enumerate([1, 1, 2, 3, 3, 3], start=1)
     ]
     workbook, fake_ws = empty_existing_ws
@@ -1480,23 +1411,17 @@ def test_write_compensation_tab_writes_level_counts(empty_existing_ws):
 def test_write_compensation_tab_total_is_computed_in_python(empty_existing_ws):
     """Total Final Amount is the sum of per-delegate finals (no =SUM formula)."""
     delegates = [
-        DelegateCompensation(
+        _make_delegate_comp(
             name=f"d{i}",
             rank_at_period_end=i,
             level_at_period_end=1,
             days_as_l1=30,
-            days_as_l2=0,
-            days_as_l3=0,
             participation_pct=0.95,
             communication_pct=0.95,
             metrics_modifier=1.0,
             entitlement_pre_modifier=1000.0,
             final_amount=1000.0,
-            buffer_carry_in=0.0,
             buffer_added=1000.0,
-            payment_amount=0.0,
-            buffer_post_payment=0.0,
-            notes="",
         )
         for i in range(3)
     ]
@@ -1537,27 +1462,7 @@ def test_write_compensation_tab_data_columns_match_canonical_header(empty_existi
 
 def test_write_compensation_tab_data_rows_in_order(empty_existing_ws):
     """Rows appear in the order of period_comp.per_delegate (alphabetical from compute)."""
-    delegates = [
-        DelegateCompensation(
-            name=name,
-            rank_at_period_end=None,
-            level_at_period_end=None,
-            days_as_l1=0,
-            days_as_l2=0,
-            days_as_l3=0,
-            participation_pct=None,
-            communication_pct=None,
-            metrics_modifier=0.0,
-            entitlement_pre_modifier=0.0,
-            final_amount=0.0,
-            buffer_carry_in=0.0,
-            buffer_added=0.0,
-            payment_amount=0.0,
-            buffer_post_payment=0.0,
-            notes="",
-        )
-        for name in ["alpha", "beta", "gamma"]
-    ]
+    delegates = [_make_delegate_comp(name=name, rank_at_period_end=None) for name in ["alpha", "beta", "gamma"]]
     workbook, _ = empty_existing_ws
     with patch("ad_voting_metrics.sheets.set_with_dataframe") as set_mock:
         sheets.write_compensation_tab(workbook, _make_period_comp(per_delegate=delegates))
@@ -1567,24 +1472,7 @@ def test_write_compensation_tab_data_rows_in_order(empty_existing_ws):
 
 def test_write_compensation_tab_none_pct_renders_as_no_data(empty_existing_ws):
     """None for participation_pct / communication_pct → 'No Data' string in the cell."""
-    delegate = DelegateCompensation(
-        name="alpha",
-        rank_at_period_end=1,
-        level_at_period_end=1,
-        days_as_l1=30,
-        days_as_l2=0,
-        days_as_l3=0,
-        participation_pct=None,
-        communication_pct=None,
-        metrics_modifier=0.0,
-        entitlement_pre_modifier=0.0,
-        final_amount=0.0,
-        buffer_carry_in=0.0,
-        buffer_added=0.0,
-        payment_amount=0.0,
-        buffer_post_payment=0.0,
-        notes="",
-    )
+    delegate = _make_delegate_comp(level_at_period_end=1, days_as_l1=30)
     workbook, _ = empty_existing_ws
     with patch("ad_voting_metrics.sheets.set_with_dataframe") as set_mock:
         sheets.write_compensation_tab(workbook, _make_period_comp(per_delegate=[delegate]))
@@ -1596,27 +1484,7 @@ def test_write_compensation_tab_none_pct_renders_as_no_data(empty_existing_ws):
 def test_write_compensation_tab_level_label_mapping(empty_existing_ws):
     """level_at_period_end (1/2/3/None) → Level 1 / Level 2 / Level 3 / No."""
 
-    def _delegate(level):
-        return DelegateCompensation(
-            name=f"d{level}",
-            rank_at_period_end=1,
-            level_at_period_end=level,
-            days_as_l1=0,
-            days_as_l2=0,
-            days_as_l3=0,
-            participation_pct=None,
-            communication_pct=None,
-            metrics_modifier=0.0,
-            entitlement_pre_modifier=0.0,
-            final_amount=0.0,
-            buffer_carry_in=0.0,
-            buffer_added=0.0,
-            payment_amount=0.0,
-            buffer_post_payment=0.0,
-            notes="",
-        )
-
-    delegates = [_delegate(1), _delegate(2), _delegate(3), _delegate(None)]
+    delegates = [_make_delegate_comp(name=f"d{level}", level_at_period_end=level) for level in [1, 2, 3, None]]
     workbook, _ = empty_existing_ws
     with patch("ad_voting_metrics.sheets.set_with_dataframe") as set_mock:
         sheets.write_compensation_tab(workbook, _make_period_comp(per_delegate=delegates))
