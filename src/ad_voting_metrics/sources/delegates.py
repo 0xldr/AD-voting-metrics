@@ -5,7 +5,7 @@ Fetches the currently aligned delegate set. Paginates via paginationInfo.hasNext
 
 import logging
 
-from .http import HTTP_TIMEOUT, get_session
+from .http import HEADERS, HTTP_TIMEOUT, get_session
 
 logger = logging.getLogger(__name__)
 
@@ -37,7 +37,7 @@ def fetch_aligned_delegates() -> list[dict]:
             "orderDirection": "DESC",
             "delegateType": "ALIGNED",
         }
-        response = session.get(DELEGATES_URL, params=params, timeout=HTTP_TIMEOUT)
+        response = session.get(DELEGATES_URL, params=params, headers=HEADERS, timeout=HTTP_TIMEOUT)
         response.raise_for_status()
         data = response.json()
 
