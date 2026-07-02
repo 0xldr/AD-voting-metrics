@@ -87,6 +87,7 @@ The month argument accepts either natural form (`"April 2026"`) or ISO (`"2026-0
 
 - Workbook tabs: `Daily Data` (workbook-wide), `Communication Master` (workbook-wide), `Participation Raw Data <Month Year>` (per-period)
 - CSVs in `output_data/`: `sky.csv` (per-delegate daily SKY balances), `vote_participation.csv` (per-delegate poll matrix)
+- Pre-clear backups in `output_data/backups/`: before a workbook-wide tab (`Daily Data`, `Communication Master`) is cleared and rewritten, its current contents are saved to a timestamped CSV so an interrupted write can be recovered
 - A reconciliation log entry in `output_data/reconciliation/`
 
 **`finalize`** writes:
