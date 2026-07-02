@@ -8,6 +8,8 @@ from unittest.mock import MagicMock, patch
 
 import pandas as pd
 import pytest
+from eth_typing import HexStr
+from web3 import Web3
 from web3.exceptions import Web3RPCError
 
 from ad_voting_metrics.period import MonthPeriod
@@ -32,6 +34,77 @@ def test_event_topics_are_0x_prefixed_32_byte_hashes():
 
 
 # ---------------------------------------------------------------------------
+# _fetch_event_logs — merged Lock/Free fetch
+# ---------------------------------------------------------------------------
+
+
+def test_fetch_event_logs_merges_topics_and_signs_amounts():
+    """One OR-filtered getLogs call returns both event types; Free amounts come back negated."""
+    contract = "0x" + "c" * 40
+    from_block = delegation.V3_FACTORY_BLOCK
+    lock_log = {
+        "address": contract,
+        "blockNumber": from_block + 1,
+        "data": Web3.to_bytes(100),
+        "topics": [Web3.to_bytes(hexstr=HexStr(delegation.LOCK_TOPIC))],
+    }
+    free_log = {
+        "address": contract,
+        "blockNumber": from_block + 2,
+        "data": Web3.to_bytes(40),
+        "topics": [Web3.to_bytes(hexstr=HexStr(delegation.FREE_TOPIC))],
+    }
+    mock_w3 = MagicMock()
+    mock_w3.eth.get_logs.return_value = [lock_log, free_log]
+
+    events, new_blocks = delegation._fetch_event_logs(mock_w3, [contract], from_block, from_block + 10)
+
+    assert events[contract] == [[from_block + 1, "100"], [from_block + 2, "-40"]]
+    assert new_blocks == {from_block + 1, from_block + 2}
+    mock_w3.eth.get_logs.assert_called_once()
+    params = mock_w3.eth.get_logs.call_args.args[0]
+    assert params["topics"] == [[delegation.LOCK_TOPIC, delegation.FREE_TOPIC]]
+
+
+# ---------------------------------------------------------------------------
+# _fetch_block_timestamps — batched with sequential fallback
+# ---------------------------------------------------------------------------
+
+
+def test_fetch_block_timestamps_uses_one_batch_for_missing_blocks():
+    mock_w3 = MagicMock()
+    batch = mock_w3.batch_requests.return_value.__enter__.return_value
+    batch.execute.return_value = [{"timestamp": 1_700_000_000}, {"timestamp": 1_700_000_100}]
+
+    out = delegation._fetch_block_timestamps(mock_w3, {5, 6}, {})
+
+    assert out == {"5": 1_700_000_000, "6": 1_700_000_100}
+    assert batch.add.call_count == 2
+
+
+def test_fetch_block_timestamps_falls_back_to_sequential_calls():
+    """Providers without JSON-RPC batch support get one get_block call per block."""
+    mock_w3 = MagicMock()
+    mock_w3.batch_requests.side_effect = ValueError("batch not supported")
+    mock_w3.eth.get_block.side_effect = [{"timestamp": 1}, {"timestamp": 2}]
+
+    out = delegation._fetch_block_timestamps(mock_w3, {5, 6}, {})
+
+    assert out == {"5": 1, "6": 2}
+    assert mock_w3.eth.get_block.call_count == 2
+
+
+def test_fetch_block_timestamps_skips_cached_blocks():
+    """No RPC traffic when every block already has a cached timestamp."""
+    mock_w3 = MagicMock()
+
+    out = delegation._fetch_block_timestamps(mock_w3, {5}, {"5": 42})
+
+    assert out == {"5": 42}
+    mock_w3.batch_requests.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
 # get_all_sky_delegated — event sync, cache load/save, daily series
 # ---------------------------------------------------------------------------
 
@@ -51,7 +124,7 @@ def test_get_all_sky_delegated_uses_injected_w3(tmp_path):
 
     mock_w3 = MagicMock()
     mock_w3.eth.block_number = 22368738
-    mock_w3.eth.get_logs.side_effect = [[], []]  # No events
+    mock_w3.eth.get_logs.return_value = []  # No events
 
     # Should not raise even though SKY_RPC_URL unset.
     result = delegation.get_all_sky_delegated(
@@ -75,7 +148,7 @@ def test_get_all_sky_delegated_rebuild_resyncs_from_factory_block(monkeypatch, t
 
     mock_w3 = MagicMock()
     mock_w3.eth.block_number = 100000000
-    mock_w3.eth.get_logs.side_effect = [[], []]  # No events
+    mock_w3.eth.get_logs.return_value = []  # No events
 
     with patch("ad_voting_metrics.sources.delegation._sync_events") as sync_mock:
         sync_mock.return_value = {"events": {}, "last_synced_block": 100000000}
