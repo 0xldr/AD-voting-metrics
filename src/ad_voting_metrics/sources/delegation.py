@@ -10,7 +10,6 @@ output_data/delegation_cache.json, so steady-state runs only fetch new blocks.
 """
 
 import logging
-import os
 from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import Any, cast
@@ -21,6 +20,7 @@ from web3.exceptions import Web3RPCError
 
 from ad_voting_metrics.paths import DELEGATION_CACHE_PATH
 from ad_voting_metrics.period import MonthPeriod
+from ad_voting_metrics.settings import EnvSettings
 from ad_voting_metrics.sources.json_cache import load_json_cache, save_json_cache
 
 logger = logging.getLogger(__name__)
@@ -351,7 +351,7 @@ def get_all_sky_delegated(
         RuntimeError: if SKY_RPC_URL is unset (and w3 not injected) or sync fails.
     """
     if w3 is None:
-        rpc_url = os.environ.get("SKY_RPC_URL")
+        rpc_url = EnvSettings().sky_rpc_url
         if not rpc_url:
             raise RuntimeError(
                 "SKY_RPC_URL environment variable is not set. Add it to your .env file (see .env.example).",
