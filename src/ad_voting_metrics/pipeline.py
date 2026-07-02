@@ -17,6 +17,8 @@ from typing import TypeAlias, TypeVar
 
 import gspread
 import pandas as pd
+import requests
+from web3.exceptions import Web3Exception
 
 from . import sheets
 from .compensation import CompensationConfig, PeriodCompensation, compute_period_compensation
@@ -262,7 +264,11 @@ def run_fetch(args: argparse.Namespace) -> None:
     logger.info("Verifying Pending executive votes on-chain...")
     try:
         df = sky_executive_onchain.resolve_pending_executive_votes(df, spell_info)
-    except Exception:
+    except (requests.exceptions.RequestException, Web3Exception):
+        # Transient network/RPC failures are tolerable: leave cells Pending for
+        # operator adjudication. Anything else (schema drift, decode/logic bugs)
+        # propagates so a broken verification path fails the run instead of
+        # silently no-op'ing every time.
         logger.exception("On-chain executive-vote verification failed; leaving Pending cells as-is")
 
     output_files = _write_fetch_csvs(df, df_sky, poll_info, spell_info)
