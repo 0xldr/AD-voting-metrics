@@ -9,7 +9,6 @@ Events are synced incrementally from the V3 VoteDelegateFactory (block 22368737)
 output_data/delegation_cache.json, so steady-state runs only fetch new blocks.
 """
 
-import json
 import logging
 import os
 from datetime import UTC, date, datetime
@@ -22,6 +21,7 @@ from web3.exceptions import Web3RPCError
 
 from ad_voting_metrics.paths import DELEGATION_CACHE_PATH
 from ad_voting_metrics.period import MonthPeriod
+from ad_voting_metrics.sources.json_cache import load_json_cache, save_json_cache
 
 logger = logging.getLogger(__name__)
 
@@ -54,21 +54,11 @@ def _load_cache(path: Path) -> dict[str, Any]:
         The cache dict with keys: last_synced_block, events, block_timestamps.
         Empty dict if the file doesn't exist.
     """
-    if not path.exists():
-        return {}
-    with path.open(encoding="utf-8") as f:
-        data: dict[str, Any] = json.load(f)
+    data = load_json_cache(path)
     # Normalize contract addresses to lowercase in the events dict.
     if "events" in data:
         data["events"] = {contract.lower(): events for contract, events in data["events"].items()}
     return data
-
-
-def _save_cache(cache: dict[str, Any], path: Path) -> None:
-    """Persist the cache to disk, creating parent dirs if needed."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("w", encoding="utf-8") as f:
-        json.dump(cache, f, indent=2, sort_keys=True)
 
 
 # ---------------------------------------------------------------------------
@@ -224,7 +214,7 @@ def _sync_events(
 
     cache["block_timestamps"] = _fetch_block_timestamps(w3, new_blocks, cache.get("block_timestamps", {}))
     cache["last_synced_block"] = safe_head
-    _save_cache(cache, cache_path)
+    save_json_cache(cache, cache_path)
 
     logger.info(
         "Synced %d new events across %d blocks; last_synced_block=%d",
