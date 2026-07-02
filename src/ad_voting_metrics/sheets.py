@@ -9,9 +9,9 @@ DataFrames directly and the writers consume them.
 """
 
 import calendar
-import os
+import logging
 from collections import Counter
-from datetime import date, datetime
+from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
@@ -22,7 +22,11 @@ from gspread_dataframe import get_as_dataframe, set_with_dataframe
 
 from .compensation import CompensationConfig
 from .metrics import PARTICIPATED, PENDING_VERIFICATION, cross_reference_one
+from .paths import BACKUP_DIR as _DEFAULT_BACKUP_DIR
 from .period import MonthPeriod
+from .settings import EnvSettings
+
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from .compensation import PeriodCompensation
@@ -56,8 +60,9 @@ def get_workbook(
           - JSON key file is malformed or wrong format
           - Workbook ID is wrong, or not shared with the service account
     """
+    env = EnvSettings()
     if service_account_file is None:
-        service_account_file = os.environ.get("GOOGLE_SERVICE_ACCOUNT_FILE")
+        service_account_file = env.google_service_account_file
         if not service_account_file:
             raise RuntimeError(
                 "GOOGLE_SERVICE_ACCOUNT_FILE environment variable is not set. "
@@ -66,7 +71,7 @@ def get_workbook(
             )
 
     if workbook_id is None:
-        workbook_id = os.environ.get("SHEETS_WORKBOOK_ID")
+        workbook_id = env.sheets_workbook_id
         if not workbook_id:
             raise RuntimeError(
                 "SHEETS_WORKBOOK_ID environment variable is not set. "
@@ -142,6 +147,33 @@ def get_or_create_tab(
 def clear_tab(worksheet: gspread.Worksheet) -> None:
     """Wipe all cell values in the worksheet, leaving formatting intact."""
     worksheet.clear()
+
+
+# Local pre-clear backups of workbook-wide tabs. Module-level (not the paths
+# constant directly) so tests can redirect it to a tmp dir.
+BACKUP_DIR = _DEFAULT_BACKUP_DIR
+
+
+def _backup_tab_before_clear(df: pd.DataFrame, tab_title: str) -> None:
+    """Save a tab's parsed contents to a local CSV before a destructive clear+rewrite.
+
+    Daily Data and Communication Master are workbook-wide: they hold history and operator edits that exist nowhere
+    else, and their writers clear the tab before rewriting. A crash between clear and write would otherwise lose that
+    data permanently; the CSV under output_data/backups/ makes it recoverable.
+
+    Raises:
+        RuntimeError: if the backup can't be written. Proceeding with the clear without a safety copy is worse than
+            skipping this tab's update.
+    """
+    timestamp = datetime.now(UTC).isoformat().replace("+00:00", "Z").replace(":", "-")
+    path = BACKUP_DIR / f"{tab_title}_{timestamp}.csv"
+    try:
+        BACKUP_DIR.mkdir(parents=True, exist_ok=True)
+        df.to_csv(path, index=False)
+    except OSError as e:
+        msg = f"Could not write pre-clear backup of '{tab_title}' to {path}: {e}. Refusing to clear the tab."
+        raise RuntimeError(msg) from e
+    logger.info("Pre-clear backup of '%s' written to %s", tab_title, path)
 
 
 def _open_required_tab(
@@ -335,6 +367,8 @@ def write_daily_data(
     merged = merged.sort_values(by=["Date", "Rank"]).reset_index(drop=True)
     merged["Date"] = merged["Date"].apply(_coerce_date)
 
+    if not existing.empty:
+        _backup_tab_before_clear(existing, DAILY_DATA_TAB_TITLE)
     clear_tab(worksheet)
     set_with_dataframe(
         worksheet, merged, include_index=False, include_column_header=True, resize=False, allow_formulas=False
@@ -663,6 +697,8 @@ def write_communication_master(
 
     out = merged.reset_index()
 
+    if not existing.empty:
+        _backup_tab_before_clear(existing.reset_index(), COMMUNICATION_MASTER_TAB_TITLE)
     clear_tab(worksheet)
     set_with_dataframe(
         worksheet, out, include_index=False, include_column_header=True, resize=False, allow_formulas=False

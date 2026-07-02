@@ -23,6 +23,7 @@ from web3.constants import ADDRESS_ZERO
 from web3.exceptions import BadFunctionCallOutput, ContractLogicError, Web3RPCError
 
 from ad_voting_metrics.metrics import PENDING_VERIFICATION
+from ad_voting_metrics.paths import SLATE_CACHE_PATH
 from ad_voting_metrics.sources.http import HEADERS, HTTP_TIMEOUT, get_session
 
 logger = logging.getLogger(__name__)
@@ -65,8 +66,7 @@ _CHIEF_ABI = [
     },
 ]
 
-REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
-DEFAULT_SLATE_CACHE_PATH = REPO_ROOT / "output_data" / "slate_cache.json"
+DEFAULT_SLATE_CACHE_PATH = SLATE_CACHE_PATH
 
 
 # ---------------------------------------------------------------------------

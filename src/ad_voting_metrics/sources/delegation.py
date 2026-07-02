@@ -20,6 +20,7 @@ import pandas as pd
 from web3 import Web3
 from web3.exceptions import Web3RPCError
 
+from ad_voting_metrics.paths import DELEGATION_CACHE_PATH
 from ad_voting_metrics.period import MonthPeriod
 
 logger = logging.getLogger(__name__)
@@ -38,9 +39,7 @@ FINALITY_BLOCKS = 12
 INITIAL_CHUNK_BLOCKS = 100_000
 MIN_CHUNK_BLOCKS = 2_000
 
-# Cache location.
-REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
-DEFAULT_CACHE_PATH = REPO_ROOT / "output_data" / "delegation_cache.json"
+DEFAULT_CACHE_PATH = DELEGATION_CACHE_PATH
 
 
 # ---------------------------------------------------------------------------
