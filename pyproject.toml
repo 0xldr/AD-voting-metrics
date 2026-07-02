@@ -90,6 +90,9 @@ select = ["ALL"]
 ignore = [
     "CPY",    # Flake8-copyright - would require a copyright notice atop every file
     "DJ",     # Flake8-django - Django-specific conventions
+    "DOC201", # Pydoclint - "Returns:" required whenever a function returns; ruff can't scope
+              # this to public functions only, so it's off globally. Convention: public
+              # functions document Returns; private helpers may use a one-line docstring.
     "ERA",    # Eradicate - detects commented-out code (false-positives on prose comments)
     "EXE",    # Flake8-executable - executable file checks
     "T20",    # Flake8-print - disallows print statements

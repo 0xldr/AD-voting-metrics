@@ -96,9 +96,6 @@ class Delegate(BaseModel):
     def _level_periods_fit_alignment(self) -> "Delegate":
         """Every LevelAssignment must fall within the delegate's alignment period.
 
-        Returns:
-            self
-
         Raises:
             ValueError: if any LevelAssignment falls outside the
             delegate's alignment period.
@@ -128,9 +125,6 @@ class Delegate(BaseModel):
     @model_validator(mode="after")
     def _level_periods_no_overlap(self) -> "Delegate":
         """Sequential LevelAssignments are allowed; overlapping ones aren't.
-
-        Returns:
-            self
 
         Raises:
             ValueError: if two LevelAssignments overlap, or a non-final

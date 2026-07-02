@@ -50,9 +50,8 @@ DEFAULT_CACHE_PATH = DELEGATION_CACHE_PATH
 def _load_cache(path: Path) -> dict[str, Any]:
     """Load the delegation cache from disk.
 
-    Returns:
-        The cache dict with keys: last_synced_block, events, block_timestamps.
-        Empty dict if the file doesn't exist.
+    Returns the cache dict with keys: last_synced_block, events, block_timestamps. Empty dict if the file doesn't
+    exist.
     """
     data = load_json_cache(path)
     # Normalize contract addresses to lowercase in the events dict.
@@ -79,11 +78,9 @@ def _fetch_event_logs(
     retries down to MIN_CHUNK_BLOCKS. A size that worked carries over to subsequent chunks so a provider with a low
     limit isn't re-probed on every window.
 
-    Returns:
-        Tuple of (events_by_contract, new_blocks). events_by_contract maps a
-        lowercased contract address to a list of [block_number, signed_wad_str],
-        where Lock amounts are positive and Free amounts negative. new_blocks is the
-        set of block numbers in which an event was seen.
+    Returns a tuple of (events_by_contract, new_blocks). events_by_contract maps a lowercased contract address to a
+    list of [block_number, signed_wad_str], where Lock amounts are positive and Free amounts negative. new_blocks is
+    the set of block numbers in which an event was seen.
 
     Raises:
         RuntimeError: if eth_getLogs fails even at MIN_CHUNK_BLOCKS.
@@ -142,8 +139,7 @@ def _fetch_block_timestamps(
     Missing blocks are requested in a single JSON-RPC batch; providers that reject batch requests fall back to one
     get_block call per block.
 
-    Returns:
-        The block_timestamps dict, extended with newly fetched entries.
+    Returns the block_timestamps dict, extended with newly fetched entries.
 
     Raises:
         RuntimeError: if a sequential get_block call fails.
@@ -188,8 +184,7 @@ def _sync_events(
     Loads the cache; if rebuild=True, discards prior events and syncs from V3_FACTORY_BLOCK.
     Otherwise syncs from (last_synced_block + 1).
 
-    Returns:
-        The updated cache dict.
+
     """
     cache = _load_cache(cache_path)
     if rebuild:
@@ -250,9 +245,8 @@ def _contract_cumulative_balances(
 
     Events lacking a cached block timestamp are skipped with a warning.
 
-    Returns:
-        Mapping of event date to the running-total balance (wei) as of that date.
-        Empty if the contract has no timestamped events.
+    Returns a mapping of event date to the running-total balance (wei) as of that date. Empty if the contract has no
+    timestamped events.
 
     Raises:
         ValueError: if the running total goes negative, indicating missing or
@@ -287,9 +281,8 @@ def _build_daily_series(cache: dict[str, Any]) -> pd.DataFrame:
     For each contract, aggregates Lock/Free events into cumulative daily balances, then
     forward-fills each day between the first and last event.
 
-    Returns:
-        DataFrame indexed on (delegation_contract, dt) with running_total_balance column.
-        Forward-filled: each day carries the prior day's balance if no events occur.
+    Returns a DataFrame indexed on (delegation_contract, dt) with running_total_balance column. Forward-filled: each
+    day carries the prior day's balance if no events occur.
     """
     rows: list[dict[str, Any]] = []
     block_timestamps = cache.get("block_timestamps", {})

@@ -71,8 +71,8 @@ def get_poll_ids(period: MonthPeriod) -> list[dict]:
 def _fetch_poll_voters(poll: dict) -> tuple[int, set[str]]:
     """Fetch the voter address set for one poll.
 
-    Returns:
-        Tuple of (pollId, lowercased voter addresses).
+    Returns a tuple of (pollId, lowercased voter addresses).
+
     """
     response = get_session().get(
         f"{SKY_POLL_ID_URL}/{poll['pollId']}",

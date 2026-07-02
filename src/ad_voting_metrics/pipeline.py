@@ -66,8 +66,7 @@ def _build_metrics_input(
     one row per (delegate, poll) with Communication Status. They are merged on (Delegate, Poll Id); polls absent from
     communication get a blank communication status.
 
-    Returns:
-        Mapping of delegate name to DelegateMetricsInput.
+
     """
     if participation_df.empty:
         return {
@@ -102,11 +101,7 @@ def _build_metrics_input(
 
 
 def _ranks_by_day(daily_ranks_df: pd.DataFrame) -> dict[date, dict[str, int]]:
-    """Pivot the long Daily Data DataFrame into {day: {delegate: rank}}.
-
-    Returns:
-        Mapping from each day present in the DataFrame to its {delegate: rank} for the day.
-    """
+    """Pivot the long Daily Data DataFrame into {day: {delegate: rank}}."""
     if daily_ranks_df.empty:
         return {}
     out: dict[date, dict[str, int]] = {}
@@ -131,8 +126,8 @@ def _compute_daily_results(
     via `compute_period_metrics` and passes it in for reuse across every day. The only per-day inputs are the rank
     table and the day's L3 slot competition. `total_slots` comes from the workbook Config tab.
 
-    Returns:
-        List of DailyEligibility, one per day in period.start..period.end inclusive.
+    Returns a list of DailyEligibility, one per day in period.start..period.end inclusive.
+
     """
     ranks_by_day = _ranks_by_day(daily_ranks_df)
     return [
@@ -153,11 +148,7 @@ def _build_sky_and_ranking_frames(
     *,
     rebuild: bool,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """Pull on-chain SKY delegation data and build the sorted sky + ranking dataframes.
-
-    Returns:
-        Tuple of (df_sky, df_ranking) sorted for downstream writers.
-    """
+    """Pull on-chain SKY delegation data and build the sorted sky + ranking dataframes."""
     daily = delegation.get_delegate_list_sky(df, period, rebuild=rebuild)
 
     df_sky = daily[["contract", "date", "sky"]].sort_values(
@@ -189,8 +180,8 @@ def _defuse_csv_formulas(df: pd.DataFrame) -> pd.DataFrame:
     opened in a spreadsheet application. The apostrophe is the spreadsheet convention for "literal text"; apps hide it
     on display.
 
-    Returns:
-        A copy of df with formula-like string cells prefixed; non-string cells unchanged.
+    Returns a copy of df with formula-like string cells prefixed; non-string cells unchanged.
+
     """
 
     def defuse(value: object) -> object:
@@ -213,8 +204,8 @@ def _write_fetch_csvs(
     formula-like values from external APIs are neutralized at this boundary (the workbook writers neutralize
     separately via allow_formulas=False).
 
-    Returns:
-        The list of CSV paths written, in write order.
+    Returns the list of CSV paths written, in write order.
+
     """
     sky_csv = OUTPUT_DIR / "sky.csv"
     df_sky.to_csv(sky_csv, index=False)
@@ -359,11 +350,7 @@ def _compute_period_compensation_for_window(
     config: CompensationConfig,
     workbook_data: _WorkbookData,
 ) -> PeriodCompensation:
-    """Build metrics input, compute per-day eligibility, then period compensation.
-
-    Returns:
-        The PeriodCompensation for the given period and inputs.
-    """
+    """Build metrics input, compute per-day eligibility, then period compensation."""
     daily_df, participation_df, communication_df = workbook_data
     metrics_input = _build_metrics_input(delegates, participation_df, communication_df)
     # Period-level metrics cover every delegate active at any point (the last day's slice omits
