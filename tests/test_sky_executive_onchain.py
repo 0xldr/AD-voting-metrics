@@ -10,7 +10,6 @@ from unittest.mock import MagicMock
 
 import pandas as pd
 import pytest
-import responses
 from hexbytes import HexBytes
 from web3.exceptions import ContractLogicError
 
@@ -31,15 +30,6 @@ def _reset_session():
 def _ts(d: date) -> int:
     """Unix timestamp for midnight UTC on `d`."""
     return int(datetime(d.year, d.month, d.day, tzinfo=UTC).timestamp())
-
-
-def _mock_blockscout(block_number: int = 22_000_000) -> None:
-    """Register a Blockscout getblocknobytime response for the active `responses` context."""
-    responses.add(
-        responses.GET,
-        onchain.BLOCKSCOUT_API_URL,
-        json={"status": "1", "message": "OK", "result": str(block_number)},
-    )
 
 
 # ---------------------------------------------------------------------------
@@ -143,31 +133,29 @@ def test_resolve_slate_safety_cap_on_runaway():
 # ---------------------------------------------------------------------------
 
 
-@responses.activate
-def test_block_from_date_returns_blockscout_result():
-    responses.add(
-        responses.GET,
-        onchain.BLOCKSCOUT_API_URL,
-        json={"status": "1", "message": "OK", "result": "21500000"},
-    )
-    assert onchain._block_from_date(date(2026, 5, 13)) == 21_500_000
+def test_block_from_date_finds_first_block_at_or_after_midnight():
+    """Binary search converges on the first block whose timestamp >= midnight UTC of the target date."""
+    genesis_ts = _ts(date(2026, 5, 1))
+    mock_w3 = MagicMock()
+    mock_w3.eth.block_number = 200_000
+    # One block every 12 seconds from genesis_ts.
+    mock_w3.eth.get_block.side_effect = lambda n: {"timestamp": genesis_ts + n * 12}
+
+    result = onchain._block_from_date(mock_w3, date(2026, 5, 13))
+
+    # 12 days * 86400 s / 12 s per block — timestamp lands exactly on midnight, so that block is included.
+    assert result == 12 * 86400 // 12
+    # Binary search, not a linear scan: far fewer calls than the block range.
+    assert mock_w3.eth.get_block.call_count < 25
 
 
-@responses.activate
-def test_block_from_date_sends_midnight_utc_timestamp():
-    """The function must query by midnight UTC of the target date, with closest=after."""
-    responses.add(
-        responses.GET,
-        onchain.BLOCKSCOUT_API_URL,
-        json={"status": "1", "message": "OK", "result": "1"},
-    )
-    onchain._block_from_date(date(2026, 5, 13))
-    request_url = responses.calls[0].request.url
-    assert request_url is not None
-    assert f"timestamp={_ts(date(2026, 5, 13))}" in request_url
-    assert "closest=after" in request_url
-    assert "module=block" in request_url
-    assert "action=getblocknobytime" in request_url
+def test_block_from_date_returns_first_block_when_chain_starts_after_target():
+    """A chain whose first block already postdates the target collapses to block 1."""
+    mock_w3 = MagicMock()
+    mock_w3.eth.block_number = 1_000
+    mock_w3.eth.get_block.side_effect = lambda n: {"timestamp": _ts(date(2026, 6, 1)) + n}
+
+    assert onchain._block_from_date(mock_w3, date(2026, 5, 13)) == 1
 
 
 # ---------------------------------------------------------------------------
@@ -458,13 +446,12 @@ def _w3_for_resolver(
 
     contract.functions.slates.side_effect = _slates_factory
     w3.eth.contract.return_value = contract
+    w3.eth.block_number = 10_000
     return w3
 
 
-@responses.activate
 def test_resolve_pending_flips_cell_when_slate_contains_spell(tmp_path):
     """Happy path: a delegate's in-window vote for a slate containing the spell."""
-    _mock_blockscout()
     spell_addr = "0x" + "11" * 20
     spell_start = date(2026, 4, 1)
     df = pd.DataFrame({
@@ -487,10 +474,8 @@ def test_resolve_pending_flips_cell_when_slate_contains_spell(tmp_path):
     assert result.loc[0, spell_addr] == "Yes"
 
 
-@responses.activate
 def test_resolve_pending_late_vote_stays_pending(tmp_path):
     """A vote 8 days after spell start does not flip the cell."""
-    _mock_blockscout()
     spell_addr = "0x" + "22" * 20
     spell_start = date(2026, 4, 1)
     df = pd.DataFrame({
@@ -513,10 +498,8 @@ def test_resolve_pending_late_vote_stays_pending(tmp_path):
     assert result.loc[0, spell_addr] == PENDING
 
 
-@responses.activate
 def test_resolve_pending_persists_cache_growth(tmp_path):
     """Newly resolved slates are written back to the cache file."""
-    _mock_blockscout()
     spell_addr = "0x" + "33" * 20
     spell_start = date(2026, 4, 1)
     df = pd.DataFrame({
@@ -543,10 +526,8 @@ def test_resolve_pending_persists_cache_growth(tmp_path):
     assert written[slate.lower()] == [spell_addr]
 
 
-@responses.activate
 def test_resolve_pending_reuses_cached_slate(tmp_path):
     """If the slate is already cached, no contract call is made."""
-    _mock_blockscout()
     spell_addr = "0x" + "44" * 20
     spell_start = date(2026, 4, 1)
     slate = "0x" + "ef" * 32
@@ -574,10 +555,8 @@ def test_resolve_pending_reuses_cached_slate(tmp_path):
     w3.eth.contract.return_value.functions.slates.assert_not_called()
 
 
-@responses.activate
 def test_resolve_pending_no_cache_write_when_no_new_slates(tmp_path):
     """If the on-chain events reveal only already-cached slates, the file is left alone."""
-    _mock_blockscout()
     spell_addr = "0x" + "55" * 20
     spell_start = date(2026, 4, 1)
     slate = "0x" + "ef" * 32
