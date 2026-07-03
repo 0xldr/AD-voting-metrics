@@ -1,0 +1,101 @@
+# Aligned Delegate roster — source of truth for who is or has been an AD.
+#
+# Every delegate ever in the program has an entry here. Currently-active
+# delegates have end_date: null. Exited delegates have end_date set to their
+# inclusive last day (e.g., end_date: 2026-04-15 means April 15 was their
+# last active day).
+#
+# When a new delegate is aligned: add an entry with their start_date (the date
+# AD compensation begins, not the contract creation date).
+# When a delegate exits: set their end_date.
+#
+# The script verifies this YAML against the vote.sky.money API on each run
+# and warns about mismatches (a YAML entry with end_date: null that the API
+# doesn't return as currently-aligned probably means the operator forgot to
+# set end_date after an exit).
+#
+# Schema validation is in src/ad_voting_metrics/roster.py.
+# Address regex: ^0x[0-9a-f]{40}$ (lowercase only).
+
+delegates:
+  - name: BONAPUBLICA
+    vote_delegate_address: "0xfc48fbca739079aab08216c4d5e506b96593753d"
+    start_date: 2023-07-04
+    end_date: null
+    levels:
+      - level: 2
+        start_date: 2025-12-01
+        end_date: null
+
+  - name: BLUE
+    vote_delegate_address: "0x173a1c04b79ed9266721c1154daa29addc0b9558"
+    start_date: 2023-09-28
+    end_date: null
+    levels:
+      - level: 1
+        start_date: 2025-12-01
+        end_date: null
+
+  - name: PBG
+    vote_delegate_address: "0x555230eca835a808518ec3ea3082f05502bab850"
+    start_date: 2023-04-09
+    end_date: null
+
+  - name: WBC
+    vote_delegate_address: "0x4bed44a9839b8778f69bb6a6d9f843414377ae90"
+    start_date: 2023-07-10
+    end_date: null
+
+  - name: Cloaky
+    vote_delegate_address: "0x0f23de72e1581857eacd6308aebb69cf3a49cc86"
+    start_date: 2023-06-06
+    end_date: null
+    levels:
+      - level: 1
+        start_date: 2025-12-01
+        end_date: null
+
+  - name: AegisD
+    vote_delegate_address: "0xd260762e442ea1893e5ed5e7d28984e19aafbf5e"
+    start_date: 2025-03-04
+    end_date: null
+
+  - name: Excel
+    vote_delegate_address: "0xead02d18529c10eedd995f760fdf5e380ddf3da6"
+    start_date: 2025-04-04
+    end_date: null
+
+  - name: Tango
+    vote_delegate_address: "0x550e5ec00b9d26a3517ce772ddfe73e8ed1672ad"
+    start_date: 2025-05-01
+    end_date: null
+
+  - name: Max Staking Yield
+    vote_delegate_address: "0xff7615e05ec1c8d5ded24ab50bf74432666bee2f"
+    start_date: 2025-05-22
+    end_date: null
+
+  - name: Sky Staking
+    vote_delegate_address: "0xe01684b17df0abbdaf97839277b194be4e1a7e79"
+    start_date: 2025-05-22
+    end_date: 2026-01-27
+
+  - name: Kuzmich
+    vote_delegate_address: "0x2c89024c13a80bc1b662a3db990524652c15221c"
+    start_date: 2025-07-01
+    end_date: 2026-06-11
+  
+  - name: OPEX
+    vote_delegate_address: "0x16a5a76904140e01f31c7e7abd9fb81988469ba4"
+    start_date: 2026-01-21
+    end_date: null
+  
+  - name: AxisLegati
+    vote_delegate_address: "0x7bc5a420b6524fa925f1321a01825438369e3c2e"
+    start_date: 2026-02-01
+    end_date: null
+
+  - name: Brendan Navigator
+    vote_delegate_address: "0x8a8d131502bb4868a0777bef604547a8316a8f11"
+    start_date: 2026-03-06
+    end_date: null

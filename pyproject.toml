@@ -1,0 +1,170 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ad-voting-metrics"
+version = "0.1.0"
+description = "Track AD voting metrics for Sky governance"
+requires-python = ">=3.11"
+dependencies = [
+    "requests>=2.31,<3",
+    "pandas>=2.2,<3",
+    "python-dotenv>=1.2,<2",
+    "pydantic>=2.0,<3",
+    "pydantic-settings>=2.0,<3",
+    "pyyaml>=6.0,<7",
+    "gspread>=6.0,<7",
+    "gspread-dataframe>=4.0,<5",
+    "google-auth>=2.0,<3",
+    "web3>=7,<8",
+]
+
+[dependency-groups]
+dev = [
+    "ruff",
+    "pytest>=8.0",
+    "responses>=0.25",
+    "mypy>=1.0",
+    "pandas-stubs",
+    "types-requests",
+    "types-PyYAML",
+    "pre-commit>=3.0",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+ad_voting_metrics = ["py.typed"]
+
+[tool.pyright]
+include = ["src", "tests"]
+pythonVersion = "3.11"
+typeCheckingMode = "standard"
+reportMissingTypeStubs = false
+
+[tool.ruff]
+# Exclude a variety of commonly ignored directories.
+exclude = [
+    ".bzr",
+    ".direnv",
+    ".eggs",
+    ".git",
+    ".git-rewrite",
+    ".hg",
+    ".ipynb_checkpoints",
+    ".mypy_cache",
+    ".nox",
+    ".pants.d",
+    ".pyenv",
+    ".pytest_cache",
+    ".pytype",
+    ".ruff_cache",
+    ".svn",
+    ".tox",
+    ".venv",
+    ".vscode",
+    "__pypackages__",
+    "_build",
+    "buck-out",
+    "build",
+    "dist",
+    "node_modules",
+    "site-packages",
+    "venv",
+]
+
+line-length = 120
+indent-width = 4
+target-version = "py311"
+preview = true
+
+[tool.ruff.lint]
+# Allow unused variables when underscore-prefixed.
+dummy-variable-rgx = "^(_+|(_+[a-zA-Z0-9_]*[a-zA-Z0-9]+?))$"
+
+# Everything on, including new linters as ruff adds them; deliberate
+# exclusions live in `ignore` below.
+select = ["ALL"]
+ignore = [
+    "CPY",    # Flake8-copyright - would require a copyright notice atop every file
+    "DJ",     # Flake8-django - Django-specific conventions
+    "DOC201", # Pydoclint - "Returns:" required whenever a function returns; ruff can't scope
+              # this to public functions only, so it's off globally. Convention: public
+              # functions document Returns; private helpers may use a one-line docstring.
+    "ERA",    # Eradicate - detects commented-out code (false-positives on prose comments)
+    "EXE",    # Flake8-executable - executable file checks
+    "T20",    # Flake8-print - disallows print statements
+    "D1",     # Pydocstyle - missing docstring in public module, class, or function
+    "FBT003", # Flake8-boolean-trap - boolean position value in function call
+    "D203",   # Pydocstyle - one blank line required before class docstring
+    "D212",   # Pydocstyle - summary line should be immediately after the opening quotes.
+    "S311",   # Flake8-bandit - Standard pseudo-random generators are not suitable for security/cryptographic purposes
+    "FA102",  # Flake8-future-annotations - Missing `from __future__ import annotations`, but uses PEP 604 union
+    "TRY003", # Tryceratops - Checks for long exception messages that are not defined in the exception class itself.
+    "EM101",  # Flake8-errmsg - Checks for the use of string literals in exception constructors.
+    "TC002",  # Flake8-type-checking - Checks for usage of typing imports outside of TYPE_CHECKING blocks.
+    "TC003",  # Flake8-type-checking - Checks for imports from typing that are not within TYPE_CHECKING blocks.
+    "COM812", # Flake8-commas - Checks for missing commas. Conflicts with ruff format
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = [
+    "S101", "S105", "S106", "S107", "PLR2004", "SLF001", "D", "ANN", "ARG001", "PLC0415", "EM102",
+    "RUF069",  # float equality fine in tests; values are exact, not approximations
+    "S108",    # /tmp paths in tests are not a real risk
+    "PLC2701", # tests legitimately exercise private helpers
+    "DOC",     # docstring sections (returns/yields) not required on test helpers
+    "PLC1901", # `== ""` is clearer than implicit-falsiness in assertions
+    ]
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
+[tool.ruff.format]
+# Like Black, use double quotes for strings.
+quote-style = "double"
+
+# Like Black, indent with spaces, rather than tabs.
+indent-style = "space"
+
+# Like Black, respect magic trailing commas.
+skip-magic-trailing-comma = false
+
+# Like Black, automatically detect the appropriate line ending.
+line-ending = "auto"
+
+# Enable auto-formatting of code examples in docstrings. Markdown,
+# reStructuredText code/literal blocks and doctests are all supported.
+#
+# This is currently disabled by default, but it is planned for this
+# to be opt-out in the future.
+docstring-code-format = true
+
+# Set the line length limit used when formatting code snippets in
+# docstrings.
+#
+# This only has an effect when the `docstring-code-format` setting is
+# enabled.
+docstring-code-line-length = "dynamic"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "integration: tests that hit live external services (Google Sheets, etc.). Skipped by default; run with `pytest -m integration`.",
+]
+addopts = "-m 'not integration'"
+
+[tool.mypy]
+files = ["src", "tests"]
+plugins = ["pydantic.mypy"]
+warn_redundant_casts = true
+warn_unused_ignores = true
+warn_return_any = true
+strict_equality = true
+check_untyped_defs = true
+
+[[tool.mypy.overrides]]
+module = ["gspread_dataframe"]
+ignore_missing_imports = true

@@ -12,7 +12,8 @@ __pycache__/
 .env.development.local
 .env.test.local
 .env.production.local
-/venv
+venv/
+.venv/
 
 # Dependency directories
 /node_modules/
@@ -24,6 +25,19 @@ __pycache__/
 /tmp
 /out
 
+# Generated outputs (scripts write CSVs here at runtime)
+output_data/reconciliation/*.json
+output_data/backups/
+output_data/*.csv
+output_data/*.json
+
+# Python tooling caches
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
 # Local development
 .vscode/
 .idea/
@@ -32,6 +46,8 @@ __pycache__/
 *.sublime-workspace
 *.sublime-project
 *.history/
+*.egg-info/
+*.egg
 
 # Heroku specific
 /heroku_output/
