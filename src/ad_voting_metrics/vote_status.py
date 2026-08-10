@@ -1,10 +1,37 @@
-"""Close-day vote-status rule for SKY polls.
+"""Vote-status rules for SKY polls and executive spells.
 
-Pure logic: given a delegate's SKY balance across a poll's voting window and whether they voted, decide the
-participation status string.
+Pure logic, no IO: given a delegate's SKY balance across a poll's voting window and whether they voted, decide the
+participation status string; and, for spells, when the voting deadline falls.
 """
 
-from datetime import UTC, date, datetime, time
+from datetime import UTC, date, datetime, time, timedelta
+
+# Business days a delegate has to vote on an executive spell once it goes live.
+SPELL_VOTE_BUSINESS_DAYS = 3
+
+# Monday-Friday. date.weekday() returns 0 for Monday, so 5 and 6 are the weekend.
+_SATURDAY = 5
+
+
+def spell_vote_deadline(spell_start: date, business_days: int = SPELL_VOTE_BUSINESS_DAYS) -> date:
+    """Return the last UTC day on which a vote for a spell still counts.
+
+    Counts `business_days` Monday-Friday days strictly after `spell_start`, skipping weekends; no holiday calendar is
+    applied. The returned date is inclusive - a vote landing anywhere within it (up to 23:59:59 UTC) is on time.
+
+    Live Monday gives a Thursday deadline; live Friday gives the following Wednesday. A spell going live on a weekend
+    starts counting from the Monday, which is day 1.
+
+    Returns:
+        The inclusive deadline date.
+    """
+    deadline = spell_start
+    remaining = business_days
+    while remaining > 0:
+        deadline += timedelta(days=1)
+        if deadline.weekday() < _SATURDAY:
+            remaining -= 1
+    return deadline
 
 
 def determine_vote_status(

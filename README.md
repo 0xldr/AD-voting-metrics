@@ -12,6 +12,14 @@ The pipeline is two-step, with operator review in between:
 
 Compensation is pro-rata by days held at each level (L1/L2/L3) and scaled by the modifier. Rates come from a workbook-wide **Config** tab.
 
+### Executive spell voting deadline
+
+A delegate has **3 business days (UTC)** from the day a spell goes live to vote for it. Weekends are skipped and no holiday calendar is applied, so a spell going live Monday must be voted on by Thursday, and one going live Friday by the following Wednesday. A vote landing anywhere within the deadline day counts.
+
+A vote cast after the deadline is marked **`Late`** and counts as non-participation — the same weight as never voting — but is labelled distinctly so the operator can tell the two apart. In Communication Master a `Late` cell cross-references to `Did not vote`, which is discounted, so a late vote is not penalised twice.
+
+Timing can only be established on-chain, from chief `Vote` events. The public supporters endpoint reports who currently supports a spell but carries no timestamp, so it is not used. Any spell cell the on-chain check cannot settle — including every cell when `SKY_RPC_URL` is unset — stays `Pending verification` for operator adjudication rather than being credited unverified.
+
 ## Requirements
 
 - Python 3.11 or later.
@@ -32,7 +40,7 @@ pip install -e .
 
 ### Environment Variables
 
-The script needs a mainnet JSON-RPC endpoint to fetch on-chain delegation events (and to verify "Pending verification" executive votes).
+The script needs a mainnet JSON-RPC endpoint to fetch on-chain delegation events and to establish when each executive vote was cast. Without it no spell vote can be credited — every spell cell stays "Pending verification".
 
 Copy `.env.example` to `.env` and fill in:
 
