@@ -1,7 +1,7 @@
 """Tests for sources.sky_executive — vote.sky.money executive endpoints."""
 
 from datetime import date
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pandas as pd
 import responses
@@ -16,21 +16,8 @@ def _sky_lookup(rows: list[tuple[str, date, float]]) -> dict[tuple[str, date], f
 
 
 # ---------------------------------------------------------------------------
-# add_spell_vote_statuses — per-spell vote status, supporter-set normalization
+# add_spell_vote_statuses — balance-derived seed statuses
 # ---------------------------------------------------------------------------
-
-
-def _mock_executive_supporters_response(supporters_by_spell: dict[str, list[str]]) -> MagicMock:
-    """Return a mock for the executive/supporters endpoint.
-
-    supporters_by_spell maps spell_address -> list of supporter addresses.
-    """
-    response = MagicMock()
-    response.json.return_value = {
-        spell_addr: [{"address": s} for s in supporters] for spell_addr, supporters in supporters_by_spell.items()
-    }
-    response.raise_for_status.return_value = None
-    return response
 
 
 def test_add_spell_vote_statuses_adds_column_per_spell():
@@ -44,44 +31,21 @@ def test_add_spell_vote_statuses_adds_column_per_spell():
         {"address": "0xspell2", "startDate": date(2026, 4, 5)},
     ]
 
-    with patch("ad_voting_metrics.sources.sky_executive.get_session") as mock_session:
-        mock_session.return_value.get.return_value = _mock_executive_supporters_response({})
-        result = sky_executive.add_spell_vote_statuses(spell_info, df, sky_lookup)
+    result = sky_executive.add_spell_vote_statuses(spell_info, df, sky_lookup)
 
     assert "0xspell1" in result.columns
     assert "0xspell2" in result.columns
 
 
-def test_add_spell_vote_statuses_supporter_with_sky_returns_yes():
-    """Delegate in supporters + non-zero SKY on startDate → 'Yes'."""
+def test_add_spell_vote_statuses_with_sky_returns_pending():
+    """Non-zero SKY on startDate → 'Pending verification', awaiting on-chain timing."""
     df = pd.DataFrame([
         {"Delegate Name": "Alice", "Delegate Contract": "0xaaa", "Start Date": "2024-01-01"},
     ])
     sky_lookup = _sky_lookup([("0xaaa", date(2026, 4, 5), 1000.0)])
     spell_info = [{"address": "0xspell1", "startDate": date(2026, 4, 5)}]
 
-    with patch("ad_voting_metrics.sources.sky_executive.get_session") as mock_session:
-        mock_session.return_value.get.return_value = _mock_executive_supporters_response(
-            {"0xspell1": ["0xaaa"]},
-        )
-        result = sky_executive.add_spell_vote_statuses(spell_info, df, sky_lookup)
-
-    assert result.loc[0, "0xspell1"] == "Yes"
-
-
-def test_add_spell_vote_statuses_not_supporter_with_sky_returns_pending():
-    """Delegate NOT in supporters + non-zero SKY on startDate → 'Pending verification'."""
-    df = pd.DataFrame([
-        {"Delegate Name": "Alice", "Delegate Contract": "0xaaa", "Start Date": "2024-01-01"},
-    ])
-    sky_lookup = _sky_lookup([("0xaaa", date(2026, 4, 5), 1000.0)])
-    spell_info = [{"address": "0xspell1", "startDate": date(2026, 4, 5)}]
-
-    with patch("ad_voting_metrics.sources.sky_executive.get_session") as mock_session:
-        mock_session.return_value.get.return_value = _mock_executive_supporters_response(
-            {"0xspell1": []},  # no supporters
-        )
-        result = sky_executive.add_spell_vote_statuses(spell_info, df, sky_lookup)
+    result = sky_executive.add_spell_vote_statuses(spell_info, df, sky_lookup)
 
     assert result.loc[0, "0xspell1"] == "Pending verification"
 
@@ -94,11 +58,7 @@ def test_add_spell_vote_statuses_zero_sky_returns_no_delegated_sky():
     sky_lookup = _sky_lookup([("0xaaa", date(2026, 4, 5), 0.0)])
     spell_info = [{"address": "0xspell1", "startDate": date(2026, 4, 5)}]
 
-    with patch("ad_voting_metrics.sources.sky_executive.get_session") as mock_session:
-        mock_session.return_value.get.return_value = _mock_executive_supporters_response(
-            {"0xspell1": ["0xaaa"]},  # delegate IS a supporter, but no SKY
-        )
-        result = sky_executive.add_spell_vote_statuses(spell_info, df, sky_lookup)
+    result = sky_executive.add_spell_vote_statuses(spell_info, df, sky_lookup)
 
     assert result.loc[0, "0xspell1"] == "No Delegated SKY"
 
@@ -111,22 +71,16 @@ def test_add_spell_vote_statuses_not_started_if_spell_started_before_delegate():
     sky_lookup = _sky_lookup([("0xaaa", date(2026, 4, 5), 1000.0)])
     spell_info = [{"address": "0xspell1", "startDate": date(2026, 4, 5)}]
 
-    with patch("ad_voting_metrics.sources.sky_executive.get_session") as mock_session:
-        mock_session.return_value.get.return_value = _mock_executive_supporters_response(
-            {"0xspell1": ["0xaaa"]},
-        )
-        result = sky_executive.add_spell_vote_statuses(spell_info, df, sky_lookup)
+    result = sky_executive.add_spell_vote_statuses(spell_info, df, sky_lookup)
 
     assert result.loc[0, "0xspell1"] == "Not Started"
 
 
-def test_add_spell_vote_statuses_normalizes_supporter_address_case():
-    """Mixed-case supporter addresses from the API are lowercased at the boundary.
+def test_add_spell_vote_statuses_makes_no_http_call():
+    """Seed statuses come from SKY balances alone.
 
-    The API may return supporter addresses in any case (the spells list
-    endpoint returns mixed case; the supporters endpoint's casing isn't
-    contractually specified). Lowercasing at the boundary lets downstream
-    comparison against pydantic-lowercased contract addresses just work.
+    The supporters endpoint reports only who currently supports a spell, with no vote timestamp, so it cannot answer
+    the deadline question and is deliberately not consulted.
     """
     df = pd.DataFrame([
         {"Delegate Name": "Alice", "Delegate Contract": "0xaaa", "Start Date": "2024-01-01"},
@@ -135,28 +89,22 @@ def test_add_spell_vote_statuses_normalizes_supporter_address_case():
     spell_info = [{"address": "0xspell1", "startDate": date(2026, 4, 5)}]
 
     with patch("ad_voting_metrics.sources.sky_executive.get_session") as mock_session:
-        mock_session.return_value.get.return_value = _mock_executive_supporters_response(
-            {"0xspell1": ["0xAAA"]},  # API returns mixed-case
-        )
-        result = sky_executive.add_spell_vote_statuses(spell_info, df, sky_lookup)
+        sky_executive.add_spell_vote_statuses(spell_info, df, sky_lookup)
 
-    # Despite API casing mismatch, the boundary-lowercase makes this work.
-    assert result.loc[0, "0xspell1"] == "Yes"
+    mock_session.assert_not_called()
 
 
 def test_add_spell_vote_statuses_empty_spell_info_leaves_df_unchanged():
-    """No spells → df is returned unchanged and the supporters HTTP call is skipped."""
+    """No spells → df is returned unchanged."""
     df = pd.DataFrame([
         {"Delegate Name": "Alice", "Delegate Contract": "0xaaa", "Start Date": "2024-01-01"},
     ])
     sky_lookup = _sky_lookup([])
     original_columns = list(df.columns)
 
-    with patch("ad_voting_metrics.sources.sky_executive.get_session") as mock_session:
-        result = sky_executive.add_spell_vote_statuses([], df, sky_lookup)
+    result = sky_executive.add_spell_vote_statuses([], df, sky_lookup)
 
     assert list(result.columns) == original_columns
-    mock_session.return_value.get.assert_not_called()
 
 
 # ---------------------------------------------------------------------------

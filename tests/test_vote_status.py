@@ -1,4 +1,4 @@
-"""Tests for vote_status.determine_vote_status (pure logic)."""
+"""Tests for vote_status — poll close-day statuses and the spell voting deadline (pure logic)."""
 
 from datetime import UTC, date, datetime
 
@@ -93,3 +93,38 @@ def test_determine_vote_status(sky, delegate_voted, current_datetime, expected):
         current_datetime=current_datetime,
     )
     assert result == expected
+
+
+# ---------------------------------------------------------------------------
+# spell_vote_deadline
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("spell_start", "expected"),
+    [
+        pytest.param(date(2026, 4, 6), date(2026, 4, 9), id="Mon -> Thu"),
+        pytest.param(date(2026, 4, 7), date(2026, 4, 10), id="Tue -> Fri"),
+        pytest.param(date(2026, 4, 1), date(2026, 4, 6), id="Wed -> Mon, weekend skipped"),
+        pytest.param(date(2026, 4, 2), date(2026, 4, 7), id="Thu -> Tue, weekend skipped"),
+        pytest.param(date(2026, 4, 3), date(2026, 4, 8), id="Fri -> Wed, weekend skipped"),
+        pytest.param(date(2026, 4, 4), date(2026, 4, 8), id="Sat -> Wed, Monday is day 1"),
+        pytest.param(date(2026, 4, 5), date(2026, 4, 8), id="Sun -> Wed, Monday is day 1"),
+    ],
+)
+def test_spell_vote_deadline_skips_weekends(spell_start, expected):
+    """Three Mon-Fri days strictly after the spell goes live; no holiday calendar."""
+    assert vote_status.spell_vote_deadline(spell_start) == expected
+
+
+def test_spell_vote_deadline_honours_explicit_business_days():
+    """The window length is a parameter; the default is SPELL_VOTE_BUSINESS_DAYS."""
+    assert vote_status.SPELL_VOTE_BUSINESS_DAYS == 3
+    # Friday + 1 business day is the following Monday.
+    assert vote_status.spell_vote_deadline(date(2026, 4, 3), business_days=1) == date(2026, 4, 6)
+
+
+def test_spell_vote_deadline_spanning_a_month_boundary():
+    """Deadlines roll into the next month; a spell late in the month is still adjudicated."""
+    # Thursday 2026-04-30 -> Fri, (weekend), Mon, Tue = 2026-05-05.
+    assert vote_status.spell_vote_deadline(date(2026, 4, 30)) == date(2026, 5, 5)

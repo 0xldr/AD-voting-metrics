@@ -263,43 +263,61 @@ def test_identify_pending_pairs_skips_missing_columns():
 
 
 # ---------------------------------------------------------------------------
-# _delegate_voted_for_spell
+# _first_vote_date_for_spell
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.parametrize(
     ("events", "spell_address", "slate_cache", "expected"),
     [
-        pytest.param([], "0xspell", {}, False, id="no events"),
+        pytest.param([], "0xspell", {}, None, id="no events"),
         pytest.param(
-            [("0xabcd", date(2026, 4, 3))], "0xspell", {"0xabcd": ["0xspell"]}, True, id="in-window matching slate"
+            [("0xabcd", date(2026, 4, 3))],
+            "0xspell",
+            {"0xabcd": ["0xspell"]},
+            date(2026, 4, 3),
+            id="matching slate",
         ),
         pytest.param(
-            [("0xabcd", date(2026, 3, 31))], "0xspell", {"0xabcd": ["0xspell"]}, False, id="event before start date"
+            [("0xabcd", date(2026, 3, 31))], "0xspell", {"0xabcd": ["0xspell"]}, None, id="event before start date"
         ),
         pytest.param(
-            [("0xabcd", date(2026, 4, 9))], "0xspell", {"0xabcd": ["0xspell"]}, False, id="event past 7-day deadline"
+            [("0xabcd", date(2026, 4, 30))],
+            "0xspell",
+            {"0xabcd": ["0xspell"]},
+            date(2026, 4, 30),
+            id="long after start is still returned, dating decides lateness",
         ),
         pytest.param(
-            [("0xabcd", date(2026, 4, 3))], "0xspell", {"0xabcd": ["0xother"]}, False, id="slate lacks the spell"
+            [("0xabcd", date(2026, 4, 3))], "0xspell", {"0xabcd": ["0xother"]}, None, id="slate lacks the spell"
         ),
         pytest.param(
-            [("0xabcd", date(2026, 4, 3))], "0xSPELL", {"0xabcd": ["0xspell"]}, True, id="address case-insensitive"
+            [("0xabcd", date(2026, 4, 3))],
+            "0xSPELL",
+            {"0xabcd": ["0xspell"]},
+            date(2026, 4, 3),
+            id="address case-insensitive",
         ),
-        pytest.param([("0xunknown", date(2026, 4, 3))], "0xspell", {}, False, id="uncached slate contains nothing"),
+        pytest.param([("0xunknown", date(2026, 4, 3))], "0xspell", {}, None, id="uncached slate contains nothing"),
+        pytest.param(
+            [("0xabcd", date(2026, 4, 9)), ("0xef01", date(2026, 4, 2))],
+            "0xspell",
+            {"0xabcd": ["0xspell"], "0xef01": ["0xspell"]},
+            date(2026, 4, 2),
+            id="earliest qualifying vote wins",
+        ),
     ],
 )
-def test_delegate_voted_for_spell(events, spell_address, slate_cache, expected):
-    """In-window slate membership decides the flip; window is [start, start + 7 days]."""
+def test_first_vote_date_for_spell(events, spell_address, slate_cache, expected):
+    """Returns the earliest at-or-after-start event whose slate holds the spell, else None."""
     assert (
-        onchain._delegate_voted_for_spell(
+        onchain._first_vote_date_for_spell(
             events=events,
             spell_address=spell_address,
             start_date=date(2026, 4, 1),
-            deadline=date(2026, 4, 8),
             slate_cache=slate_cache,
         )
-        is expected
+        == expected
     )
 
 
@@ -398,10 +416,10 @@ def test_resolve_pending_flips_cell_when_slate_contains_spell(tmp_path):
     assert result.loc[0, spell_addr] == "Yes"
 
 
-def test_resolve_pending_late_vote_stays_pending(tmp_path):
-    """A vote 8 days after spell start does not flip the cell."""
+def test_resolve_pending_late_vote_marked_late(tmp_path):
+    """A vote past the 3-business-day deadline resolves to 'Late', not 'Yes'."""
     spell_addr = "0x" + "22" * 20
-    spell_start = date(2026, 4, 1)
+    spell_start = date(2026, 4, 1)  # Wednesday -> deadline Monday 2026-04-06
     df = pd.DataFrame({
         "Delegate Contract": [_VOTER_1],
         spell_addr: [PENDING],
@@ -410,8 +428,8 @@ def test_resolve_pending_late_vote_stays_pending(tmp_path):
     slate = "0x" + "cd" * 32
     events = [_make_event(slate, 1000)]
     w3 = _w3_for_resolver(events=events, slate_addresses={slate: [spell_addr]})
-    # 2026-04-09 — one day past the 7-day window.
-    w3.eth.get_block.return_value = {"timestamp": _ts(date(2026, 4, 9))}
+    # 2026-04-07 — one day past the deadline.
+    w3.eth.get_block.return_value = {"timestamp": _ts(date(2026, 4, 7))}
 
     result = onchain.resolve_pending_executive_votes(
         df,
@@ -419,7 +437,30 @@ def test_resolve_pending_late_vote_stays_pending(tmp_path):
         w3=w3,
         cache_path=tmp_path / "slate_cache.json",
     )
-    assert result.loc[0, spell_addr] == PENDING
+    assert result.loc[0, spell_addr] == "Late"
+
+
+def test_resolve_pending_vote_on_deadline_day_is_on_time(tmp_path):
+    """The deadline day itself still counts; a weekend between start and deadline is skipped."""
+    spell_addr = "0x" + "24" * 20
+    spell_start = date(2026, 4, 1)  # Wednesday -> Thu, Fri, (weekend), Monday 2026-04-06
+    df = pd.DataFrame({
+        "Delegate Contract": [_VOTER_1],
+        spell_addr: [PENDING],
+    })
+
+    slate = "0x" + "ce" * 32
+    events = [_make_event(slate, 1000)]
+    w3 = _w3_for_resolver(events=events, slate_addresses={slate: [spell_addr]})
+    w3.eth.get_block.return_value = {"timestamp": _ts(date(2026, 4, 6))}
+
+    result = onchain.resolve_pending_executive_votes(
+        df,
+        [_spell(spell_addr, spell_start)],
+        w3=w3,
+        cache_path=tmp_path / "slate_cache.json",
+    )
+    assert result.loc[0, spell_addr] == "Yes"
 
 
 def test_resolve_pending_persists_cache_growth(tmp_path):

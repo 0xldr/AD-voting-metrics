@@ -1,16 +1,21 @@
-"""On-chain verification of executive votes for "Pending verification" cells.
+"""On-chain adjudication of executive votes for "Pending verification" cells.
 
-When the public API doesn't show a delegate as a direct supporter of an executive but they had SKY delegated at the
-vote's start, `sky_executive` marks the cell "Pending verification". This module checks the chief contract directly:
-did the delegate's vote-delegate contract emit a `Vote(usr, slate)` event within 7 days of the executive going live,
-and does that slate contain the executive's address? If yes, flip the cell to "Yes". Otherwise leave it as Pending for
-operator adjudication.
+`sky_executive` marks a cell "Pending verification" whenever a delegate had SKY delegated when the executive went live,
+leaving open whether they voted and when. This module answers both from the chief contract: did the delegate's
+vote-delegate contract emit a `Vote(usr, slate)` event whose slate contains the executive's address, and on what day?
+
+  - Earliest such vote on or before the deadline -> "Yes"
+  - Earliest such vote after the deadline        -> "Late" (counted as non-participation)
+  - No such vote found                           -> left Pending for operator adjudication
+
+The deadline is 3 business days after the spell goes live (`vote_status.spell_vote_deadline`). Timing can only be
+established on-chain, so with no RPC configured every cell stays Pending rather than being credited unverified.
 
 Slate -> address-list resolution is cached persistently because slates are immutable once etched.
 """
 
 import logging
-from datetime import UTC, date, datetime, timedelta
+from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import Any, cast
 
@@ -20,18 +25,16 @@ from web3 import Web3
 from web3.constants import ADDRESS_ZERO
 from web3.exceptions import BadFunctionCallOutput, ContractLogicError, Web3RPCError
 
-from ad_voting_metrics.metrics import PENDING_VERIFICATION
+from ad_voting_metrics.metrics import LATE, PENDING_VERIFICATION
 from ad_voting_metrics.paths import SLATE_CACHE_PATH
 from ad_voting_metrics.settings import EnvSettings
 from ad_voting_metrics.sources.json_cache import load_json_cache, save_json_cache
+from ad_voting_metrics.vote_status import spell_vote_deadline
 
 logger = logging.getLogger(__name__)
 
 # Sky chief / governor on mainnet.
 CHIEF_ADDRESS = "0x929d9A1435662357F54AdcF64DcEE4d6b867a6f9"
-
-# Window after spell.startDate within which a vote counts.
-VOTE_DEADLINE_DAYS = 7
 
 # Defensive cap; no real slate has approached this length.
 MAX_SLATE_LENGTH = 50
@@ -202,46 +205,60 @@ def _identify_pending_pairs(
     return pending
 
 
-def _delegate_voted_for_spell(
+def _first_vote_date_for_spell(
     events: list[tuple[str, date]],
     spell_address: str,
     start_date: date,
-    deadline: date,
     slate_cache: dict[str, list[str]],
-) -> bool:
-    """Return True if any in-window event's slate contains the spell address."""
+) -> date | None:
+    """Return the earliest date on or after start_date on which an event's slate contained the spell address.
+
+    The earliest qualifying vote is the one that decides on-time versus late: a delegate who votes in time and later
+    re-slates has still met the deadline.
+
+    Returns:
+        The vote date, or None if no event's slate contains the spell.
+    """
     spell_address = spell_address.lower()
-    for slate, event_date in events:
-        if not (start_date <= event_date <= deadline):
-            continue
-        if spell_address in slate_cache.get(slate, []):
-            return True
-    return False
+    dates = [
+        event_date
+        for slate, event_date in events
+        if event_date >= start_date and spell_address in slate_cache.get(slate, [])
+    ]
+    return min(dates, default=None)
 
 
-def _flip_eligible_cells(
+def _adjudicate_cells(
     df: pd.DataFrame,
     spell_info: list[dict],
     pending: dict[str, list[int]],
     events_by_voter: dict[str, list[tuple[str, date]]],
     slate_cache: dict[str, list[str]],
-) -> int:
-    """Mutate df: set Pending cells to "Yes" where a slate confirms the vote.
+) -> tuple[int, int]:
+    """Mutate df: resolve Pending cells to "Yes" or "Late" where on-chain events settle the question.
 
-    Returns the count of cells flipped.
+    Cells with no matching vote event are left Pending.
 
+    Returns:
+        (on_time_count, late_count).
     """
-    flipped = 0
+    on_time = late = 0
     for spell in spell_info:
         spell_addr = spell["address"]
         start = spell["startDate"]
-        deadline = start + timedelta(days=VOTE_DEADLINE_DAYS)
+        deadline = spell_vote_deadline(start)
         for idx in pending.get(spell_addr, []):
             voter = str(df.at[idx, "Delegate Contract"])  # noqa: PD008
-            if _delegate_voted_for_spell(events_by_voter.get(voter, []), spell_addr, start, deadline, slate_cache):
+            vote_date = _first_vote_date_for_spell(events_by_voter.get(voter, []), spell_addr, start, slate_cache)
+            if vote_date is None:
+                continue
+            if vote_date <= deadline:
                 df.at[idx, spell_addr] = "Yes"  # noqa: PD008
-                flipped += 1
-    return flipped
+                on_time += 1
+            else:
+                df.at[idx, spell_addr] = LATE  # noqa: PD008
+                late += 1
+    return on_time, late
 
 
 def resolve_pending_executive_votes(
@@ -251,18 +268,19 @@ def resolve_pending_executive_votes(
     w3: Web3 | None = None,
     cache_path: Path | None = None,
 ) -> pd.DataFrame:
-    """Flip "Pending verification" cells to "Yes" for verifiable on-chain votes.
+    """Resolve "Pending verification" cells to "Yes" or "Late" from on-chain evidence.
 
     For each (delegate, spell) cell currently "Pending verification":
       - Fetch the delegate's chief Vote events from on-chain.
-      - For each event with `spell.startDate <= event.date <= spell.startDate + 7 days`, look up the slate's executive
-        list (cached). If the spell's address is in the slate, flip the cell.
+      - Take the earliest event at or after `spell.startDate` whose slate (cached) contains the spell address.
+      - On or before `spell_vote_deadline(startDate)` -> "Yes"; after it -> "Late"; no such event -> left Pending.
 
-    No-ops gracefully when SKY_RPC_URL is missing, when spell_info is empty, or when no cells are pending. Other errors
-    (RPC failures, decode errors) propagate.
+    No-ops gracefully when SKY_RPC_URL is missing, when spell_info is empty, or when no cells are pending. Leaving
+    cells Pending is the deliberate no-RPC outcome: a vote's timing cannot be established off-chain, so nothing is
+    credited without evidence. Other errors (RPC failures, decode errors) propagate.
 
     Returns:
-        The same df (mutated) with verifiable Pending cells set to "Yes".
+        The same df (mutated) with resolvable Pending cells set to "Yes" or "Late".
     """
     if not spell_info:
         return df
@@ -276,8 +294,8 @@ def resolve_pending_executive_votes(
         rpc_url = EnvSettings().sky_rpc_url
         if not rpc_url:
             logger.warning(
-                "SKY_RPC_URL is not set; leaving %d Pending Verification cell(s) as-is. "
-                "Set SKY_RPC_URL in .env to enable on-chain verification.",
+                "SKY_RPC_URL is not set; leaving all %d spell cell(s) as Pending Verification. Vote timing is only "
+                "establishable on-chain, so no spell vote can be credited without it. Set SKY_RPC_URL in .env.",
                 sum(len(v) for v in pending.values()),
             )
             return df
@@ -302,15 +320,18 @@ def resolve_pending_executive_votes(
     for slate in seen_slates - slate_cache.keys():
         slate_cache[slate] = _resolve_slate(w3, slate)
 
-    flipped = _flip_eligible_cells(df, spell_info, pending, events_by_voter, slate_cache)
+    on_time, late = _adjudicate_cells(df, spell_info, pending, events_by_voter, slate_cache)
 
     if len(slate_cache) > initial_cache_size:
         _save_slate_cache(slate_cache, cache_path)
         logger.info("Slate cache grew by %d entries (now %d)", len(slate_cache) - initial_cache_size, len(slate_cache))
 
+    total_pending = sum(len(v) for v in pending.values())
     logger.info(
-        "On-chain verification flipped %d of %d Pending Verification cell(s) to 'Yes'",
-        flipped,
-        sum(len(v) for v in pending.values()),
+        "On-chain adjudication of %d Pending Verification cell(s): %d on time, %d late, %d still pending",
+        total_pending,
+        on_time,
+        late,
+        total_pending - on_time - late,
     )
     return df

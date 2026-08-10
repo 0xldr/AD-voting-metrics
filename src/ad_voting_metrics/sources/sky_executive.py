@@ -1,4 +1,4 @@
-"""vote.sky.money executive endpoints: spell listing + per-spell supporter lookups."""
+"""vote.sky.money executive endpoint: spell listing for a period, plus the balance-derived seed statuses."""
 
 import itertools
 import logging
@@ -14,7 +14,6 @@ from .http import HEADERS, HTTP_TIMEOUT, get_session
 logger = logging.getLogger(__name__)
 
 SKY_EXECUTIVE_URL = "https://vote.sky.money/api/executive"
-SKY_EXECUTIVE_SUPPORTERS_URL = "https://vote.sky.money/api/executive/supporters"
 
 # The API's default page size for the executive listing.
 SKY_EXECUTIVES_PAGE_SIZE = 100
@@ -63,29 +62,25 @@ def add_spell_vote_statuses(
     df: pd.DataFrame,
     sky_lookup: dict[tuple[str, date], float],
 ) -> pd.DataFrame:
-    """Add one column per spell to df, populated with each delegate's vote status.
+    """Add one column per spell to df, seeding each delegate's vote status.
+
+    Only the statuses that follow from SKY balance and alignment dates are decided here:
+
+      - No SKY delegated on the spell's start day -> "No Delegated SKY"
+      - Aligned after the spell went live         -> "Not Started"
+      - Otherwise                                 -> "Pending verification"
+
+    Whether a delegate actually voted, and whether they did so inside the 3-business-day deadline, is settled by
+    `sky_executive_onchain` against chief Vote events. The public supporters endpoint reports only who currently
+    supports a spell, with no timestamp, so it cannot answer the deadline question and is not consulted.
 
     Returns:
-        The same df, mutated in place with one new column per spell. Returns df unchanged (and skips the supporters HTTP
-        call) when spell_info is empty.
+        The same df, mutated in place with one new column per spell. Returns df unchanged when spell_info is empty.
     """
-    if not spell_info:
-        return df
-
-    response = get_session().get(
-        SKY_EXECUTIVE_SUPPORTERS_URL,
-        params={"network": "mainnet"},
-        headers=HEADERS,
-        timeout=HTTP_TIMEOUT,
-    )
-    response.raise_for_status()
-    supporters_by_spell = response.json()
-
     for spell in spell_info:
         vote_statuses = []
         spell_address = spell["address"]
         start_date = spell["startDate"]
-        supporter_set = {s["address"].lower() for s in supporters_by_spell.get(spell_address, [])}
 
         for _, row in df.iterrows():
             address = row["Delegate Contract"]
@@ -93,11 +88,7 @@ def add_spell_vote_statuses(
 
             sky_on_start = sky_lookup.get((address, start_date), 0.0)
 
-            voted: str
-            if sky_on_start != 0:
-                voted = "Yes" if address in supporter_set else PENDING_VERIFICATION
-            else:
-                voted = "No Delegated SKY"
+            voted = PENDING_VERIFICATION if sky_on_start != 0 else "No Delegated SKY"
 
             if first_delegate_date > start_date:
                 voted = "Not Started"

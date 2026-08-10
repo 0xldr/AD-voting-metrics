@@ -28,7 +28,7 @@ def test_participated_set_contents():
 
 
 def test_not_participated_set_contents():
-    assert frozenset({"No"}) == NOT_PARTICIPATED
+    assert frozenset({"No", "Late"}) == NOT_PARTICIPATED
 
 
 def test_discounted_set_contents():
@@ -128,6 +128,17 @@ def test_participation_pct_only_discounted_returns_none():
 def test_participation_pct_discounted_excluded_from_denominator():
     """A delegate with 1 Yes and 5 'Not Started' is at 100%, not 1/6."""
     assert participation_pct(["Yes", "Not Started", "Not Started", "Not Started"]) == 1.0
+
+
+def test_participation_pct_late_counts_against_the_delegate():
+    """A vote past the 3-business-day spell deadline earns no credit and stays in the denominator."""
+    assert participation_pct(["Yes", "Late"]) == 0.5
+    assert participation_pct(["Late"]) == 0.0
+
+
+def test_communication_pct_discounts_late_rather_than_penalising_twice():
+    """'Late' participation cross-references to 'Did not vote', which is discounted from communication."""
+    assert communication_pct(["Yes", "Late"], ["Yes", "Yes"]) == 1.0
 
 
 def test_participation_pct_unknown_silently_ignored():
