@@ -807,7 +807,7 @@ def compensation_tab_title(period: MonthPeriod) -> str:
     return f"{period} Compensation"
 
 
-def read_config(workbook: gspread.Spreadsheet) -> "CompensationConfig":
+def read_config(workbook: gspread.Spreadsheet) -> CompensationConfig:
     """Read the workbook-wide Config tab and return a CompensationConfig.
 
     Format: two columns (Key, Value), header in row 1. Required keys: L1_USDS, L2_USDS, L3_USDS, TOTAL_SLOTS. Unknown
@@ -863,7 +863,7 @@ def read_config(workbook: gspread.Spreadsheet) -> "CompensationConfig":
 _LEVEL_LABELS: dict[int | None, str] = {1: "Level 1", 2: "Level 2", 3: "Level 3"}
 
 
-def _compensation_header_block(period_comp: "PeriodCompensation", total_final: float) -> list[list[object]]:
+def _compensation_header_block(period_comp: PeriodCompensation, total_final: float) -> list[list[object]]:
     """Build rows 1-8 of the Compensation tab.
 
     The total is precomputed in Python (no =SUM formula) so the tab is fully self-describing on its own.
@@ -897,7 +897,7 @@ def _compensation_header_block(period_comp: "PeriodCompensation", total_final: f
     ]
 
 
-def _compensation_data_dataframe(period_comp: "PeriodCompensation") -> pd.DataFrame:
+def _compensation_data_dataframe(period_comp: PeriodCompensation) -> pd.DataFrame:
     """Build the data table (one row per delegate) for the Compensation tab.
 
     Returns a DataFrame with COMPENSATION_COLUMNS in order.
@@ -927,7 +927,7 @@ def _compensation_data_dataframe(period_comp: "PeriodCompensation") -> pd.DataFr
 
 def write_compensation_tab(
     workbook: gspread.Spreadsheet,
-    period_comp: "PeriodCompensation",
+    period_comp: PeriodCompensation,
 ) -> gspread.Worksheet:
     """Write the per-period Compensation tab. Re-runs overwrite.
 
