@@ -1,0 +1,25 @@
+version: 2
+
+# Version updates target `dev`, matching the normal dev -> main flow. Security
+# updates always target the default branch (`main`) and ignore the settings
+# below; GitHub does not allow retargeting them.
+updates:
+  - package-ecosystem: "uv"
+    directory: "/"
+    target-branch: "dev"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    groups:
+      python-deps:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
+
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    target-branch: "dev"
+    schedule:
+      interval: "weekly"
+    groups:
+      actions:
+        patterns: ["*"]
