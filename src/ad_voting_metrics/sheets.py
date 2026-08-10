@@ -251,7 +251,7 @@ def _existing_daily_data(worksheet: gspread.Worksheet) -> pd.DataFrame:
     if df.empty or list(df.columns[: len(DAILY_DATA_COLUMNS)]) != list(DAILY_DATA_COLUMNS):
         return pd.DataFrame(columns=list(DAILY_DATA_COLUMNS))
 
-    df = df[list(DAILY_DATA_COLUMNS)].copy()
+    df = df[list(DAILY_DATA_COLUMNS)]
     df["Date"] = pd.to_datetime(df["Date"], errors="coerce").dt.date
     df["Total Delegation"] = pd.to_numeric(df["Total Delegation"], errors="coerce")
     df["Rank"] = pd.to_numeric(df["Rank"], errors="coerce")
@@ -305,7 +305,7 @@ def write_daily_data(
         msg = f"df_ranking is missing required columns: {missing}. Has: {list(df_ranking.columns)}"
         raise ValueError(msg)
 
-    new_df = df_ranking[list(DAILY_DATA_COLUMNS)].copy()
+    new_df = df_ranking[list(DAILY_DATA_COLUMNS)]
     new_df["Date"] = new_df["Date"].apply(_to_date_value)
     new_df["Total Delegation"] = new_df["Total Delegation"].astype(float)
     new_df["Rank"] = new_df["Rank"].astype(int)
@@ -524,7 +524,6 @@ def _existing_comm_master(worksheet: gspread.Worksheet) -> pd.DataFrame:
     df = _read_sheet_as_strings(worksheet)
     if df.empty or "Poll Id" not in df.columns:
         return pd.DataFrame()
-    df = df.copy()
     df["Poll Id"] = df["Poll Id"].astype(str)
     df = df[df["Poll Id"].str.strip() != ""]
     if df.empty:
@@ -709,7 +708,6 @@ def _parse_poll_history_tab(worksheet: gspread.Worksheet, value_col_name: str) -
     if not delegate_cols:
         return pd.DataFrame(columns=out_cols)
 
-    wide = wide.copy()
     wide["Poll Id"] = wide["Poll Id"].astype(str)
     wide = wide[wide["Poll Id"].str.strip() != ""]
 

@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=64"]
+requires = ["setuptools>=83.0.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -8,28 +8,27 @@ version = "0.1.0"
 description = "Track AD voting metrics for Sky governance"
 requires-python = ">=3.11"
 dependencies = [
-    "requests>=2.31,<3",
-    "pandas>=2.2,<3",
+    "requests>=2.34.2,<3",
+    "pandas>=3.0.5,<4",
     "python-dotenv>=1.2,<2",
     "pydantic>=2.0,<3",
-    "pydantic-settings>=2.0,<3",
+    "pydantic-settings>=2.15.0,<3",
     "pyyaml>=6.0,<7",
     "gspread>=6.0,<7",
     "gspread-dataframe>=4.0,<5",
-    "google-auth>=2.0,<3",
+    "google-auth>=2.56.3,<3",
     "web3>=7,<8",
 ]
 
 [dependency-groups]
 dev = [
     "ruff",
-    "pytest>=8.0",
-    "responses>=0.25",
-    "mypy>=1.0",
+    "pytest>=9.1.1",
+    "responses>=0.26.2",
+    "mypy>=2.3.0",
     "pandas-stubs",
-    "types-requests",
     "types-PyYAML",
-    "pre-commit>=3.0",
+    "pre-commit>=4.6.1",
 ]
 
 [tool.setuptools.packages.find]
@@ -87,37 +86,56 @@ dummy-variable-rgx = "^(_+|(_+[a-zA-Z0-9_]*[a-zA-Z0-9]+?))$"
 # Everything on, including new linters as ruff adds them; deliberate
 # exclusions live in `ignore` below.
 select = ["ALL"]
+# Individual rules are named rather than coded; only whole-linter and
+# multi-rule prefixes (which have no name form) stay as codes.
 ignore = [
-    "CPY",    # Flake8-copyright - would require a copyright notice atop every file
-    "DJ",     # Flake8-django - Django-specific conventions
-    "DOC201", # Pydoclint - "Returns:" required whenever a function returns; ruff can't scope
-              # this to public functions only, so it's off globally. Convention: public
-              # functions document Returns; private helpers may use a one-line docstring.
-    "ERA",    # Eradicate - detects commented-out code (false-positives on prose comments)
-    "EXE",    # Flake8-executable - executable file checks
-    "T20",    # Flake8-print - disallows print statements
-    "D1",     # Pydocstyle - missing docstring in public module, class, or function
-    "FBT003", # Flake8-boolean-trap - boolean position value in function call
-    "D203",   # Pydocstyle - one blank line required before class docstring
-    "D212",   # Pydocstyle - summary line should be immediately after the opening quotes.
-    "S311",   # Flake8-bandit - Standard pseudo-random generators are not suitable for security/cryptographic purposes
-    "FA102",  # Flake8-future-annotations - Missing `from __future__ import annotations`, but uses PEP 604 union
-    "TRY003", # Tryceratops - Checks for long exception messages that are not defined in the exception class itself.
-    "EM101",  # Flake8-errmsg - Checks for the use of string literals in exception constructors.
-    "TC002",  # Flake8-type-checking - Checks for usage of typing imports outside of TYPE_CHECKING blocks.
-    "TC003",  # Flake8-type-checking - Checks for imports from typing that are not within TYPE_CHECKING blocks.
-    "COM812", # Flake8-commas - Checks for missing commas. Conflicts with ruff format
+    # Whole linters and rule groups.
+    "CPY", # Flake8-copyright - would require a copyright notice atop every file
+    "DJ",  # Flake8-django - Django-specific conventions
+    "ERA", # Eradicate - detects commented-out code (false-positives on prose comments)
+    "EXE", # Flake8-executable - executable file checks
+    "T20", # Flake8-print - disallows print statements
+    "D1",  # Pydocstyle - missing docstring in public module, class, or function
+
+    # Individual rules.
+    "docstring-missing-returns", # ruff can't scope this to public functions only, so it's off
+                                 # globally. Convention: public functions document Returns;
+                                 # private helpers may use a one-line docstring.
+    "boolean-positional-value-in-call",
+    "incorrect-blank-line-before-class",
+    "multi-line-summary-first-line",
+    "suspicious-non-cryptographic-random-usage",
+    "future-required-type-annotation", # would require `from __future__ import annotations`
+                                       # in every module using a PEP 604 union
+    "raise-vanilla-args", # long exception messages need not live on the exception class
+    "raw-string-in-exception",
+    "typing-only-third-party-import",
+    "typing-only-standard-library-import",
+    "missing-trailing-comma", # conflicts with ruff format
+    "noqa-comments",          # `# noqa` is portable across linters; `ruff: ignore` is
+                              # ruff-only and still preview. Revisit once it stabilizes.
 ]
 
 [tool.ruff.lint.per-file-ignores]
 "tests/*" = [
-    "S101", "S105", "S106", "S107", "PLR2004", "SLF001", "D", "ANN", "ARG001", "PLC0415", "EM102",
-    "RUF069",  # float equality fine in tests; values are exact, not approximations
-    "S108",    # /tmp paths in tests are not a real risk
-    "PLC2701", # tests legitimately exercise private helpers
-    "DOC",     # docstring sections (returns/yields) not required on test helpers
-    "PLC1901", # `== ""` is clearer than implicit-falsiness in assertions
-    ]
+    "D",   # docstrings not required on tests
+    "ANN", # annotations not required on tests
+    "DOC", # docstring sections (returns/yields) not required on test helpers
+
+    "assert",                      # bare `assert` is how tests assert
+    "hardcoded-password-string",
+    "hardcoded-password-func-arg",
+    "hardcoded-password-default",
+    "magic-value-comparison",
+    "private-member-access",
+    "unused-function-argument",
+    "import-outside-top-level",
+    "f-string-in-exception",
+    "float-equality-comparison",   # float equality fine in tests; values are exact, not approximations
+    "hardcoded-temp-file",         # /tmp paths in tests are not a real risk
+    "import-private-name",         # tests legitimately exercise private helpers
+    "compare-to-empty-string",     # `== ""` is clearer than implicit-falsiness in assertions
+]
 
 [tool.ruff.lint.pydocstyle]
 convention = "google"
@@ -155,6 +173,9 @@ markers = [
     "integration: tests that hit live external services (Google Sheets, etc.). Skipped by default; run with `pytest -m integration`.",
 ]
 addopts = "-m 'not integration'"
+# Unscoped: pandas raises with stacklevel pointing at the caller, so a
+# `:pandas` module filter would never match.
+filterwarnings = ["error::FutureWarning"]
 
 [tool.mypy]
 files = ["src", "tests"]

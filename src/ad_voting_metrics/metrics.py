@@ -12,6 +12,9 @@ alignment timing and SKY balance during the voting window:
 
   - "Yes": delegate had SKY delegated at some point during the voting window and cast a vote.
   - "No": delegate had SKY delegated at some point during the voting window but did not vote.
+  - "Late": spell-only. The delegate voted for the executive, but after the 3-business-day deadline (see
+    vote_status.spell_vote_deadline). Counted as non-participation - a vote past the deadline earns no credit - but
+    labelled distinctly from "No" so the operator can tell "voted late" from "never voted".
   - "Not Started": the delegate's alignment start_date is after this poll's end date - they weren't aligned yet when the
     poll closed, so non-participation isn't held against them.
   - "Exited": the delegate's alignment endDate is before this poll's start_date - they had already exited when the poll
@@ -30,9 +33,9 @@ alignment timing and SKY balance during the voting window:
 
   participation_pct = participated / (participated + not_participated)
 
-where "participated" counts statuses in PARTICIPATED ("Yes") and "not_participated" counts NOT_PARTICIPATED ("No"). All
-other statuses are discounted from both numerator and denominator. Zero denominator returns None - callers map this to
-"No Data".
+where "participated" counts statuses in PARTICIPATED ("Yes") and "not_participated" counts NOT_PARTICIPATED ("No",
+"Late"). All other statuses are discounted from both numerator and denominator. Zero denominator returns None -
+callers map this to "No Data".
 
 The metric window is the last 6 months including the month being queried, keyed on poll start date. is_in_window accepts
 an optional lower bound (None means unbounded back).
@@ -47,11 +50,15 @@ from datetime import date
 # the string only lives in one place.
 PENDING_VERIFICATION = "Pending verification"
 
+# Spell vote cast after the 3-business-day deadline. Shared with
+# sky_executive_onchain, which is the only producer.
+LATE = "Late"
+
 # Status sets. Frozensets for 0(1) membership and immutability - adding
 # a new status (e.g. a new exclusion category) means updating one of these.
 PARTICIPATED = frozenset({"Yes"})
 
-NOT_PARTICIPATED = frozenset({"No"})
+NOT_PARTICIPATED = frozenset({"No", LATE})
 
 DISCOUNTED = frozenset({
     "Not Started",
@@ -176,7 +183,8 @@ def apply_participation_cross_reference(
     For each (poll, delegate) pair:
 
       - participation = "Yes" → communication passes through unchanged.
-      - participation = "No" → communication becomes "Did not vote".
+      - participation = "No" or "Late" → communication becomes "Did not vote". A late vote earns no participation
+        credit, so its rationale is discounted from communication too rather than penalised a second time.
       - participation in DISCOUNTED -> communication mirrors the participation status (keeps both metric denominators in
         sync).
       - Unknown status → communication passes through (don't silently drop unrecognized statuses; count_statuses
