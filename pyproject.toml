@@ -9,7 +9,7 @@ description = "Track AD voting metrics for Sky governance"
 requires-python = ">=3.11"
 dependencies = [
     "requests>=2.31,<3",
-    "pandas>=2.2,<3",
+    "pandas>=3.0.5,<4",
     "python-dotenv>=1.2,<2",
     "pydantic>=2.0,<3",
     "pydantic-settings>=2.0,<3",
