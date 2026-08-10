@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "ad-voting-metrics"
 version = "0.1.0"
 description = "Track AD voting metrics for Sky governance"
-requires-python = ">=3.11"
+requires-python = ">=3.14"
 dependencies = [
     "requests>=2.34.2,<3",
     "pandas>=3.0.5,<4",
@@ -39,7 +39,7 @@ ad_voting_metrics = ["py.typed"]
 
 [tool.pyright]
 include = ["src", "tests"]
-pythonVersion = "3.11"
+pythonVersion = "3.14"
 typeCheckingMode = "standard"
 reportMissingTypeStubs = false
 
@@ -76,7 +76,7 @@ exclude = [
 
 line-length = 120
 indent-width = 4
-target-version = "py311"
+target-version = "py314"
 preview = true
 
 [tool.ruff.lint]
@@ -105,12 +105,16 @@ ignore = [
     "incorrect-blank-line-before-class",
     "multi-line-summary-first-line",
     "suspicious-non-cryptographic-random-usage",
-    "future-required-type-annotation", # would require `from __future__ import annotations`
-                                       # in every module using a PEP 604 union
     "raise-vanilla-args", # long exception messages need not live on the exception class
     "raw-string-in-exception",
+    # All three flake8-type-checking import rules are off. The imports they would
+    # defer are stdlib, or already loaded at runtime by another module, so there is
+    # no import-time gain to collect. Against that, pydantic resolves annotations
+    # at runtime to build validators, so a field whose type is only imported under
+    # TYPE_CHECKING fails at class creation.
     "typing-only-third-party-import",
     "typing-only-standard-library-import",
+    "typing-only-first-party-import",
     "missing-trailing-comma", # conflicts with ruff format
     "noqa-comments",          # `# noqa` is portable across linters; `ruff: ignore` is
                               # ruff-only and still preview. Revisit once it stabilizes.

@@ -14,7 +14,6 @@ from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from datetime import UTC, date, datetime
 from pathlib import Path
-from typing import TypeAlias
 
 import gspread
 import pandas as pd
@@ -35,7 +34,7 @@ logger = logging.getLogger(__name__)
 
 # Per-period workbook state read out of the Compensation Sheet for `finalize`.
 # All three DataFrames are read directly from the workbook by sheets.read_*.
-_WorkbookData: TypeAlias = tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]
+type _WorkbookData = tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]
 
 
 @contextmanager
@@ -236,7 +235,7 @@ def _write_fetch_workbook_tabs(
             logger.info("%s tab written to workbook for %s", description, period)
         except ValueError:
             logger.exception("%s writer rejected the data", description)
-        except (RuntimeError, gspread.exceptions.APIError):
+        except RuntimeError, gspread.exceptions.APIError:
             logger.exception("Could not write %s tab", description)
 
     _safe_write(
@@ -278,7 +277,7 @@ def run_fetch(args: argparse.Namespace) -> None:
     logger.info("Verifying Pending executive votes on-chain...")
     try:
         metrics = sky_executive_onchain.resolve_pending_executive_votes(metrics, spell_info)
-    except (requests.exceptions.RequestException, Web3Exception):
+    except requests.exceptions.RequestException, Web3Exception:
         # Transient network/RPC failures are tolerable: leave cells Pending for
         # operator adjudication. Anything else (schema drift, decode/logic bugs)
         # propagates so a broken verification path fails the run instead of

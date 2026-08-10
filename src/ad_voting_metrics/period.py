@@ -35,7 +35,7 @@ class MonthPeriod:
             msg = f"year must be >= {YEAR_LOWER_BOUND}, got {self.year}"
             raise ValueError(msg)
 
-    def minus_months(self, n: int) -> "MonthPeriod":
+    def minus_months(self, n: int) -> MonthPeriod:
         """Return the MonthPeriod n calendar months before this one (negative n moves forward).
 
         A shift landing before the project's year lower bound raises ValueError from the constructor.
@@ -66,7 +66,7 @@ class MonthPeriod:
         return date(self.year, self.month, 1).strftime("%B %Y")
 
     @classmethod
-    def from_string(cls, value: str) -> "MonthPeriod":
+    def from_string(cls, value: str) -> MonthPeriod:
         """Parse a human or ISO month string into a MonthPeriod.
 
         Accepts "April 2026", "Apr 2026", "2026-04", and similar formats. Day component is ignored; only year and month

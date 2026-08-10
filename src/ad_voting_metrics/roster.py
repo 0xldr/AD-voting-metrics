@@ -50,7 +50,7 @@ class LevelAssignment(BaseModel):
         return v
 
     @model_validator(mode="after")
-    def _end_after_start(self) -> "LevelAssignment":
+    def _end_after_start(self) -> LevelAssignment:
         if self.end_date is not None and self.end_date <= self.start_date:
             msg = f"LevelAssignment end_date {self.end_date} must be after start_date {self.start_date}"
             raise ValueError(msg)
@@ -86,14 +86,14 @@ class Delegate(BaseModel):
         return v
 
     @model_validator(mode="after")
-    def _end_date_after_start_date(self) -> "Delegate":
+    def _end_date_after_start_date(self) -> Delegate:
         if self.end_date is not None and self.end_date <= self.start_date:
             msg = f"end_date {self.end_date} must be after start_date {self.start_date} for delegate {self.name}"
             raise ValueError(msg)
         return self
 
     @model_validator(mode="after")
-    def _level_periods_fit_alignment(self) -> "Delegate":
+    def _level_periods_fit_alignment(self) -> Delegate:
         """Every LevelAssignment must fall within the delegate's alignment period.
 
         Raises:
@@ -123,7 +123,7 @@ class Delegate(BaseModel):
         return self
 
     @model_validator(mode="after")
-    def _level_periods_no_overlap(self) -> "Delegate":
+    def _level_periods_no_overlap(self) -> Delegate:
         """Sequential LevelAssignments are allowed; overlapping ones aren't.
 
         Raises:
@@ -178,7 +178,7 @@ class DelegatesConfig(BaseModel):
     delegates: list[Delegate]
 
     @model_validator(mode="after")
-    def _no_duplicate_addresses(self) -> "DelegatesConfig":
+    def _no_duplicate_addresses(self) -> DelegatesConfig:
         seen: dict[str, str] = {}
         for d in self.delegates:
             if d.vote_delegate_address in seen:
@@ -269,7 +269,7 @@ class RosterResult:
 
     active_delegates: list[Delegate]
     drift_warnings: list[str]
-    yaml_config: "DelegatesConfig"  # full config so callers can split active/exited
+    yaml_config: DelegatesConfig  # full config so callers can split active/exited
     api_delegate_count: int  # 0 if api_fetch_succeeded is False
     api_fetch_succeeded: bool
 
@@ -322,7 +322,7 @@ def build_roster_for_period(
     )
 
 
-def to_dataframe(delegates: list["Delegate"]) -> pd.DataFrame:
+def to_dataframe(delegates: list[Delegate]) -> pd.DataFrame:
     """Build the per-delegate Dataframe consumed by sky_protocol.
 
     Columns:'Delegate Name', 'Delegate Contract', 'Start Date'. Start Date is formatted '%Y-%m-%d - sky_protocol parses
