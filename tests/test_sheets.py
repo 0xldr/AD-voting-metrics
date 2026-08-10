@@ -386,6 +386,22 @@ def test_write_daily_data_first_fetch_writes_header_and_rows(empty_existing_ws, 
     assert set(written["Date"]) == {"2026-04-01", "2026-04-02"}
 
 
+def test_write_daily_data_leaves_the_callers_frame_untouched(empty_existing_ws, sheet_io):
+    """The caller's ranking frame is never written through.
+
+    write_daily_data narrows and retypes its input columns. It relies on copy-on-write to keep those writes off the
+    caller's frame rather than taking an eager defensive copy.
+    """
+    workbook, _ = empty_existing_ws
+    df = _make_ranking_df()
+    before = df.copy(deep=True)
+
+    _, _ = sheet_io
+    sheets.write_daily_data(workbook, MonthPeriod(year=2026, month=4), df)
+
+    pd.testing.assert_frame_equal(df, before)
+
+
 def test_write_daily_data_clears_before_writing(empty_existing_ws):
     workbook, fake_ws = empty_existing_ws
     call_order: list[str] = []

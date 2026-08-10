@@ -155,6 +155,9 @@ markers = [
     "integration: tests that hit live external services (Google Sheets, etc.). Skipped by default; run with `pytest -m integration`.",
 ]
 addopts = "-m 'not integration'"
+# Unscoped: pandas raises with stacklevel pointing at the caller, so a
+# `:pandas` module filter would never match.
+filterwarnings = ["error::FutureWarning"]
 
 [tool.mypy]
 files = ["src", "tests"]
