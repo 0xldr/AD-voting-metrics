@@ -108,7 +108,6 @@ def test_delegate_with_no_levels_constructs():
     """The common case: a delegate with no governance level assignment."""
     d = _delegate_with_levels(levels=[])
     assert d.levels == []
-    assert d.level_at(date(2026, 1, 1)) is None
 
 
 @pytest.mark.parametrize("bad_level", [3, 0, -1])
@@ -194,69 +193,6 @@ def test_levels_with_open_ended_earlier_period_rejected():
                 {"level": 1, "start_date": date(2025, 6, 1), "end_date": None},
             ],
         )
-
-
-# ---------------------------------------------------------------------------
-# Delegate.level_at — daily lookup for L3 eligibility computation
-# ---------------------------------------------------------------------------
-
-
-def test_level_at_returns_none_for_unassigned_delegate():
-    d = _delegate_with_levels(levels=[])
-    assert d.level_at(date(2026, 1, 15)) is None
-
-
-def test_level_at_returns_level_within_period():
-    d = _delegate_with_levels(
-        levels=[{"level": 1, "start_date": date(2025, 12, 1), "end_date": None}],
-    )
-    assert d.level_at(date(2026, 1, 15)) == 1
-
-
-def test_level_at_returns_none_before_period_starts():
-    d = _delegate_with_levels(
-        levels=[{"level": 1, "start_date": date(2025, 12, 1), "end_date": None}],
-    )
-    assert d.level_at(date(2025, 11, 30)) is None
-
-
-def test_level_at_returns_level_on_end_date_inclusive():
-    """end_date is inclusive: the delegate has the level on that day."""
-    d = _delegate_with_levels(
-        levels=[
-            {
-                "level": 1,
-                "start_date": date(2025, 12, 1),
-                "end_date": date(2026, 3, 31),
-            },
-        ],
-    )
-    assert d.level_at(date(2026, 3, 31)) == 1
-    assert d.level_at(date(2026, 4, 1)) is None
-
-
-def test_level_at_with_sequential_levels():
-    """Across a level transition, returns the correct level for each date."""
-    d = _delegate_with_levels(
-        levels=[
-            {
-                "level": 2,
-                "start_date": date(2024, 6, 1),
-                "end_date": date(2025, 5, 31),
-            },
-            {
-                "level": 1,
-                "start_date": date(2025, 6, 1),
-                "end_date": None,
-            },
-        ],
-    )
-    assert d.level_at(date(2024, 12, 1)) == 2
-    assert d.level_at(date(2025, 5, 31)) == 2
-    assert d.level_at(date(2025, 6, 1)) == 1
-    assert d.level_at(date(2026, 1, 1)) == 1
-    # Before any level period
-    assert d.level_at(date(2024, 1, 1)) is None
 
 
 # ---------------------------------------------------------------------------
@@ -627,38 +563,6 @@ def test_build_roster_for_period_records_api_metadata(tmp_path):
     assert result.api_delegate_count == 2  # the API returned 2 entries
     # yaml_config exposed for downstream callers (reconciliation log)
     assert len(result.yaml_config.delegates) == 1
-
-
-def test_build_roster_for_period_skip_api_check_does_not_call_fetcher(tmp_path):
-    """skip api-check=True must not invoke api_fetcher; finalize uses this path."""
-    yaml_text = """
-    delegates:
-      - name: Active
-        vote_delegate_address: "0xfc48fbca739079aab08216c4d5e506b96593753d"
-        start_date: 2024-01-01
-        end_date: null
-    """
-    p = tmp_path / "delegates.yaml"
-    p.write_text(yaml_text)
-
-    def fetcher_that_should_not_be_called():
-        raise AssertionError("api_fetcher was called despite skip_api_check=True")
-
-    result = build_roster_for_period(
-        p,
-        MonthPeriod(2026, 4),
-        api_fetcher=fetcher_that_should_not_be_called,
-        skip_api_check=True,
-    )
-
-    # Active delegate still found via YAML alone.
-    assert len(result.active_delegates) == 1
-    assert result.active_delegates[0].name == "Active"
-    # Reconciliation metadata reflects the skipped call
-    assert result.api_fetch_succeeded is False
-    assert result.api_delegate_count == 0
-    # No drift warnings when the check is skipped
-    assert result.drift_warnings == []
 
 
 # ---------------------------------------------------------------------------

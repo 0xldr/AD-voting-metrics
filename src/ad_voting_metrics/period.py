@@ -23,28 +23,15 @@ class MonthPeriod:
     def __post_init__(self) -> None:
         """Reject out-of-range months and pre-2022 years.
 
-        Month arithmetic that crosses year boundaries goes through minus_months(), not the constructor.
-
         Raises:
             ValueError: if month is outside 1..12 or year is before the project's lower bound.
         """
         if not 1 <= self.month <= 12:  # noqa: PLR2004 — calendar bounds
-            msg = f"month must be in 1..12, got {self.month}; use minus_months() for month arithmetic"
+            msg = f"month must be in 1..12, got {self.month}"
             raise ValueError(msg)
         if self.year < YEAR_LOWER_BOUND:
             msg = f"year must be >= {YEAR_LOWER_BOUND}, got {self.year}"
             raise ValueError(msg)
-
-    def minus_months(self, n: int) -> MonthPeriod:
-        """Return the MonthPeriod n calendar months before this one (negative n moves forward).
-
-        A shift landing before the project's year lower bound raises ValueError from the constructor.
-
-        Returns:
-            The shifted MonthPeriod.
-        """
-        year, month_zero = divmod(self.year * 12 + (self.month - 1) - n, 12)
-        return MonthPeriod(year=year, month=month_zero + 1)
 
     @property
     def start(self) -> date:

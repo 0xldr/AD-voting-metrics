@@ -6,8 +6,8 @@ The YAML is the source of truth. Each entry:
 - vote_delegate_address: on-chain vote delegate contract (lowercase 0x...)
 - start_date: when AD compensation begins (not the contract creation date)
 - end_date: optional, inclusive last day of alignment
-- levels: optional L1/L2 governance assignments (sequences allowed, no overlaps). Level 3 is computed daily from rank
-  plus eligibility, never set in the YAML.
+- levels: optional L1/L2 governance assignments (sequences allowed, no overlaps). Level 3 is a computed daily
+  assignment, not roster data, and is never set in the YAML.
 
 Drift detection: every YAML entry with end_date=None should be in the API's currently-aligned response, and vice-versa.
 Mismatches produce warnings - typically the YAML needs updating after a new alignment or an exit.
@@ -56,16 +56,6 @@ class LevelAssignment(BaseModel):
             raise ValueError(msg)
         return self
 
-    def covers(self, d: date) -> bool:
-        """True if d falls within this assignment's period (inclusive).
-
-        Returns:
-            Whether d is in the period.
-        """
-        if d < self.start_date:
-            return False
-        return not (self.end_date is not None and d > self.end_date)
-
 
 class Delegate(BaseModel):
     """A single AD entry, currently or previously active."""
@@ -74,8 +64,8 @@ class Delegate(BaseModel):
     vote_delegate_address: str = Field(pattern=r"^0x[0-9a-f]{40}$")
     start_date: date
     end_date: date | None = None
-    # Governance-assigned L1/L2 history. Most delegates have an empty list
-    # (L3 candidates only, with daily eligibility computed at runtime).
+    # Governance-assigned L1/L2 history. Most delegates have an empty list -
+    # they are L3 candidates, and L3 is never recorded in the YAML.
     levels: list[LevelAssignment] = Field(default_factory=list)
 
     @field_validator("name")
@@ -159,17 +149,6 @@ class Delegate(BaseModel):
         if self.start_date > period_end:
             return False
         return not (self.end_date is not None and self.end_date < period_start)
-
-    def level_at(self, d: date) -> int | None:
-        """Return the governance level (1 or 2) on date d, or None if unassigned.
-
-        Used by the L3 daily computation to determine whether a delegate is governance-assigned (and therefore not
-        eligible for an L3 slot).
-        """
-        for la in self.levels:
-            if la.covers(d):
-                return la.level
-        return None
 
 
 class DelegatesConfig(BaseModel):
@@ -278,39 +257,32 @@ def build_roster_for_period(
     yaml_path: Path,
     period: MonthPeriod,
     api_fetcher: Callable[[], list[dict]],
-    *,
-    skip_api_check: bool = False,
 ) -> RosterResult:
-    """Load YAML, optionally fetch API, run drift detection, filter to active-during-period.
+    """Load YAML, fetch the API, run drift detection, filter to active-during-period.
 
-    Drift detection compares the YAML against the live vote.sky.money listing. It's most useful at fetch time; finalize
-    works on a closed historical period where renaming after the fact would be counterproductive, so finalize callers
-    should pass skip_api_check=True.
+    Drift detection compares the YAML against the live vote.sky.money listing. A fetch failure degrades to YAML-only
+    with a warning rather than aborting the run.
 
     Returns:
-        RosterResult with active delegates, drift warnings (empty when skip_api_check=True), the full YAML config, and
-        API-fetch metadata.
+        RosterResult with active delegates, drift warnings, the full YAML config, and API-fetch metadata.
     """
     yaml_config = load_delegates(yaml_path)
 
     api_response: list[dict] = []
     api_fetch_succeeded = False
     warnings: list[str] = []
-    if skip_api_check:
-        logger.info("API drift check skipped (skip_api_check=True).")
-    else:
-        try:
-            api_response = api_fetcher()
-            api_fetch_succeeded = True
-            warnings = detect_roster_drift(yaml_config, api_response)
-        except Exception as e:  # noqa: BLE001 — api_fetcher is caller-supplied; any failure degrades to YAML-only
-            warnings = [
-                (
-                    f"API drift check skipped due to fetch failure: {type(e).__name__}: {e}. "
-                    f"Proceeding with delegates.yaml as the sole source."
-                )
-            ]
-            logger.warning("API fetch failed during drift check: %s", e)
+    try:
+        api_response = api_fetcher()
+        api_fetch_succeeded = True
+        warnings = detect_roster_drift(yaml_config, api_response)
+    except Exception as e:  # noqa: BLE001 — api_fetcher is caller-supplied; any failure degrades to YAML-only
+        warnings = [
+            (
+                f"API drift check skipped due to fetch failure: {type(e).__name__}: {e}. "
+                f"Proceeding with delegates.yaml as the sole source."
+            )
+        ]
+        logger.warning("API fetch failed during drift check: %s", e)
 
     active = [d for d in yaml_config.delegates if d.is_active_during(period.start, period.end)]
     return RosterResult(

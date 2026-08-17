@@ -1,18 +1,13 @@
-"""Orchestration for the `fetch` and `finalize` subcommands.
+"""Orchestration for the fetch run.
 
-Imports are wired so that:
-  - `fetch` pulls SKY balances from on-chain delegation events + poll/spell vote
-    data from vote.sky.money, writes CSV outputs to OUTPUT_DIR,
-    and (best-effort) writes the Participation/Communication/Daily tabs to the workbook.
-  - `finalize` reads the operator-reviewed Communication Master + the other workbook tabs,
-    computes eligibility and compensation, and writes the Compensation tab.
+Pulls SKY balances from on-chain delegation events + poll/spell vote data from vote.sky.money, writes CSV outputs to
+OUTPUT_DIR, and (best-effort) writes the Participation/Communication/Daily tabs to the workbook.
 """
 
 import argparse
 import logging
-from collections.abc import Callable, Iterator
-from contextlib import contextmanager
-from datetime import UTC, date, datetime
+from collections.abc import Callable
+from datetime import UTC, datetime
 from pathlib import Path
 
 import gspread
@@ -21,121 +16,14 @@ import requests
 from web3.exceptions import Web3Exception
 
 from . import sheets
-from .compensation import CompensationConfig, PeriodCompensation, compute_period_compensation
-from .eligibility import DailyEligibility, DelegateMetricsInput, compute_daily_eligibility, compute_period_metrics
 from .paths import OUTPUT_DIR, RECONCILIATION_LOG_PATH, YAML_PATH
 from .period import MonthPeriod
 from .reconciliation import build_entry, write_entry
-from .roster import Delegate, build_roster_for_period, to_dataframe
+from .roster import build_roster_for_period, to_dataframe
 from .sources import delegation, sky_executive, sky_executive_onchain, sky_polling
 from .sources.delegates import fetch_aligned_delegates
 
 logger = logging.getLogger(__name__)
-
-# Per-period workbook state read out of the Compensation Sheet for `finalize`.
-# All three DataFrames are read directly from the workbook by sheets.read_*.
-type _WorkbookData = tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]
-
-
-@contextmanager
-def _required(description: str) -> Iterator[None]:
-    """Log and exit the run when the enclosed IO/compute step raises a recoverable error.
-
-    Raises:
-        SystemExit: when the enclosed block raises RuntimeError, ValueError, or a gspread APIError.
-    """
-    try:
-        yield
-    except (RuntimeError, ValueError, gspread.exceptions.APIError) as e:
-        logger.exception("Could not %s", description)
-        raise SystemExit(1) from e
-
-
-def _build_metrics_input(
-    delegates: list[Delegate],
-    participation_df: pd.DataFrame,
-    communication_df: pd.DataFrame,
-) -> dict[str, DelegateMetricsInput]:
-    """Build per-delegate metrics input from window participation + communication DataFrames.
-
-    `participation_df` has one row per (delegate, poll) with Start Date and Participation Status; `communication_df` has
-    one row per (delegate, poll) with Communication Status. They are merged on (Delegate, Poll Id); polls absent from
-    communication get a blank communication status.
-
-
-    """
-    if participation_df.empty:
-        return {
-            delegate.name: DelegateMetricsInput(
-                poll_starts=[],
-                participation_statuses=[],
-                communication_statuses=[],
-            )
-            for delegate in delegates
-        }
-
-    merged = participation_df.merge(
-        communication_df[["Delegate", "Poll Id", "Communication Status"]]
-        if not communication_df.empty
-        else pd.DataFrame(columns=["Delegate", "Poll Id", "Communication Status"]),
-        on=["Delegate", "Poll Id"],
-        how="left",
-    )
-    merged["Communication Status"] = merged["Communication Status"].fillna("")
-
-    rows_by_delegate = dict(tuple(merged.groupby("Delegate")))
-    empty = merged.iloc[0:0]
-    metrics_input: dict[str, DelegateMetricsInput] = {}
-    for delegate in delegates:
-        rows = rows_by_delegate.get(delegate.name, empty)
-        metrics_input[delegate.name] = DelegateMetricsInput(
-            poll_starts=rows["Start Date"].tolist(),
-            participation_statuses=rows["Participation Status"].tolist(),
-            communication_statuses=rows["Communication Status"].tolist(),
-        )
-    return metrics_input
-
-
-def _ranks_by_day(daily_ranks_df: pd.DataFrame) -> dict[date, dict[str, int]]:
-    """Pivot the long Daily Data DataFrame into {day: {delegate: rank}}."""
-    if daily_ranks_df.empty:
-        return {}
-    out: dict[date, dict[str, int]] = {}
-    for day_key, group in daily_ranks_df.groupby("Date"):
-        # groupby's key is typed as Hashable; the column actually holds date objects.
-        day = day_key if isinstance(day_key, date) else date.fromisoformat(str(day_key))
-        out[day] = dict(zip(group["Delegate"], group["Rank"].astype(int), strict=False))
-    return out
-
-
-def _compute_daily_results(
-    period: MonthPeriod,
-    *,
-    delegates: list[Delegate],
-    daily_ranks_df: pd.DataFrame,
-    period_metrics: dict[str, tuple[float | None, float | None]],
-    total_slots: int,
-) -> list[DailyEligibility]:
-    """Compute eligibility for each day in the period.
-
-    The 6-month metric window is constant across the period, so the caller computes (p_pct, c_pct) per delegate once
-    via `compute_period_metrics` and passes it in for reuse across every day. The only per-day inputs are the rank
-    table and the day's L3 slot competition. `total_slots` comes from the workbook Config tab.
-
-    Returns a list of DailyEligibility, one per day in period.start..period.end inclusive.
-
-    """
-    ranks_by_day = _ranks_by_day(daily_ranks_df)
-    return [
-        compute_daily_eligibility(
-            day=day,
-            delegates=delegates,
-            daily_ranks=ranks_by_day.get(day, {}),
-            period_metrics=period_metrics,
-            total_slots=total_slots,
-        )
-        for day in pd.date_range(period.start, period.end, freq="D").date
-    ]
 
 
 def _build_sky_and_ranking_frames(
@@ -293,126 +181,5 @@ def run_fetch(args: argparse.Namespace) -> None:
         roster=roster_result,
         delegation=delegation.read_sync_state(),
         output_files=output_files,
-    )
-    write_entry(RECONCILIATION_LOG_PATH, period, entry)
-
-
-def _window_start_for_period(period: MonthPeriod) -> date:
-    """Return the first day of the 6-month window ending in `period`.
-
-    For April 2026 (month=4): start is November 1, 2025.
-    """
-    return period.minus_months(5).start
-
-
-def _read_finalize_workbook_data(
-    workbook: gspread.Spreadsheet,
-    period: MonthPeriod,
-    window: tuple[date, date],
-) -> _WorkbookData:
-    """Read Daily Data, window participation, and Communication Master from the workbook."""
-    with _required("read Daily Data"):
-        daily_df = sheets.read_daily_data(workbook, period)
-    logger.info("Daily Data has rank rows for %d days in %s", daily_df["Date"].nunique(), period)
-
-    with _required("read window participation"):
-        participation_df = sheets.read_participation_for_window(workbook, window[0], window[1])
-    logger.info(
-        "Window participation: %d (delegate, poll) entries across %d delegates",
-        len(participation_df),
-        participation_df["Delegate"].nunique() if not participation_df.empty else 0,
-    )
-
-    with _required("read Communication Master"):
-        communication_df = sheets.read_communication_master(workbook)
-    return daily_df, participation_df, communication_df
-
-
-def _compute_period_compensation_for_window(
-    period: MonthPeriod,
-    window: tuple[date, date],
-    delegates: list[Delegate],
-    config: CompensationConfig,
-    workbook_data: _WorkbookData,
-) -> PeriodCompensation:
-    """Build metrics input, compute per-day eligibility, then period compensation."""
-    daily_df, participation_df, communication_df = workbook_data
-    metrics_input = _build_metrics_input(delegates, participation_df, communication_df)
-    # Period-level metrics cover every delegate active at any point (the last day's slice omits
-    # mid-period exiters). Computed once and shared by daily eligibility and compensation.
-    with _required("compute period metrics"):
-        period_metrics = compute_period_metrics(window, delegates, metrics_input)
-    with _required("compute eligibility"):
-        daily_results = _compute_daily_results(
-            period,
-            delegates=delegates,
-            daily_ranks_df=daily_df,
-            period_metrics=period_metrics,
-            total_slots=config.total_slots,
-        )
-    with _required("compute compensation"):
-        return compute_period_compensation(
-            period=period,
-            daily_eligibility=daily_results,
-            config=config,
-            final_metrics=period_metrics,
-        )
-
-
-def run_finalize(args: argparse.Namespace) -> None:
-    """Read workbook tabs, compute eligibility and compensation, write the Compensation tab."""
-    period = args.month
-    window = (_window_start_for_period(period), period.end)
-
-    logger.info(
-        "Finalize requested for %s; 6-month window %s to %s",
-        period,
-        window[0],
-        window[1],
-    )
-
-    with _required("open Sheets workbook"):
-        workbook = sheets.get_workbook()
-    with _required("read Config tab"):
-        config = sheets.read_config(workbook)
-    logger.info(
-        "Config: L1=%s L2=%s L3=%s total_slots=%d",
-        config.l1_usds,
-        config.l2_usds,
-        config.l3_usds,
-        config.total_slots,
-    )
-
-    logger.info("Building delegate roster from delegates.yaml...")
-    roster_result = build_roster_for_period(
-        yaml_path=YAML_PATH,
-        period=period,
-        api_fetcher=fetch_aligned_delegates,
-        skip_api_check=True,
-    )
-    delegates = roster_result.active_delegates
-    for warning in roster_result.drift_warnings:
-        logger.warning(warning)
-    logger.info("Roster has %d delegates active during %s", len(delegates), period)
-
-    workbook_data = _read_finalize_workbook_data(workbook, period, window)
-
-    period_comp = _compute_period_compensation_for_window(period, window, delegates, config, workbook_data)
-    logger.info(
-        "Compensation: %d delegates, slot_days_check=%s",
-        len(period_comp.per_delegate),
-        period_comp.validation.get("slot_days_check"),
-    )
-
-    with _required("write Compensation tab"):
-        sheets.write_compensation_tab(workbook, period_comp)
-    logger.info("Compensation tab written for %s", period)
-
-    entry = build_entry(
-        period=period,
-        yaml_path=YAML_PATH,
-        roster=roster_result,
-        delegation=None,
-        output_files=[Path(f"workbook:{sheets.compensation_tab_title(period)}")],
     )
     write_entry(RECONCILIATION_LOG_PATH, period, entry)

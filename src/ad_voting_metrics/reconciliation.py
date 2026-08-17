@@ -43,8 +43,8 @@ class ReconciliationEntry(TypedDict):
     active_during_period: int
     drift_warnings: list[str]
     delegation_source: str
-    delegation_factory_block: int | None
-    delegation_last_synced_block: int | None
+    delegation_factory_block: int
+    delegation_last_synced_block: int
     output_files: list[str]
 
 
@@ -53,17 +53,17 @@ def build_entry(
     period: MonthPeriod,
     yaml_path: Path,
     roster: RosterResult,
-    delegation: dict[str, int] | None,
+    delegation: dict[str, int],
     output_files: list[Path],
 ) -> ReconciliationEntry:
     """Construct a reconciliation log entry from this run's facts.
 
-    `delegation` is the on-chain sync state {factory_block, last_synced_block} when delegation data was
-    fetched (fetch), or None when it wasn't (finalize). A None records source 'n/a' with null block fields.
+    `delegation` is the on-chain sync state {factory_block, last_synced_block}. `delegation_source` is always 'onchain';
+    the field is retained so entries written before it became constant have the same shape as new ones.
 
     `roster.api_delegate_count` is 0 when api_fetch_succeeded is False (the API call raised and was soft-failed).
 
-    All fields are JSON-serializable. The keyword-only signature reflects the call pattern in cli.py and prevents
+    All fields are JSON-serializable. The keyword-only signature reflects the call pattern in pipeline.py and prevents
     accidental positional calls.
 
     Returns:
@@ -86,9 +86,9 @@ def build_entry(
         "api_fetch_succeeded": roster.api_fetch_succeeded,
         "active_during_period": len(roster.active_delegates),
         "drift_warnings": list(roster.drift_warnings),
-        "delegation_source": "onchain" if delegation is not None else "n/a",
-        "delegation_factory_block": delegation["factory_block"] if delegation is not None else None,
-        "delegation_last_synced_block": delegation["last_synced_block"] if delegation is not None else None,
+        "delegation_source": "onchain",
+        "delegation_factory_block": delegation["factory_block"],
+        "delegation_last_synced_block": delegation["last_synced_block"],
         "output_files": [str(p) for p in output_files],
     }
 

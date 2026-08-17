@@ -1,35 +1,30 @@
-"""Google Sheets connection for reading/writing the AD compensation workbook.
+"""Google Sheets connection for writing the AD participation workbook.
 
 Auth is via a Google Cloud service account; the JSON key file is referenced by GOOGLE_SERVICE_ACCOUNT_FILE and the
 workbook by SHEETS_WORKBOOK_ID. The service account's client_email must be added as Editor on the workbook - a one-time
 setup step in the Google Sheets sharing dialog.
 
-I/O is mediated by gspread-dataframe so values move in and out of the sheet as pandas DataFrames; the readers return
-DataFrames directly and the writers consume them.
+I/O is mediated by gspread-dataframe so values move in and out of the sheet as pandas DataFrames. The writers for the
+workbook-wide tabs (Daily Data, Communication Master) read the tab's current contents first so a fetch merges into
+existing history rather than replacing it.
 """
 
-import calendar
 import logging
-from collections import Counter
 from datetime import UTC, date, datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, cast
+from typing import cast
 
 import gspread
 import pandas as pd
 from google.oauth2.service_account import Credentials
 from gspread_dataframe import get_as_dataframe, set_with_dataframe
 
-from .compensation import CompensationConfig
 from .metrics import PARTICIPATED, PENDING_VERIFICATION, cross_reference_one
 from .paths import BACKUP_DIR as _DEFAULT_BACKUP_DIR
 from .period import MonthPeriod
 from .settings import EnvSettings
 
 logger = logging.getLogger(__name__)
-
-if TYPE_CHECKING:
-    from .compensation import PeriodCompensation
 
 # Scope required to read/write spreadsheets opened by ID. open_by_key uses
 # the Sheets API only; Drive scopes are needed only for open-by-title/listing.
@@ -169,23 +164,6 @@ def _backup_tab_before_clear(df: pd.DataFrame, tab_title: str) -> None:
         msg = f"Could not write pre-clear backup of '{tab_title}' to {path}: {e}. Refusing to clear the tab."
         raise RuntimeError(msg) from e
     logger.info("Pre-clear backup of '%s' written to %s", tab_title, path)
-
-
-def _open_required_tab(
-    workbook: gspread.Spreadsheet,
-    title: str,
-    instructions: str,
-) -> gspread.Worksheet:
-    """Open the named tab or raise RuntimeError with an operator-friendly message.
-
-    Raises:
-        RuntimeError: if the tab doesn't exist.
-    """
-    try:
-        return workbook.worksheet(title)
-    except gspread.exceptions.WorksheetNotFound as exc:
-        msg = f"Workbook is missing the '{title}' tab. {instructions}"
-        raise RuntimeError(msg) from exc
 
 
 # ---------------------------------------------------------------------------
@@ -349,37 +327,6 @@ def write_daily_data(
         worksheet, merged, include_index=False, include_column_header=True, resize=False, allow_formulas=False
     )
     return worksheet
-
-
-def read_daily_data(
-    workbook: gspread.Spreadsheet,
-    period: MonthPeriod,
-) -> pd.DataFrame:
-    """Read the workbook-wide Daily Data tab, filtered to days in `period`.
-
-    Returns:
-        DataFrame with columns Date (date), Delegate (str), Total Delegation (float), Rank (int) for every (date,
-        delegate) row in `period`.
-
-    Raises:
-        RuntimeError: if the Daily Data tab is absent, or no rows in the tab fall inside `period`.
-    """
-    worksheet = _open_required_tab(
-        workbook,
-        DAILY_DATA_TAB_TITLE,
-        f"Run `fetch` for {period} first to populate it.",
-    )
-    df = _existing_daily_data(worksheet)
-    if not df.empty:
-        df = df[(df["Date"] >= period.start) & (df["Date"] <= period.end)].reset_index(drop=True)
-
-    if df.empty:
-        msg = (
-            f"'{DAILY_DATA_TAB_TITLE}' tab has no rows for {period} ({period.start} to {period.end}). Run `fetch` "
-            f"for that period before running `finalize`."
-        )
-        raise RuntimeError(msg)
-    return df
 
 
 def _to_date_value(value: date | datetime | str | None) -> date | None:
@@ -678,294 +625,5 @@ def write_communication_master(
     worksheet.clear()
     set_with_dataframe(
         worksheet, out, include_index=False, include_column_header=True, resize=False, allow_formulas=False
-    )
-    return worksheet
-
-
-# ---------------------------------------------------------------------------
-# Readers: Participation window aggregation + Communication Master
-# ---------------------------------------------------------------------------
-
-
-def _parse_poll_history_tab(worksheet: gspread.Worksheet, value_col_name: str) -> pd.DataFrame:
-    """Reshape a poll-history tab into long-form DataFrame.
-
-    Output columns: Delegate, Poll Id, Start Date (date), End Date (date), Title, plus value_col_name carrying the
-    per-cell status.
-
-    Empty tabs and tabs without delegate columns return an empty DataFrame with the expected columns. Blank-poll-id rows
-    and rows with unparseable Start Date are dropped.
-
-
-    """
-    wide = _read_sheet_as_strings(worksheet)
-    out_cols = ["Delegate", "Poll Id", "Start Date", "End Date", "Title", value_col_name]
-    if wide.empty or "Poll Id" not in wide.columns:
-        return pd.DataFrame(columns=out_cols)
-
-    metadata_cols = list(PARTICIPATION_METADATA_COLUMNS)
-    delegate_cols = [c for c in wide.columns if c not in metadata_cols]
-    if not delegate_cols:
-        return pd.DataFrame(columns=out_cols)
-
-    wide["Poll Id"] = wide["Poll Id"].astype(str)
-    wide = wide[wide["Poll Id"].str.strip() != ""]
-
-    long = wide.melt(
-        id_vars=metadata_cols,
-        value_vars=delegate_cols,
-        var_name="Delegate",
-        value_name=value_col_name,
-    )
-    long["Start Date"] = long["Start Date"].apply(_to_date_value)
-    long["End Date"] = long["End Date"].apply(_to_date_value)
-    return long[out_cols].reset_index(drop=True)
-
-
-def read_participation_for_window(
-    workbook: gspread.Spreadsheet,
-    window_start: date,
-    window_end: date,
-) -> pd.DataFrame:
-    """Aggregate per-delegate participation across all months in [window_start, window_end].
-
-    Walks each month touching the window. For each, looks for a tab named "Participation Raw Data <Month Year>". Missing
-    tabs are silently skipped (zero-poll months produce no tab). Polls with Start Date outside [window_start,
-    window_end] are dropped.
-
-    Returns:
-        Long-form DataFrame with columns Delegate, Poll Id, Start Date, End Date, Title, Participation Status. Empty
-        (with those columns) if no in-window data was found.
-    """
-    months = [
-        MonthPeriod(year=p.year, month=p.month) for p in pd.period_range(start=window_start, end=window_end, freq="M")
-    ]
-    out_cols = ["Delegate", "Poll Id", "Start Date", "End Date", "Title", "Participation Status"]
-    frames: list[pd.DataFrame] = []
-    for month in months:
-        tab_title = _participation_raw_data_tab_title(month)
-        try:
-            worksheet = workbook.worksheet(tab_title)
-        except gspread.exceptions.WorksheetNotFound:
-            continue
-        long = _parse_poll_history_tab(worksheet, "Participation Status")
-        long = long.dropna(subset=["Start Date"])
-        long = long[(long["Start Date"] >= window_start) & (long["Start Date"] <= window_end)]
-        if not long.empty:
-            frames.append(long)
-
-    if not frames:
-        return pd.DataFrame(columns=out_cols)
-    return pd.concat(frames, ignore_index=True)
-
-
-def read_communication_master(workbook: gspread.Spreadsheet) -> pd.DataFrame:
-    """Read the workbook-wide Communication Master tab as a long DataFrame.
-
-    Returns:
-        Long-form DataFrame with columns Delegate, Poll Id, Start Date, End Date, Title, Communication Status. Empty
-        (with those columns) if the tab has no parseable rows.
-    """
-    worksheet = _open_required_tab(
-        workbook,
-        COMMUNICATION_MASTER_TAB_TITLE,
-        "Run `fetch` first to populate it.",
-    )
-    return _parse_poll_history_tab(worksheet, "Communication Status")
-
-
-# ---------------------------------------------------------------------------
-# Config tab (workbook-wide) and Compensation tab (per-period)
-# ---------------------------------------------------------------------------
-
-
-CONFIG_TAB_TITLE = "Config"
-
-_REQUIRED_CONFIG_KEYS = ("L1_USDS", "L2_USDS", "L3_USDS", "TOTAL_SLOTS")
-_CONFIG_MIN_COLS = 2
-
-COMPENSATION_COLUMNS = (
-    "Delegate",
-    "Participation 6-month %",
-    "Communication 6-month %",
-    "Metrics Modifier",
-    "Ranked During Month?",
-    "Days As Ranked",
-    "Entitlement Pre-Modifiers (USDS)",
-    "Final Amount to AD Buffer (USDS)",
-    "Rank at Month End",
-    "Amount in Buffer at Month Start (USDS)",
-    "Amount Added to AD Buffer (USDS)",
-    "Payment Amount (USDS)",
-    "Scaled Buffer Contents Post Payment (USDS)",
-    "Notes",
-)
-
-
-def compensation_tab_title(period: MonthPeriod) -> str:
-    """Return the per-period tab title, e.g. "April 2026 Compensation"."""
-    return f"{period} Compensation"
-
-
-def read_config(workbook: gspread.Spreadsheet) -> CompensationConfig:
-    """Read the workbook-wide Config tab and return a CompensationConfig.
-
-    Format: two columns (Key, Value), header in row 1. Required keys: L1_USDS, L2_USDS, L3_USDS, TOTAL_SLOTS. Unknown
-    keys are ignored.
-
-    Returns:
-        Parsed CompensationConfig.
-
-    Raises:
-        ValueError: if a required key is missing or a value can't be coerced.
-    """
-    worksheet = _open_required_tab(
-        workbook,
-        CONFIG_TAB_TITLE,
-        f"Create it with columns Key and Value, and rows for: {', '.join(_REQUIRED_CONFIG_KEYS)}",
-    )
-
-    df = _read_sheet_as_strings(worksheet)
-    if df.empty or df.shape[1] < _CONFIG_MIN_COLS:
-        msg = f"'{CONFIG_TAB_TITLE}' tab is empty."
-        raise ValueError(msg)
-
-    key_col, value_col = df.columns[0], df.columns[1]
-    kv: dict[str, str] = {}
-    for key, value in zip(df[key_col].astype(str), df[value_col].astype(str), strict=False):
-        k, v = key.strip(), value.strip()
-        if k:
-            kv[k] = v
-
-    missing = [k for k in _REQUIRED_CONFIG_KEYS if k not in kv]
-    if missing:
-        msg = f"'{CONFIG_TAB_TITLE}' tab is missing required keys: {missing}. Required: {list(_REQUIRED_CONFIG_KEYS)}."
-        raise ValueError(msg)
-
-    try:
-        l1 = float(kv["L1_USDS"])
-        l2 = float(kv["L2_USDS"])
-        l3 = float(kv["L3_USDS"])
-        total = int(kv["TOTAL_SLOTS"])
-    except ValueError as exc:
-        msg = f"'{CONFIG_TAB_TITLE}' has un-parseable value: {exc}"
-        raise ValueError(msg) from exc
-
-    return CompensationConfig(
-        l1_usds=l1,
-        l2_usds=l2,
-        l3_usds=l3,
-        total_slots=total,
-    )
-
-
-# Compensation-tab H-column labels for assigned_level. Anything not 1/2/3 (i.e. None for unassigned) renders as "No".
-_LEVEL_LABELS: dict[int | None, str] = {1: "Level 1", 2: "Level 2", 3: "Level 3"}
-
-
-def _compensation_header_block(period_comp: PeriodCompensation, total_final: float) -> list[list[object]]:
-    """Build rows 1-8 of the Compensation tab.
-
-    The total is precomputed in Python (no =SUM formula) so the tab is fully self-describing on its own.
-
-    Returns eight rows, each padded to 8 columns.
-
-    """
-    period = period_comp.period
-    config = period_comp.config
-    rows_in = period_comp.per_delegate
-    level_counts = Counter(r.level_at_period_end for r in rows_in)
-    n_l1, n_l2, n_l3 = level_counts.get(1, 0), level_counts.get(2, 0), level_counts.get(3, 0)
-    return [
-        ["Year", period.year, "", "Level 1 USDS", config.l1_usds, "", "Number of Level 1", n_l1],
-        ["Month", calendar.month_name[period.month], "", "Level 2 USDS", config.l2_usds, "", "Number of Level 2", n_l2],
-        [
-            "Period Start",
-            _coerce_date(period.start),
-            "",
-            "Level 3 USDS",
-            config.l3_usds,
-            "",
-            "Number of Level 3",
-            n_l3,
-        ],
-        ["Period End", _coerce_date(period.end), "", "", "", "", "", ""],
-        ["Days in Month", period_comp.days_in_period, "", "", "", "", "", ""],
-        ["", "", "", "", "", "", "", ""],
-        ["Total Final Amount", total_final, "", "", "", "", "", ""],
-        ["Slot Days Check", period_comp.validation.get("slot_days_check", ""), "", "", "", "", "", ""],
-    ]
-
-
-def _compensation_data_dataframe(period_comp: PeriodCompensation) -> pd.DataFrame:
-    """Build the data table (one row per delegate) for the Compensation tab.
-
-    Returns a DataFrame with COMPENSATION_COLUMNS in order.
-
-    """
-    rows = [
-        {
-            "Delegate": r.name,
-            "Participation 6-month %": "No Data" if r.participation_pct is None else r.participation_pct,
-            "Communication 6-month %": "No Data" if r.communication_pct is None else r.communication_pct,
-            "Metrics Modifier": r.metrics_modifier,
-            "Ranked During Month?": _LEVEL_LABELS.get(r.level_at_period_end, "No"),
-            "Days As Ranked": r.days_as_l1 + r.days_as_l2 + r.days_as_l3,
-            "Entitlement Pre-Modifiers (USDS)": r.entitlement_pre_modifier,
-            "Final Amount to AD Buffer (USDS)": r.final_amount,
-            "Rank at Month End": r.rank_at_period_end if r.rank_at_period_end is not None else "",
-            "Amount in Buffer at Month Start (USDS)": r.buffer_carry_in,
-            "Amount Added to AD Buffer (USDS)": r.buffer_added,
-            "Payment Amount (USDS)": r.payment_amount,
-            "Scaled Buffer Contents Post Payment (USDS)": r.buffer_post_payment,
-            "Notes": r.notes,
-        }
-        for r in period_comp.per_delegate
-    ]
-    return pd.DataFrame(rows, columns=list(COMPENSATION_COLUMNS))
-
-
-def write_compensation_tab(
-    workbook: gspread.Spreadsheet,
-    period_comp: PeriodCompensation,
-) -> gspread.Worksheet:
-    """Write the per-period Compensation tab. Re-runs overwrite.
-
-    Tab name: "{Month Year} Compensation".
-
-    Layout:
-      - Rows 1-5: period metadata (Year, Month, Period Start/End, Days)
-      - Rows 1-3 cols D-E: L1/L2/L3 USDS reference values from config.
-      - Rows 1-3 cols G-H: counts of delegates at each level.
-      - Row 7: Total Final Amount (computed in Python, no formula).
-      - Row 8: Slot Days Check GOOD/NOT GOOD status.
-      - Row 9: column headers (14 columns A-N).
-      - Rows 10+: one row per delegate, in alphabetical order from period_comp.per_delegate.
-
-    Returns:
-        The worksheet that was written.
-    """
-    data_df = _compensation_data_dataframe(period_comp)
-    total_final = float(sum(r.final_amount for r in period_comp.per_delegate))
-    header_block = _compensation_header_block(period_comp, total_final)
-
-    total_rows_needed = len(header_block) + 1 + len(data_df)
-    worksheet = get_or_create_tab(
-        workbook,
-        compensation_tab_title(period_comp.period),
-        rows=max(total_rows_needed + 50, 100),
-        cols=len(COMPENSATION_COLUMNS),
-    )
-
-    worksheet.clear()
-    worksheet.update(values=header_block, range_name="A1:H8")
-    set_with_dataframe(
-        worksheet,
-        data_df,
-        row=len(header_block) + 1,
-        include_index=False,
-        include_column_header=True,
-        resize=False,
-        allow_formulas=False,
     )
     return worksheet

@@ -136,21 +136,6 @@ def test_build_entry_minimal():
     assert entry["output_files"] == ["/tmp/output.csv"]
 
 
-def test_build_entry_records_delegation_source_when_not_fetched():
-    """When delegation is None (finalize, no fetch), source='n/a'."""
-    entry = build_entry(
-        period=_sample_period(),
-        yaml_path=Path("/tmp/delegates.yaml"),
-        roster=_make_roster_result(),
-        delegation=None,
-        output_files=[],
-    )
-
-    assert entry["delegation_source"] == "n/a"
-    assert entry["delegation_factory_block"] is None
-    assert entry["delegation_last_synced_block"] is None
-
-
 def test_build_entry_preserves_drift_warnings():
     entry = build_entry(
         period=_sample_period(),

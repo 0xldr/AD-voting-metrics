@@ -1,4 +1,4 @@
-"""Tests for cli argparse callbacks, build_arg_parser, check_period_has_ended, and main dispatch."""
+"""Tests for cli argparse callbacks, build_arg_parser, check_period_has_ended, and main."""
 
 from datetime import date
 from unittest.mock import patch
@@ -56,70 +56,49 @@ def test_check_period_has_ended_handles_year_boundary():
 
 
 # ---------------------------------------------------------------------------
-# Subcommand structure — build_arg_parser
+# build_arg_parser
 # ---------------------------------------------------------------------------
 
 
-def test_parser_fetch_subcommand_parses_month_and_rebuild():
-    """The fetch subcommand takes --month and --rebuild."""
+def test_parser_parses_month_and_rebuild():
+    """The parser takes --month and --rebuild."""
     parser = build_arg_parser()
-    args = parser.parse_args(["fetch", "--month", "April 2026", "--rebuild"])
+    args = parser.parse_args(["--month", "April 2026", "--rebuild"])
 
-    assert args.command == "fetch"
     assert isinstance(args.month, MonthPeriod)
     assert args.month.year == 2026
     assert args.month.month == 4
     assert args.rebuild is True
 
 
-def test_parser_fetch_subcommand_rebuild_defaults_to_false():
+def test_parser_rebuild_defaults_to_false():
     """--rebuild defaults to False when omitted."""
     parser = build_arg_parser()
-    args = parser.parse_args(["fetch", "--month", "April 2026"])
+    args = parser.parse_args(["--month", "April 2026"])
 
-    assert args.command == "fetch"
     assert args.rebuild is False
 
 
-def test_parser_finalize_subcommand_parses_month():
-    """The finalize subcommand takes --month."""
+def test_parser_requires_month():
+    """--month is required; argparse exits with usage when it's absent."""
     parser = build_arg_parser()
-    args = parser.parse_args(["finalize", "--month", "April 2026"])
-
-    assert args.command == "finalize"
-    assert isinstance(args.month, MonthPeriod)
-    assert args.month.year == 2026
-    assert args.month.month == 4
+    with pytest.raises(SystemExit):
+        parser.parse_args([])
 
 
 # ---------------------------------------------------------------------------
-# main() — argparse + dispatch
+# main() — argparse + run
 # ---------------------------------------------------------------------------
 
 
-def test_main_dispatches_fetch_subcommand(monkeypatch):
-    """main(['fetch', '--month', ...]) routes to run_fetch."""
+def test_main_runs_fetch(monkeypatch):
+    """main(['--month', ...]) runs the fetch pipeline with the parsed period."""
     monkeypatch.setattr("ad_voting_metrics.cli.check_period_has_ended", lambda *_, **__: None)
 
-    with (
-        patch("ad_voting_metrics.cli.run_fetch") as fetch_mock,
-        patch("ad_voting_metrics.cli.run_finalize") as finalize_mock,
-    ):
-        main(["fetch", "--month", "2026-04"])
+    with patch("ad_voting_metrics.cli.run_fetch") as fetch_mock:
+        main(["--month", "2026-04"])
 
     fetch_mock.assert_called_once()
-    finalize_mock.assert_not_called()
-
-
-def test_main_dispatches_finalize_subcommand(monkeypatch):
-    """main(['finalize', '--month', ...]) routes to run_finalize."""
-    monkeypatch.setattr("ad_voting_metrics.cli.check_period_has_ended", lambda *_, **__: None)
-
-    with (
-        patch("ad_voting_metrics.cli.run_fetch") as fetch_mock,
-        patch("ad_voting_metrics.cli.run_finalize") as finalize_mock,
-    ):
-        main(["finalize", "--month", "2026-04"])
-
-    finalize_mock.assert_called_once()
-    fetch_mock.assert_not_called()
+    args = fetch_mock.call_args.args[0]
+    assert args.month == MonthPeriod(year=2026, month=4)
+    assert args.rebuild is False
