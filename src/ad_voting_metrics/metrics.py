@@ -1,6 +1,6 @@
 """Status vocabulary for SKY poll and executive-spell participation.
 
-`fetch` writes one status per (poll, delegate) into the workbook's Participation Raw Data tab and seeds the matching
+A run writes one status per (poll, delegate) into the workbook's Participation Raw Data tab and seeds the matching
 Communication Master cell from it. The strings and the sets that classify them live here so that every producer (the
 sources modules) and consumer (the sheets writers) shares one definition.
 

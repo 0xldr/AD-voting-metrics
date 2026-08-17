@@ -4,9 +4,9 @@ Single definition of every env var the pipeline reads. Values load from the proc
 env var names case-insensitively). cli.main's load_dotenv() populates the environment from .env beforehand; this
 model deliberately doesn't read .env itself, so tests control values purely through the environment.
 
-All fields are optional at this layer: what's required depends on the command (fetch needs the RPC URL; on-chain
-executive verification degrades gracefully without it). Each consumer enforces its own requirement with an
-operator-friendly error message.
+All fields are optional at this layer: on-chain executive verification degrades gracefully without the RPC URL, and
+the workbook writes are skipped when the Sheets credentials are absent. Each consumer enforces its own requirement
+with an operator-friendly error message.
 """
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
