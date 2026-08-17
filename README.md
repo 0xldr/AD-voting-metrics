@@ -35,6 +35,8 @@ cd AD-voting-metrics
 pip install -e .
 ```
 
+The editable install (`-e`) is required, not a convenience. `delegates.yaml` and `output_data/` are located relative to the package on disk, so a regular (non-editable) install would resolve them inside `site-packages` and fail to find the roster.
+
 ## Configuration
 
 ### Environment Variables
@@ -63,6 +65,9 @@ When a delegate is recognized, add an entry with `end_date: null`. When they exi
 ## Usage
 
 ```bash
+ad-voting-metrics --month "April 2026"
+
+# equivalently, without relying on the installed console script:
 python -m ad_voting_metrics --month "April 2026"
 ```
 

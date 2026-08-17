@@ -1,5 +1,6 @@
-"""Tests for cli argparse callbacks, build_arg_parser, check_period_has_ended, and main."""
+"""Tests for cli argparse callbacks, build_arg_parser, check_period_has_ended, main, and the console script."""
 
+import importlib.metadata
 from datetime import date
 from unittest.mock import patch
 
@@ -11,6 +12,8 @@ from ad_voting_metrics.cli import (
     main,
 )
 from ad_voting_metrics.period import MonthPeriod
+
+CONSOLE_SCRIPT_NAME = "ad-voting-metrics"
 
 # ---------------------------------------------------------------------------
 # check_period_has_ended
@@ -102,3 +105,19 @@ def test_main_runs_fetch(monkeypatch):
     args = fetch_mock.call_args.args[0]
     assert args.month == MonthPeriod(year=2026, month=4)
     assert args.rebuild is False
+
+
+# ---------------------------------------------------------------------------
+# Console script — [project.scripts] in pyproject.toml
+# ---------------------------------------------------------------------------
+
+
+def test_console_script_is_installed_and_loads_main():
+    """The `ad-voting-metrics` console script resolves to cli.main."""
+    scripts = importlib.metadata.entry_points(group="console_scripts")
+    matching = [e for e in scripts if e.name == CONSOLE_SCRIPT_NAME]
+    assert matching, f"no console_scripts entry named {CONSOLE_SCRIPT_NAME!r}; re-sync the environment"
+
+    entry = matching[0]
+    assert entry.value == "ad_voting_metrics.cli:main"
+    assert entry.load() is main
