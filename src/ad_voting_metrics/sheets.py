@@ -19,10 +19,10 @@ import pandas as pd
 from google.oauth2.service_account import Credentials
 from gspread_dataframe import get_as_dataframe, set_with_dataframe
 
-from .metrics import PARTICIPATED, PENDING_VERIFICATION, cross_reference_one
 from .paths import BACKUP_DIR as _DEFAULT_BACKUP_DIR
 from .period import MonthPeriod
 from .settings import EnvSettings
+from .vote_status import PARTICIPATED, PENDING_VERIFICATION, cross_reference_one
 
 logger = logging.getLogger(__name__)
 

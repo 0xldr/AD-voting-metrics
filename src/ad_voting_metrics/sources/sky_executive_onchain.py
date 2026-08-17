@@ -25,11 +25,10 @@ from web3 import Web3
 from web3.constants import ADDRESS_ZERO
 from web3.exceptions import BadFunctionCallOutput, ContractLogicError, Web3RPCError
 
-from ad_voting_metrics.metrics import LATE, PENDING_VERIFICATION
 from ad_voting_metrics.paths import SLATE_CACHE_PATH
 from ad_voting_metrics.settings import EnvSettings
 from ad_voting_metrics.sources.json_cache import load_json_cache, save_json_cache
-from ad_voting_metrics.vote_status import spell_vote_deadline
+from ad_voting_metrics.vote_status import LATE, PENDING_VERIFICATION, YES, spell_vote_deadline
 
 logger = logging.getLogger(__name__)
 
@@ -253,7 +252,7 @@ def _adjudicate_cells(
             if vote_date is None:
                 continue
             if vote_date <= deadline:
-                df.at[idx, spell_addr] = "Yes"  # noqa: PD008
+                df.at[idx, spell_addr] = YES  # noqa: PD008
                 on_time += 1
             else:
                 df.at[idx, spell_addr] = LATE  # noqa: PD008

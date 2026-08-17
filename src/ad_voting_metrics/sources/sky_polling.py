@@ -8,7 +8,7 @@ from datetime import date, datetime
 import pandas as pd
 
 from ad_voting_metrics.period import MonthPeriod
-from ad_voting_metrics.vote_status import determine_vote_status
+from ad_voting_metrics.vote_status import NOT_STARTED, determine_vote_status
 
 from .http import HEADERS, HTTP_TIMEOUT, get_session
 
@@ -129,7 +129,7 @@ def add_poll_vote_statuses(
             )
 
             if first_dates_by_contract[address] > end_date:
-                status = "Not Started"
+                status = NOT_STARTED
 
             vote_statuses.append(status)
 

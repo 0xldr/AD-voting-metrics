@@ -1,10 +1,114 @@
-"""Tests for vote_status — poll close-day statuses and the spell voting deadline (pure logic)."""
+"""Tests for vote_status — the status vocabulary, poll close-day statuses, and the spell voting deadline."""
 
 from datetime import UTC, date, datetime
 
 import pytest
 
 from ad_voting_metrics import vote_status
+from ad_voting_metrics.vote_status import (
+    DISCOUNTED,
+    NOT_PARTICIPATED,
+    PARTICIPATED,
+    cross_reference_one,
+)
+
+# ---------------------------------------------------------------------------
+# Status set sanity — guard against accidental edits to the constants
+# ---------------------------------------------------------------------------
+
+
+def test_participated_set_contents():
+    """Pin the participated set so an accidental edit fails the test."""
+    assert frozenset({"Yes"}) == PARTICIPATED
+
+
+def test_not_participated_set_contents():
+    assert frozenset({"No", "Late"}) == NOT_PARTICIPATED
+
+
+def test_discounted_set_contents():
+    """All non-participatable statuses go in DISCOUNTED.
+
+    If the script grows a new sentinel (or the operator coins one and uses
+    it in a workbook), update both the script's writer and this set, and
+    pin the new contents here.
+    """
+    assert (
+        frozenset(
+            {
+                "Not Started",
+                "Exited",
+                "Voting Open",
+                "No Delegated SKY",
+                "Not included",
+                "Pending verification",
+                "Did not vote",
+            }
+        )
+        == DISCOUNTED
+    )
+
+
+def test_status_sets_are_disjoint():
+    """A status string belongs to at most one bucket — no overlap."""
+    assert PARTICIPATED.isdisjoint(NOT_PARTICIPATED)
+    assert PARTICIPATED.isdisjoint(DISCOUNTED)
+    assert NOT_PARTICIPATED.isdisjoint(DISCOUNTED)
+
+
+def test_status_constants_match_their_set_membership():
+    """The named constants and the sets can't drift apart."""
+    assert vote_status.YES in PARTICIPATED
+    assert {vote_status.NO, vote_status.LATE} <= NOT_PARTICIPATED
+    assert {
+        vote_status.NOT_STARTED,
+        vote_status.EXITED,
+        vote_status.VOTING_OPEN,
+        vote_status.NO_DELEGATED_SKY,
+        vote_status.NOT_INCLUDED,
+        vote_status.PENDING_VERIFICATION,
+        vote_status.DID_NOT_VOTE,
+    } <= DISCOUNTED
+
+
+# ---------------------------------------------------------------------------
+# cross_reference_one — participation status implies a communication value
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("participation", sorted(NOT_PARTICIPATED))
+def test_cross_ref_non_participation_becomes_did_not_vote(participation):
+    """Both "No" and "Late" override communication to "Did not vote".
+
+    A late vote earns no participation credit, so discounting its rationale avoids penalising it twice.
+    """
+    assert cross_reference_one(participation) == "Did not vote"
+
+
+@pytest.mark.parametrize("participation", sorted(DISCOUNTED))
+def test_cross_ref_mirrors_discounted_participation(participation):
+    """DISCOUNTED participation is mirrored into communication to keep denominators in sync."""
+    assert cross_reference_one(participation) == participation
+
+
+@pytest.mark.parametrize("participation", sorted(PARTICIPATED))
+def test_cross_ref_participation_passes_through(participation):
+    """A participating delegate's communication value is the caller's to decide."""
+    assert cross_reference_one(participation) is None
+
+
+def test_cross_ref_unknown_status_passes_through():
+    """An unrecognized status is not silently reclassified."""
+    assert cross_reference_one("Mystery Status") is None
+
+
+def test_cross_ref_empty_status_passes_through():
+    assert cross_reference_one("") is None
+
+
+# ---------------------------------------------------------------------------
+# determine_vote_status
+# ---------------------------------------------------------------------------
 
 # Standard 3-day poll spanning 4 calendar days in daily SKY delegation snapshots:
 # 16:00-24:00 on day 0, full days 1 and 2, 0:00-16:00 on day 3 (close day).

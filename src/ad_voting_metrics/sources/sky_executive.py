@@ -6,8 +6,8 @@ from datetime import date, datetime
 
 import pandas as pd
 
-from ad_voting_metrics.metrics import PENDING_VERIFICATION
 from ad_voting_metrics.period import MonthPeriod
+from ad_voting_metrics.vote_status import NO_DELEGATED_SKY, NOT_STARTED, PENDING_VERIFICATION
 
 from .http import HEADERS, HTTP_TIMEOUT, get_session
 
@@ -90,10 +90,10 @@ def add_spell_vote_statuses(
 
             sky_on_start = sky_lookup.get((address, start_date), 0.0)
 
-            voted = PENDING_VERIFICATION if sky_on_start != 0 else "No Delegated SKY"
+            voted = PENDING_VERIFICATION if sky_on_start != 0 else NO_DELEGATED_SKY
 
             if first_delegate_date > start_date:
-                voted = "Not Started"
+                voted = NOT_STARTED
 
             vote_statuses.append(voted)
 
