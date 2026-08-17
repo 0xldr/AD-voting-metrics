@@ -110,11 +110,6 @@ def get_workbook(
         raise RuntimeError(msg) from e
 
 
-def list_tab_names(workbook: gspread.Spreadsheet) -> list[str]:
-    """Return the title of every worksheet/tab in the workbook, in order."""
-    return [ws.title for ws in workbook.worksheets()]
-
-
 def get_or_create_tab(
     workbook: gspread.Spreadsheet,
     title: str,

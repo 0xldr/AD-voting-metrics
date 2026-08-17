@@ -199,24 +199,8 @@ def test_get_workbook_real_credentials_opens_spreadsheet():
 
 
 # ---------------------------------------------------------------------------
-# list_tab_names + get_or_create_tab
+# get_or_create_tab
 # ---------------------------------------------------------------------------
-
-
-def test_list_tab_names_returns_titles_in_order():
-    workbook = MagicMock()
-    workbook.worksheets.return_value = [
-        MagicMock(title="Daily Data"),
-        MagicMock(title="Config"),
-        MagicMock(title="Communication Master"),
-    ]
-    assert sheets.list_tab_names(workbook) == ["Daily Data", "Config", "Communication Master"]
-
-
-def test_list_tab_names_empty_workbook_returns_empty_list():
-    workbook = MagicMock()
-    workbook.worksheets.return_value = []
-    assert sheets.list_tab_names(workbook) == []
 
 
 def test_get_or_create_tab_returns_existing_tab():
@@ -267,14 +251,6 @@ def temp_tab():
             workbook.del_worksheet(workbook.worksheet(title))
         except gspread.exceptions.WorksheetNotFound:
             warnings.warn(f"temp_tab {title!r} was already gone at teardown", stacklevel=1)
-
-
-@pytest.mark.integration
-def test_list_tab_names_returns_real_tabs():
-    workbook = sheets.get_workbook()
-    tabs = sheets.list_tab_names(workbook)
-    assert isinstance(tabs, list)
-    assert all(isinstance(t, str) for t in tabs)
 
 
 @pytest.mark.integration
