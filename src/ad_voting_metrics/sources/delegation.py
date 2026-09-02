@@ -10,11 +10,14 @@ output_data/delegation_cache.json, so steady-state runs only fetch new blocks.
 """
 
 import logging
+import time
 from datetime import UTC, date, datetime
+from http import HTTPStatus
 from pathlib import Path
 from typing import Any, cast
 
 import pandas as pd
+from requests.exceptions import HTTPError
 from web3 import Web3
 from web3.exceptions import Web3RPCError
 
@@ -41,6 +44,12 @@ FINALITY_BLOCKS = 12
 # Adaptive getLogs chunking: start here, halve on range error down to MIN.
 INITIAL_CHUNK_BLOCKS = 100_000
 MIN_CHUNK_BLOCKS = 2_000
+
+# Block-timestamp fetching: get_block calls per JSON-RPC batch, and the exponential
+# backoff schedule applied when the provider rate-limits a batch (HTTP 429).
+TIMESTAMP_BATCH_SIZE = 100
+RATE_LIMIT_ATTEMPTS = 5
+RATE_LIMIT_BASE_DELAY_SECONDS = 1.0
 
 # ---------------------------------------------------------------------------
 # Cache load/save
@@ -129,6 +138,32 @@ def _fetch_event_logs(
     return events_by_contract, new_blocks
 
 
+def _get_blocks_batched(w3: Web3, block_nums: list[int]) -> list[Any]:
+    """Fetch full blocks for block_nums in one JSON-RPC batch.
+
+    A rate-limited batch (HTTP 429) is retried with exponential backoff, up to RATE_LIMIT_ATTEMPTS attempts total.
+    Providers that reject batch requests outright raise Web3RPCError or ValueError, which callers handle.
+
+    Raises:
+        HTTPError: if the provider still rate-limits on the final attempt, or returns any other HTTP error.
+    """
+    attempt = 0
+    while True:
+        try:
+            with w3.batch_requests() as batch:
+                for block_num in block_nums:
+                    batch.add(w3.eth.get_block(block_num))
+                return batch.execute()
+        except HTTPError as e:
+            attempt += 1
+            rate_limited = e.response is not None and e.response.status_code == HTTPStatus.TOO_MANY_REQUESTS
+            if not rate_limited or attempt == RATE_LIMIT_ATTEMPTS:
+                raise
+            delay = RATE_LIMIT_BASE_DELAY_SECONDS * 2 ** (attempt - 1)
+            logger.info("Provider rate-limited a %d-block batch; retrying in %.0fs", len(block_nums), delay)
+            time.sleep(delay)
+
+
 def _fetch_block_timestamps(
     w3: Web3,
     blocks: set[int],
@@ -136,8 +171,8 @@ def _fetch_block_timestamps(
 ) -> dict[str, int]:
     """Fetch UNIX timestamps for any blocks not already in block_timestamps.
 
-    Missing blocks are requested in a single JSON-RPC batch; providers that reject batch requests fall back to one
-    get_block call per block.
+    Missing blocks are requested in JSON-RPC batches of at most TIMESTAMP_BATCH_SIZE, with backoff on rate limits;
+    providers that reject batch requests fall back to one get_block call per block.
 
     Returns the block_timestamps dict, extended with newly fetched entries.
 
@@ -145,30 +180,26 @@ def _fetch_block_timestamps(
         RuntimeError: if a sequential get_block call fails.
     """
     missing = [b for b in sorted(blocks) if str(b) not in block_timestamps]
-    if not missing:
-        return block_timestamps
 
-    try:
-        with w3.batch_requests() as batch:
-            for block_num in missing:
-                batch.add(w3.eth.get_block(block_num))
-            blocks_data = batch.execute()
-    except (Web3RPCError, ValueError) as e:
-        logger.debug("Batched get_block failed (%s); falling back to sequential fetches", e)
-    else:
-        for block_num, batched_block in zip(missing, blocks_data, strict=True):
-            # `timestamp` is NotRequired on BlockData per web3-stubs, but full
-            # blocks always carry it at runtime; widen to plain dict for access.
-            block_timestamps[str(block_num)] = cast("dict[str, Any]", batched_block)["timestamp"]
-        return block_timestamps
-
-    for block_num in missing:
+    for start in range(0, len(missing), TIMESTAMP_BATCH_SIZE):
+        chunk = missing[start : start + TIMESTAMP_BATCH_SIZE]
         try:
-            fetched_block = cast("dict[str, Any]", w3.eth.get_block(block_num))
-        except Web3RPCError as e:
-            msg = f"get_block({block_num}) failed: {e}"
-            raise RuntimeError(msg) from e
-        block_timestamps[str(block_num)] = fetched_block["timestamp"]
+            blocks_data = _get_blocks_batched(w3, chunk)
+        except (Web3RPCError, ValueError) as e:
+            logger.debug("Batched get_block failed (%s); falling back to sequential fetches", e)
+            for block_num in chunk:
+                try:
+                    fetched_block = cast("dict[str, Any]", w3.eth.get_block(block_num))
+                except Web3RPCError as seq_error:
+                    msg = f"get_block({block_num}) failed: {seq_error}"
+                    raise RuntimeError(msg) from seq_error
+                block_timestamps[str(block_num)] = fetched_block["timestamp"]
+        else:
+            for block_num, batched_block in zip(chunk, blocks_data, strict=True):
+                # `timestamp` is NotRequired on BlockData per web3-stubs, but full
+                # blocks always carry it at runtime; widen to plain dict for access.
+                block_timestamps[str(block_num)] = cast("dict[str, Any]", batched_block)["timestamp"]
+
     return block_timestamps
 
 

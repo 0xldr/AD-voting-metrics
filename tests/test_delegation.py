@@ -9,6 +9,7 @@ from unittest.mock import MagicMock, patch
 import pandas as pd
 import pytest
 from eth_typing import HexStr
+from requests.exceptions import HTTPError
 from web3 import Web3
 from web3.exceptions import Web3RPCError
 
@@ -102,6 +103,56 @@ def test_fetch_block_timestamps_skips_cached_blocks():
 
     assert out == {"5": 42}
     mock_w3.batch_requests.assert_not_called()
+
+
+def _http_429() -> HTTPError:
+    """Build the HTTPError a provider raises when it rate-limits a request."""
+    response = MagicMock()
+    response.status_code = 429
+    return HTTPError("429 Client Error: Too Many Requests", response=response)
+
+
+def test_fetch_block_timestamps_retries_batch_after_rate_limit():
+    """A rate-limited batch is retried after a backoff sleep."""
+    mock_w3 = MagicMock()
+    mock_w3.batch_requests.return_value.__exit__.return_value = False
+    batch = mock_w3.batch_requests.return_value.__enter__.return_value
+    batch.execute.side_effect = [_http_429(), [{"timestamp": 7}]]
+
+    with patch.object(delegation.time, "sleep") as mock_sleep:
+        out = delegation._fetch_block_timestamps(mock_w3, {5}, {})
+
+    assert out == {"5": 7}
+    mock_sleep.assert_called_once_with(delegation.RATE_LIMIT_BASE_DELAY_SECONDS)
+
+
+def test_fetch_block_timestamps_raises_after_persistent_rate_limit():
+    """Rate limiting on every attempt exhausts the retry budget and surfaces the HTTPError."""
+    mock_w3 = MagicMock()
+    mock_w3.batch_requests.return_value.__exit__.return_value = False
+    batch = mock_w3.batch_requests.return_value.__enter__.return_value
+    batch.execute.side_effect = [_http_429() for _ in range(delegation.RATE_LIMIT_ATTEMPTS)]
+
+    with patch.object(delegation.time, "sleep"), pytest.raises(HTTPError):
+        delegation._fetch_block_timestamps(mock_w3, {5}, {})
+
+    assert batch.execute.call_count == delegation.RATE_LIMIT_ATTEMPTS
+
+
+def test_fetch_block_timestamps_splits_large_sets_into_multiple_batches():
+    """Block sets larger than TIMESTAMP_BATCH_SIZE are fetched in multiple batches."""
+    total = delegation.TIMESTAMP_BATCH_SIZE + 1
+    mock_w3 = MagicMock()
+    batch = mock_w3.batch_requests.return_value.__enter__.return_value
+    batch.execute.side_effect = [
+        [{"timestamp": i} for i in range(delegation.TIMESTAMP_BATCH_SIZE)],
+        [{"timestamp": delegation.TIMESTAMP_BATCH_SIZE}],
+    ]
+
+    out = delegation._fetch_block_timestamps(mock_w3, set(range(total)), {})
+
+    assert len(out) == total
+    assert mock_w3.batch_requests.call_count == 2
 
 
 # ---------------------------------------------------------------------------
