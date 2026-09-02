@@ -110,7 +110,7 @@ def _resolve_slate(w3: Web3, slate_hash: str) -> list[str]:
     for i in range(MAX_SLATE_LENGTH):
         try:
             addr: str = contract.functions.slates(slate_bytes, i).call()
-        except (BadFunctionCallOutput, ContractLogicError, Web3RPCError, ValueError):
+        except BadFunctionCallOutput, ContractLogicError, Web3RPCError, ValueError:
             break
         if addr.lower() == ADDRESS_ZERO:
             break

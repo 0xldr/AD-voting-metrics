@@ -22,7 +22,7 @@ Timing can only be established on-chain, from chief `Vote` events. The public su
 
 ## Requirements
 
-- Python 3.11 or later.
+- Python 3.14 or later.
 - A mainnet JSON-RPC endpoint (Alchemy, Infura, or any public RPC)
 - A Google Cloud service account with access to a Google Sheets workbook
 
