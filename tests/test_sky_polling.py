@@ -32,14 +32,18 @@ _CLOSED_POLL_NOW = datetime(2026, 4, 10, 17, 0, tzinfo=UTC)  # after poll ends 2
 
 def test_add_poll_vote_statuses_adds_column_per_poll():
     """Each poll in poll_info gets its own column on df, keyed by str(pollId)."""
-    df = pd.DataFrame([
-        {"Delegate Name": "Alice", "Delegate Contract": "0xaaa", "Start Date": "2024-01-01"},
-    ])
-    sky_lookup = _sky_lookup([
-        ("0xaaa", date(2026, 4, 1), 1000.0),
-        ("0xaaa", date(2026, 4, 2), 1000.0),
-        ("0xaaa", date(2026, 4, 3), 1000.0),
-    ])
+    df = pd.DataFrame(
+        [
+            {"Delegate Name": "Alice", "Delegate Contract": "0xaaa", "Start Date": "2024-01-01"},
+        ]
+    )
+    sky_lookup = _sky_lookup(
+        [
+            ("0xaaa", date(2026, 4, 1), 1000.0),
+            ("0xaaa", date(2026, 4, 2), 1000.0),
+            ("0xaaa", date(2026, 4, 3), 1000.0),
+        ]
+    )
     poll_info = [
         {"pollId": 1234, "startDate": date(2026, 4, 1), "endDate": date(2026, 4, 3)},
         {"pollId": 5678, "startDate": date(2026, 4, 1), "endDate": date(2026, 4, 3)},
@@ -55,14 +59,18 @@ def test_add_poll_vote_statuses_adds_column_per_poll():
 
 def test_add_poll_vote_statuses_normalizes_voter_address_case():
     """Mixed-case voter addresses from the API are lowercased at the boundary."""
-    df = pd.DataFrame([
-        {"Delegate Name": "Alice", "Delegate Contract": "0xaaa", "Start Date": "2024-01-01"},
-    ])
-    sky_lookup = _sky_lookup([
-        ("0xaaa", date(2026, 4, 1), 1000.0),
-        ("0xaaa", date(2026, 4, 2), 1000.0),
-        ("0xaaa", date(2026, 4, 3), 1000.0),
-    ])
+    df = pd.DataFrame(
+        [
+            {"Delegate Name": "Alice", "Delegate Contract": "0xaaa", "Start Date": "2024-01-01"},
+        ]
+    )
+    sky_lookup = _sky_lookup(
+        [
+            ("0xaaa", date(2026, 4, 1), 1000.0),
+            ("0xaaa", date(2026, 4, 2), 1000.0),
+            ("0xaaa", date(2026, 4, 3), 1000.0),
+        ]
+    )
     poll_info = [{"pollId": 1234, "startDate": date(2026, 4, 1), "endDate": date(2026, 4, 3)}]
 
     with patch("ad_voting_metrics.sources.sky_polling.get_session") as mock_session:
@@ -76,10 +84,12 @@ def test_add_poll_vote_statuses_normalizes_voter_address_case():
 
 def test_add_poll_vote_statuses_not_started_if_poll_ended_before_delegate_start():
     """If poll endDate < delegate's Start Date, status overridden to 'Not Started'."""
-    df = pd.DataFrame([
-        # Alice's start date is AFTER the poll ends
-        {"Delegate Name": "Alice", "Delegate Contract": "0xaaa", "Start Date": "2026-05-01"},
-    ])
+    df = pd.DataFrame(
+        [
+            # Alice's start date is AFTER the poll ends
+            {"Delegate Name": "Alice", "Delegate Contract": "0xaaa", "Start Date": "2026-05-01"},
+        ]
+    )
     sky_lookup = _sky_lookup([])  # no SKY data
     poll_info = [{"pollId": 1234, "startDate": date(2026, 4, 1), "endDate": date(2026, 4, 3)}]
 
@@ -92,9 +102,11 @@ def test_add_poll_vote_statuses_not_started_if_poll_ended_before_delegate_start(
 
 def test_add_poll_vote_statuses_empty_poll_info_leaves_df_unchanged():
     """No polls → df has no new columns added."""
-    df = pd.DataFrame([
-        {"Delegate Name": "Alice", "Delegate Contract": "0xaaa", "Start Date": "2024-01-01"},
-    ])
+    df = pd.DataFrame(
+        [
+            {"Delegate Name": "Alice", "Delegate Contract": "0xaaa", "Start Date": "2024-01-01"},
+        ]
+    )
     sky_lookup = _sky_lookup([])
     original_columns = list(df.columns)
 
@@ -106,18 +118,22 @@ def test_add_poll_vote_statuses_empty_poll_info_leaves_df_unchanged():
 
 def test_add_poll_vote_statuses_multiple_delegates_per_poll():
     """Each delegate row gets its own per-poll status."""
-    df = pd.DataFrame([
-        {"Delegate Name": "Alice", "Delegate Contract": "0xaaa", "Start Date": "2024-01-01"},
-        {"Delegate Name": "Bob", "Delegate Contract": "0xbbb", "Start Date": "2024-01-01"},
-    ])
-    sky_lookup = _sky_lookup([
-        ("0xaaa", date(2026, 4, 1), 1000.0),
-        ("0xaaa", date(2026, 4, 2), 1000.0),
-        ("0xaaa", date(2026, 4, 3), 1000.0),
-        ("0xbbb", date(2026, 4, 1), 500.0),
-        ("0xbbb", date(2026, 4, 2), 500.0),
-        ("0xbbb", date(2026, 4, 3), 500.0),
-    ])
+    df = pd.DataFrame(
+        [
+            {"Delegate Name": "Alice", "Delegate Contract": "0xaaa", "Start Date": "2024-01-01"},
+            {"Delegate Name": "Bob", "Delegate Contract": "0xbbb", "Start Date": "2024-01-01"},
+        ]
+    )
+    sky_lookup = _sky_lookup(
+        [
+            ("0xaaa", date(2026, 4, 1), 1000.0),
+            ("0xaaa", date(2026, 4, 2), 1000.0),
+            ("0xaaa", date(2026, 4, 3), 1000.0),
+            ("0xbbb", date(2026, 4, 1), 500.0),
+            ("0xbbb", date(2026, 4, 2), 500.0),
+            ("0xbbb", date(2026, 4, 3), 500.0),
+        ]
+    )
     poll_info = [{"pollId": 1234, "startDate": date(2026, 4, 1), "endDate": date(2026, 4, 3)}]
 
     with patch("ad_voting_metrics.sources.sky_polling.get_session") as mock_session:

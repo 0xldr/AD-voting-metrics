@@ -331,8 +331,10 @@ def to_dataframe(delegates: list[Delegate]) -> pd.DataFrame:
     Returns:
         Three-column DataFrame, one row per delegate.
     """
-    return pd.DataFrame({
-        "Delegate Name": [d.name for d in delegates],
-        "Delegate Contract": [d.vote_delegate_address for d in delegates],
-        "Start Date": [d.start_date.strftime("%Y-%m-%d") for d in delegates],
-    })
+    return pd.DataFrame(
+        {
+            "Delegate Name": [d.name for d in delegates],
+            "Delegate Contract": [d.vote_delegate_address for d in delegates],
+            "Start Date": [d.start_date.strftime("%Y-%m-%d") for d in delegates],
+        }
+    )

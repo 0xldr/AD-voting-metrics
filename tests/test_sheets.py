@@ -109,12 +109,14 @@ def _make_fake_sa_file(tmp_path: Path) -> Path:
     """Create a minimal valid-looking service-account JSON file path."""
     p = tmp_path / "sa.json"
     p.write_text(
-        json.dumps({
-            "type": "service_account",
-            "client_email": "fake@example.iam.gserviceaccount.com",
-            "private_key": "-----BEGIN PRIVATE KEY-----\n-----END PRIVATE KEY-----\n",
-            "token_uri": "https://oauth2.googleapis.com/token",
-        }),
+        json.dumps(
+            {
+                "type": "service_account",
+                "client_email": "fake@example.iam.gserviceaccount.com",
+                "private_key": "-----BEGIN PRIVATE KEY-----\n-----END PRIVATE KEY-----\n",
+                "token_uri": "https://oauth2.googleapis.com/token",
+            }
+        ),
     )
     return p
 
@@ -338,12 +340,14 @@ def backup_dir(tmp_path, monkeypatch):
 
 def _make_ranking_df():
     """Two-day ranking df with two delegates per day."""
-    return pd.DataFrame({
-        "Delegate": ["alpha", "beta", "alpha", "beta"],
-        "Date": [date(2026, 4, 1), date(2026, 4, 1), date(2026, 4, 2), date(2026, 4, 2)],
-        "Total Delegation": [100.0, 50.0, 90.0, 60.0],
-        "Rank": [1, 2, 1, 2],
-    })
+    return pd.DataFrame(
+        {
+            "Delegate": ["alpha", "beta", "alpha", "beta"],
+            "Date": [date(2026, 4, 1), date(2026, 4, 1), date(2026, 4, 2), date(2026, 4, 2)],
+            "Total Delegation": [100.0, 50.0, 90.0, 60.0],
+            "Rank": [1, 2, 1, 2],
+        }
+    )
 
 
 def test_daily_data_columns_pinned():
@@ -422,18 +426,22 @@ def test_write_daily_data_clears_before_writing(empty_existing_ws):
 def test_write_daily_data_preserves_existing_rows_for_other_dates(empty_existing_ws, sheet_io):
     """Dates not in the current fetch should keep their existing rows."""
     workbook, _ = empty_existing_ws
-    existing = pd.DataFrame({
-        "Date": ["2026-03-31", "2026-03-31"],
-        "Delegate": ["alpha", "beta"],
-        "Total Delegation": ["100", "50"],
-        "Rank": ["1", "2"],
-    })
-    df_new = pd.DataFrame({
-        "Delegate": ["alpha", "beta"],
-        "Date": [date(2026, 4, 1), date(2026, 4, 1)],
-        "Total Delegation": [200.0, 150.0],
-        "Rank": [1, 2],
-    })
+    existing = pd.DataFrame(
+        {
+            "Date": ["2026-03-31", "2026-03-31"],
+            "Delegate": ["alpha", "beta"],
+            "Total Delegation": ["100", "50"],
+            "Rank": ["1", "2"],
+        }
+    )
+    df_new = pd.DataFrame(
+        {
+            "Delegate": ["alpha", "beta"],
+            "Date": [date(2026, 4, 1), date(2026, 4, 1)],
+            "Total Delegation": [200.0, 150.0],
+            "Rank": [1, 2],
+        }
+    )
 
     get_mock, set_mock = sheet_io
     get_mock.return_value = existing
@@ -448,18 +456,22 @@ def test_write_daily_data_preserves_existing_rows_for_other_dates(empty_existing
 def test_write_daily_data_overwrites_existing_rows_for_current_dates(empty_existing_ws, sheet_io):
     """Re-runs replace any existing rows for dates that appear in the new fetch."""
     workbook, _ = empty_existing_ws
-    existing = pd.DataFrame({
-        "Date": ["2026-04-01", "2026-04-01"],
-        "Delegate": ["alpha", "beta"],
-        "Total Delegation": ["999", "999"],  # stale
-        "Rank": ["9", "9"],
-    })
-    df_new = pd.DataFrame({
-        "Delegate": ["alpha", "beta"],
-        "Date": [date(2026, 4, 1), date(2026, 4, 1)],
-        "Total Delegation": [100.0, 50.0],
-        "Rank": [1, 2],
-    })
+    existing = pd.DataFrame(
+        {
+            "Date": ["2026-04-01", "2026-04-01"],
+            "Delegate": ["alpha", "beta"],
+            "Total Delegation": ["999", "999"],  # stale
+            "Rank": ["9", "9"],
+        }
+    )
+    df_new = pd.DataFrame(
+        {
+            "Delegate": ["alpha", "beta"],
+            "Date": [date(2026, 4, 1), date(2026, 4, 1)],
+            "Total Delegation": [100.0, 50.0],
+            "Rank": [1, 2],
+        }
+    )
 
     get_mock, set_mock = sheet_io
     get_mock.return_value = existing
@@ -474,12 +486,14 @@ def test_write_daily_data_overwrites_existing_rows_for_current_dates(empty_exist
 def test_write_daily_data_backs_up_existing_before_clear(empty_existing_ws, sheet_io, backup_dir):
     """Non-empty existing data is saved to a local CSV before the tab is cleared."""
     workbook, _ = empty_existing_ws
-    existing = pd.DataFrame({
-        "Date": ["2026-03-31", "2026-03-31"],
-        "Delegate": ["alpha", "beta"],
-        "Total Delegation": ["100", "50"],
-        "Rank": ["1", "2"],
-    })
+    existing = pd.DataFrame(
+        {
+            "Date": ["2026-03-31", "2026-03-31"],
+            "Delegate": ["alpha", "beta"],
+            "Total Delegation": ["100", "50"],
+            "Rank": ["1", "2"],
+        }
+    )
 
     get_mock, _ = sheet_io
     get_mock.return_value = existing
@@ -507,12 +521,14 @@ def test_write_daily_data_backup_failure_aborts_clear(empty_existing_ws, sheet_i
     blocked = tmp_path / "blocked"
     blocked.write_text("a file where the backup dir should go")
     monkeypatch.setattr(sheets, "BACKUP_DIR", blocked)
-    existing = pd.DataFrame({
-        "Date": ["2026-03-31"],
-        "Delegate": ["alpha"],
-        "Total Delegation": ["100"],
-        "Rank": ["1"],
-    })
+    existing = pd.DataFrame(
+        {
+            "Date": ["2026-03-31"],
+            "Delegate": ["alpha"],
+            "Total Delegation": ["100"],
+            "Rank": ["1"],
+        }
+    )
 
     get_mock, _ = sheet_io
     get_mock.return_value = existing
@@ -525,18 +541,22 @@ def test_write_daily_data_backup_failure_aborts_clear(empty_existing_ws, sheet_i
 def test_write_daily_data_raises_on_roster_drift(empty_existing_ws):
     """A date whose delegate-row count changed between fetches is fatal."""
     workbook, _ = empty_existing_ws
-    existing = pd.DataFrame({
-        "Date": ["2026-04-01", "2026-04-01", "2026-04-01"],
-        "Delegate": ["alpha", "beta", "gamma"],
-        "Total Delegation": ["100", "50", "25"],
-        "Rank": ["1", "2", "3"],
-    })
-    df_new = pd.DataFrame({
-        "Delegate": ["alpha", "beta"],
-        "Date": [date(2026, 4, 1), date(2026, 4, 1)],
-        "Total Delegation": [100.0, 50.0],
-        "Rank": [1, 2],
-    })
+    existing = pd.DataFrame(
+        {
+            "Date": ["2026-04-01", "2026-04-01", "2026-04-01"],
+            "Delegate": ["alpha", "beta", "gamma"],
+            "Total Delegation": ["100", "50", "25"],
+            "Rank": ["1", "2", "3"],
+        }
+    )
+    df_new = pd.DataFrame(
+        {
+            "Delegate": ["alpha", "beta"],
+            "Date": [date(2026, 4, 1), date(2026, 4, 1)],
+            "Total Delegation": [100.0, 50.0],
+            "Rank": [1, 2],
+        }
+    )
 
     with (
         patch("ad_voting_metrics.sheets.get_as_dataframe", return_value=existing),
@@ -549,18 +569,22 @@ def test_write_daily_data_raises_on_roster_drift(empty_existing_ws):
 def test_write_daily_data_no_drift_when_dates_dont_overlap(empty_existing_ws, sheet_io):
     """Per-date row count is only checked for dates appearing in both."""
     workbook, _ = empty_existing_ws
-    existing = pd.DataFrame({
-        "Date": ["2026-03-31", "2026-03-31", "2026-03-31"],
-        "Delegate": ["alpha", "beta", "gamma"],
-        "Total Delegation": ["100", "50", "25"],
-        "Rank": ["1", "2", "3"],
-    })
-    df_new = pd.DataFrame({
-        "Delegate": ["alpha", "beta"],
-        "Date": [date(2026, 4, 1), date(2026, 4, 1)],
-        "Total Delegation": [100.0, 50.0],
-        "Rank": [1, 2],
-    })
+    existing = pd.DataFrame(
+        {
+            "Date": ["2026-03-31", "2026-03-31", "2026-03-31"],
+            "Delegate": ["alpha", "beta", "gamma"],
+            "Total Delegation": ["100", "50", "25"],
+            "Rank": ["1", "2", "3"],
+        }
+    )
+    df_new = pd.DataFrame(
+        {
+            "Delegate": ["alpha", "beta"],
+            "Date": [date(2026, 4, 1), date(2026, 4, 1)],
+            "Total Delegation": [100.0, 50.0],
+            "Rank": [1, 2],
+        }
+    )
 
     get_mock, set_mock = sheet_io
     get_mock.return_value = existing
@@ -573,12 +597,14 @@ def test_write_daily_data_no_drift_when_dates_dont_overlap(empty_existing_ws, sh
 def test_write_daily_data_handles_unparseable_existing_rows(empty_existing_ws, sheet_io):
     """Existing rows with non-numeric Rank are silently dropped during read."""
     workbook, _ = empty_existing_ws
-    existing = pd.DataFrame({
-        "Date": ["2026-03-31", "garbage"],
-        "Delegate": ["alpha", "beta"],
-        "Total Delegation": ["100", "abc"],
-        "Rank": ["1", "xyz"],
-    })
+    existing = pd.DataFrame(
+        {
+            "Date": ["2026-03-31", "garbage"],
+            "Delegate": ["alpha", "beta"],
+            "Total Delegation": ["100", "abc"],
+            "Rank": ["1", "xyz"],
+        }
+    )
     df_new = _make_ranking_df()
 
     get_mock, set_mock = sheet_io
@@ -595,12 +621,14 @@ def test_write_daily_data_handles_unrecognised_existing_header(empty_existing_ws
     """If the existing header doesn't match the canonical columns, treat as empty."""
     workbook, _ = empty_existing_ws
     # Wrong header order: Daily Data parser checks for an exact prefix match.
-    existing = pd.DataFrame({
-        "Foo": ["x"],
-        "Bar": ["y"],
-        "Baz": ["z"],
-        "Qux": ["w"],
-    })
+    existing = pd.DataFrame(
+        {
+            "Foo": ["x"],
+            "Bar": ["y"],
+            "Baz": ["z"],
+            "Qux": ["w"],
+        }
+    )
     df_new = _make_ranking_df()
 
     get_mock, set_mock = sheet_io
@@ -614,12 +642,14 @@ def test_write_daily_data_handles_unrecognised_existing_header(empty_existing_ws
 
 def test_write_daily_data_sort_order_date_then_rank(empty_existing_ws, sheet_io):
     workbook, _ = empty_existing_ws
-    df = pd.DataFrame({
-        "Delegate": ["alpha", "beta", "alpha", "beta"],
-        "Date": [date(2026, 4, 2), date(2026, 4, 1), date(2026, 4, 1), date(2026, 4, 2)],
-        "Total Delegation": [90.0, 50.0, 100.0, 60.0],
-        "Rank": [1, 2, 1, 2],
-    })
+    df = pd.DataFrame(
+        {
+            "Delegate": ["alpha", "beta", "alpha", "beta"],
+            "Date": [date(2026, 4, 2), date(2026, 4, 1), date(2026, 4, 1), date(2026, 4, 2)],
+            "Total Delegation": [90.0, 50.0, 100.0, 60.0],
+            "Rank": [1, 2, 1, 2],
+        }
+    )
 
     _, set_mock = sheet_io
     sheets.write_daily_data(workbook, MonthPeriod(year=2026, month=4), df)
@@ -635,12 +665,14 @@ def test_write_daily_data_sort_order_date_then_rank(empty_existing_ws, sheet_io)
 def test_write_daily_data_handles_pandas_timestamps(empty_existing_ws, sheet_io):
     """Dates incoming as pandas Timestamp objects are coerced to date(YYYY-MM-DD)."""
     workbook, _ = empty_existing_ws
-    df = pd.DataFrame({
-        "Delegate": ["alpha", "beta"],
-        "Date": [pd.Timestamp("2026-04-01"), pd.Timestamp("2026-04-01")],
-        "Total Delegation": [100.0, 50.0],
-        "Rank": [1, 2],
-    })
+    df = pd.DataFrame(
+        {
+            "Delegate": ["alpha", "beta"],
+            "Date": [pd.Timestamp("2026-04-01"), pd.Timestamp("2026-04-01")],
+            "Total Delegation": [100.0, 50.0],
+            "Rank": [1, 2],
+        }
+    )
 
     _, set_mock = sheet_io
     sheets.write_daily_data(workbook, MonthPeriod(year=2026, month=4), df)
@@ -698,14 +730,16 @@ def test_write_daily_data_to_real_workbook(temp_tab, monkeypatch):
 
 def _make_participation_df():
     """3-delegate, 2-poll, 1-spell participation df."""
-    return pd.DataFrame({
-        "Delegate Name": ["BLUE", "Cloaky", "BONAPUBLICA"],
-        "Delegate Contract": ["0xaaa", "0xbbb", "0xccc"],
-        "Start Date": ["2025-12-01", "2025-12-01", "2025-12-01"],
-        "12345": ["Yes", "No", "Yes"],
-        "67890": ["Pending verification", "Yes", "Yes"],
-        "0xspell001": ["Yes", "No Delegated SKY", "Yes"],
-    })
+    return pd.DataFrame(
+        {
+            "Delegate Name": ["BLUE", "Cloaky", "BONAPUBLICA"],
+            "Delegate Contract": ["0xaaa", "0xbbb", "0xccc"],
+            "Start Date": ["2025-12-01", "2025-12-01", "2025-12-01"],
+            "12345": ["Yes", "No", "Yes"],
+            "67890": ["Pending verification", "Yes", "Yes"],
+            "0xspell001": ["Yes", "No Delegated SKY", "Yes"],
+        }
+    )
 
 
 def _make_poll_info():
@@ -793,12 +827,14 @@ def test_build_participation_dataframe_spell_has_empty_end_date():
 
 def test_build_participation_dataframe_unknown_column_has_blank_metadata():
     """Poll/spell columns missing from metadata get blank cells; status still written."""
-    df = pd.DataFrame({
-        "Delegate Name": ["BLUE"],
-        "Delegate Contract": ["0xaaa"],
-        "Start Date": ["2025-12-01"],
-        "99999": ["Yes"],
-    })
+    df = pd.DataFrame(
+        {
+            "Delegate Name": ["BLUE"],
+            "Delegate Contract": ["0xaaa"],
+            "Start Date": ["2025-12-01"],
+            "99999": ["Yes"],
+        }
+    )
     out = sheets.build_participation_dataframe(df, _make_poll_info(), _make_spell_info())
     row = out.iloc[0]
     assert row["Poll Id"] == "99999"
@@ -809,11 +845,13 @@ def test_build_participation_dataframe_unknown_column_has_blank_metadata():
 
 
 def test_build_participation_dataframe_zero_polls_returns_header_only():
-    df = pd.DataFrame({
-        "Delegate Name": ["BLUE", "Cloaky"],
-        "Delegate Contract": ["0xaaa", "0xbbb"],
-        "Start Date": ["2025-12-01", "2025-12-01"],
-    })
+    df = pd.DataFrame(
+        {
+            "Delegate Name": ["BLUE", "Cloaky"],
+            "Delegate Contract": ["0xaaa", "0xbbb"],
+            "Start Date": ["2025-12-01", "2025-12-01"],
+        }
+    )
     out = sheets.build_participation_dataframe(df, [], [])
     assert list(out.columns) == ["Poll Id", "Start Date", "End Date", "Title", "BLUE", "Cloaky"]
     assert len(out) == 0
@@ -998,12 +1036,14 @@ def test_write_communication_master_first_fetch_creates_header(empty_existing_ws
 )
 def test_write_communication_master_first_fetch_defaults(participation, expected_default, empty_existing_ws, sheet_io):
     """On first fetch, each participation status maps to its communication default via cross_reference_one."""
-    df = pd.DataFrame({
-        "Delegate Name": ["BLUE"],
-        "Delegate Contract": ["0xaaa"],
-        "Start Date": ["2025-12-01"],
-        "12345": [participation],
-    })
+    df = pd.DataFrame(
+        {
+            "Delegate Name": ["BLUE"],
+            "Delegate Contract": ["0xaaa"],
+            "Start Date": ["2025-12-01"],
+            "12345": [participation],
+        }
+    )
     workbook, _ = empty_existing_ws
     _, set_mock = sheet_io
     sheets.write_communication_master(workbook, df, _make_poll_info(), [])
@@ -1013,19 +1053,23 @@ def test_write_communication_master_first_fetch_defaults(participation, expected
 
 def test_write_communication_master_missing_column_raises(empty_existing_ws):
     """New delegate added to YAML but not to the existing tab → raise."""
-    existing = pd.DataFrame({
-        "Poll Id": ["55555"],
-        "Start Date": ["2026-03-01"],
-        "End Date": ["2026-03-03"],
-        "Title": ["Old poll"],
-        "BLUE": ["Yes"],
-    })
-    df = pd.DataFrame({
-        "Delegate Name": ["BLUE", "NewDelegate"],
-        "Delegate Contract": ["0xaaa", "0xddd"],
-        "Start Date": ["2025-12-01", "2025-12-01"],
-        "12345": ["Yes", "Yes"],
-    })
+    existing = pd.DataFrame(
+        {
+            "Poll Id": ["55555"],
+            "Start Date": ["2026-03-01"],
+            "End Date": ["2026-03-03"],
+            "Title": ["Old poll"],
+            "BLUE": ["Yes"],
+        }
+    )
+    df = pd.DataFrame(
+        {
+            "Delegate Name": ["BLUE", "NewDelegate"],
+            "Delegate Contract": ["0xaaa", "0xddd"],
+            "Start Date": ["2025-12-01", "2025-12-01"],
+            "12345": ["Yes", "Yes"],
+        }
+    )
     workbook, _ = empty_existing_ws
     with (
         patch("ad_voting_metrics.sheets.get_as_dataframe", return_value=existing),
@@ -1037,15 +1081,17 @@ def test_write_communication_master_missing_column_raises(empty_existing_ws):
 
 def test_write_communication_master_preserves_operator_edits(empty_existing_ws, sheet_io):
     """Non-blank existing cells survive the rewrite."""
-    existing = pd.DataFrame({
-        "Poll Id": ["12345"],
-        "Start Date": ["2026-04-05"],
-        "End Date": ["2026-04-07"],
-        "Title": ["Approve SubDAO X"],
-        "BLUE": ["Operator-set value"],  # non-blank → must be preserved
-        "Cloaky": [""],  # blank → filled with default
-        "BONAPUBLICA": [""],
-    })
+    existing = pd.DataFrame(
+        {
+            "Poll Id": ["12345"],
+            "Start Date": ["2026-04-05"],
+            "End Date": ["2026-04-07"],
+            "Title": ["Approve SubDAO X"],
+            "BLUE": ["Operator-set value"],  # non-blank → must be preserved
+            "Cloaky": [""],  # blank → filled with default
+            "BONAPUBLICA": [""],
+        }
+    )
     df = _make_participation_df()
     workbook, _ = empty_existing_ws
     get_mock, set_mock = sheet_io
@@ -1059,15 +1105,17 @@ def test_write_communication_master_preserves_operator_edits(empty_existing_ws, 
 
 def test_write_communication_master_backs_up_existing_before_clear(empty_existing_ws, sheet_io, backup_dir):
     """Non-empty existing data (with operator edits) is saved to a local CSV before the tab is cleared."""
-    existing = pd.DataFrame({
-        "Poll Id": ["12345"],
-        "Start Date": ["2026-04-05"],
-        "End Date": ["2026-04-07"],
-        "Title": ["Approve SubDAO X"],
-        "BLUE": ["Operator-set value"],
-        "Cloaky": [""],
-        "BONAPUBLICA": [""],
-    })
+    existing = pd.DataFrame(
+        {
+            "Poll Id": ["12345"],
+            "Start Date": ["2026-04-05"],
+            "End Date": ["2026-04-07"],
+            "Title": ["Approve SubDAO X"],
+            "BLUE": ["Operator-set value"],
+            "Cloaky": [""],
+            "BONAPUBLICA": [""],
+        }
+    )
     df = _make_participation_df()
     workbook, _ = empty_existing_ws
     get_mock, _ = sheet_io
@@ -1083,15 +1131,17 @@ def test_write_communication_master_backs_up_existing_before_clear(empty_existin
 
 def test_write_communication_master_preserves_historical_polls(empty_existing_ws, sheet_io):
     """A poll in the existing tab but not in the current fetch stays in the output."""
-    existing = pd.DataFrame({
-        "Poll Id": ["55555"],
-        "Start Date": ["2026-03-01"],
-        "End Date": ["2026-03-03"],
-        "Title": ["Old poll"],
-        "BLUE": ["Yes"],
-        "Cloaky": ["No"],
-        "BONAPUBLICA": [""],
-    })
+    existing = pd.DataFrame(
+        {
+            "Poll Id": ["55555"],
+            "Start Date": ["2026-03-01"],
+            "End Date": ["2026-03-03"],
+            "Title": ["Old poll"],
+            "BLUE": ["Yes"],
+            "Cloaky": ["No"],
+            "BONAPUBLICA": [""],
+        }
+    )
     df = _make_participation_df()  # contains polls 12345, 67890, 0xspell001
     workbook, _ = empty_existing_ws
     get_mock, set_mock = sheet_io
@@ -1104,16 +1154,18 @@ def test_write_communication_master_preserves_historical_polls(empty_existing_ws
 
 def test_write_communication_master_historical_delegate_cells_blank_for_new_polls(empty_existing_ws, sheet_io):
     """An out-of-roster delegate column stays blank for newly added polls."""
-    existing = pd.DataFrame({
-        "Poll Id": ["55555"],
-        "Start Date": ["2026-03-01"],
-        "End Date": [""],
-        "Title": ["Old poll"],
-        "BLUE": ["Yes"],
-        "Cloaky": ["Yes"],
-        "BONAPUBLICA": ["Yes"],
-        "GoneDelegate": ["Yes"],  # historical column, delegate no longer in roster
-    })
+    existing = pd.DataFrame(
+        {
+            "Poll Id": ["55555"],
+            "Start Date": ["2026-03-01"],
+            "End Date": [""],
+            "Title": ["Old poll"],
+            "BLUE": ["Yes"],
+            "Cloaky": ["Yes"],
+            "BONAPUBLICA": ["Yes"],
+            "GoneDelegate": ["Yes"],  # historical column, delegate no longer in roster
+        }
+    )
     df = _make_participation_df()
     workbook, _ = empty_existing_ws
     get_mock, set_mock = sheet_io
@@ -1127,15 +1179,17 @@ def test_write_communication_master_historical_delegate_cells_blank_for_new_poll
 
 def test_write_communication_master_sort_order_start_date_descending(empty_existing_ws, sheet_io):
     """Output is sorted newest first; unparseable Start Date rows go to the end."""
-    existing = pd.DataFrame({
-        "Poll Id": ["alpha", "beta"],
-        "Start Date": ["2026-01-01", "not-a-date"],
-        "End Date": ["", ""],
-        "Title": ["A", "B"],
-        "BLUE": ["Yes", "Yes"],
-        "Cloaky": ["Yes", "Yes"],
-        "BONAPUBLICA": ["Yes", "Yes"],
-    })
+    existing = pd.DataFrame(
+        {
+            "Poll Id": ["alpha", "beta"],
+            "Start Date": ["2026-01-01", "not-a-date"],
+            "End Date": ["", ""],
+            "Title": ["A", "B"],
+            "BLUE": ["Yes", "Yes"],
+            "Cloaky": ["Yes", "Yes"],
+            "BONAPUBLICA": ["Yes", "Yes"],
+        }
+    )
     df = _make_participation_df()
     workbook, _ = empty_existing_ws
     get_mock, set_mock = sheet_io
@@ -1233,12 +1287,14 @@ def test_read_config_empty_tab_raises_value_error(empty_existing_ws):
 
 def test_read_config_missing_required_key_raises(empty_existing_ws):
     workbook, _ = empty_existing_ws
-    df = _make_config_df([
-        ["Key", "Value"],
-        ["L1_USDS", "1000"],
-        ["L2_USDS", "500"],
-        # L3_USDS and TOTAL_SLOTS missing
-    ])
+    df = _make_config_df(
+        [
+            ["Key", "Value"],
+            ["L1_USDS", "1000"],
+            ["L2_USDS", "500"],
+            # L3_USDS and TOTAL_SLOTS missing
+        ]
+    )
     with (
         patch("ad_voting_metrics.sheets.get_as_dataframe", return_value=df),
         pytest.raises(ValueError, match="missing required keys"),
@@ -1248,13 +1304,15 @@ def test_read_config_missing_required_key_raises(empty_existing_ws):
 
 def test_read_config_unparseable_value_raises(empty_existing_ws):
     workbook, _ = empty_existing_ws
-    df = _make_config_df([
-        ["Key", "Value"],
-        ["L1_USDS", "not a number"],
-        ["L2_USDS", "500"],
-        ["L3_USDS", "100"],
-        ["TOTAL_SLOTS", "6"],
-    ])
+    df = _make_config_df(
+        [
+            ["Key", "Value"],
+            ["L1_USDS", "not a number"],
+            ["L2_USDS", "500"],
+            ["L3_USDS", "100"],
+            ["TOTAL_SLOTS", "6"],
+        ]
+    )
     with (
         patch("ad_voting_metrics.sheets.get_as_dataframe", return_value=df),
         pytest.raises(ValueError, match="un-parseable"),
@@ -1264,13 +1322,15 @@ def test_read_config_unparseable_value_raises(empty_existing_ws):
 
 def test_read_config_happy_path_returns_compensation_config(empty_existing_ws):
     workbook, _ = empty_existing_ws
-    df = _make_config_df([
-        ["Key", "Value"],
-        ["L1_USDS", "33333"],
-        ["L2_USDS", "14583"],
-        ["L3_USDS", "4000"],
-        ["TOTAL_SLOTS", "6"],
-    ])
+    df = _make_config_df(
+        [
+            ["Key", "Value"],
+            ["L1_USDS", "33333"],
+            ["L2_USDS", "14583"],
+            ["L3_USDS", "4000"],
+            ["TOTAL_SLOTS", "6"],
+        ]
+    )
     with patch("ad_voting_metrics.sheets.get_as_dataframe", return_value=df):
         config = sheets.read_config(workbook)
     assert config.l1_usds == 33333.0
@@ -1281,14 +1341,16 @@ def test_read_config_happy_path_returns_compensation_config(empty_existing_ws):
 
 def test_read_config_unknown_keys_silently_ignored(empty_existing_ws):
     workbook, _ = empty_existing_ws
-    df = _make_config_df([
-        ["Key", "Value"],
-        ["L1_USDS", "33333"],
-        ["L2_USDS", "14583"],
-        ["L3_USDS", "4000"],
-        ["TOTAL_SLOTS", "6"],
-        ["UNKNOWN_KEY", "whatever"],
-    ])
+    df = _make_config_df(
+        [
+            ["Key", "Value"],
+            ["L1_USDS", "33333"],
+            ["L2_USDS", "14583"],
+            ["L3_USDS", "4000"],
+            ["TOTAL_SLOTS", "6"],
+            ["UNKNOWN_KEY", "whatever"],
+        ]
+    )
     with patch("ad_voting_metrics.sheets.get_as_dataframe", return_value=df):
         config = sheets.read_config(workbook)
     assert config.total_slots == 6
@@ -1296,13 +1358,15 @@ def test_read_config_unknown_keys_silently_ignored(empty_existing_ws):
 
 def test_read_config_strips_whitespace_from_keys_and_values(empty_existing_ws):
     workbook, _ = empty_existing_ws
-    df = _make_config_df([
-        ["Key", "Value"],
-        ["  L1_USDS  ", "  33333  "],
-        ["L2_USDS", "14583"],
-        ["L3_USDS", "4000"],
-        ["TOTAL_SLOTS", "6"],
-    ])
+    df = _make_config_df(
+        [
+            ["Key", "Value"],
+            ["  L1_USDS  ", "  33333  "],
+            ["L2_USDS", "14583"],
+            ["L3_USDS", "4000"],
+            ["TOTAL_SLOTS", "6"],
+        ]
+    )
     with patch("ad_voting_metrics.sheets.get_as_dataframe", return_value=df):
         config = sheets.read_config(workbook)
     assert config.l1_usds == 33333.0
@@ -1556,9 +1620,11 @@ def test_read_daily_data_missing_tab_raises_with_operator_message():
 
 def test_read_daily_data_no_rows_in_period_raises(empty_existing_ws):
     workbook, _ = empty_existing_ws
-    df = _make_daily_data_df([
-        ("2026-03-15", "alpha", "100", "1"),  # outside April
-    ])
+    df = _make_daily_data_df(
+        [
+            ("2026-03-15", "alpha", "100", "1"),  # outside April
+        ]
+    )
     with (
         patch("ad_voting_metrics.sheets.get_as_dataframe", return_value=df),
         pytest.raises(RuntimeError, match="has no rows for April 2026"),
@@ -1568,12 +1634,14 @@ def test_read_daily_data_no_rows_in_period_raises(empty_existing_ws):
 
 def test_read_daily_data_returns_ranks_for_every_day_present(empty_existing_ws):
     workbook, _ = empty_existing_ws
-    df = _make_daily_data_df([
-        ("2026-04-01", "alpha", "100", "1"),
-        ("2026-04-01", "beta", "50", "2"),
-        ("2026-04-02", "alpha", "90", "1"),
-        ("2026-04-02", "beta", "60", "2"),
-    ])
+    df = _make_daily_data_df(
+        [
+            ("2026-04-01", "alpha", "100", "1"),
+            ("2026-04-01", "beta", "50", "2"),
+            ("2026-04-02", "alpha", "90", "1"),
+            ("2026-04-02", "beta", "60", "2"),
+        ]
+    )
     with patch("ad_voting_metrics.sheets.get_as_dataframe", return_value=df):
         out = sheets.read_daily_data(workbook, MonthPeriod(year=2026, month=4))
     assert len(out) == 4
@@ -1583,11 +1651,13 @@ def test_read_daily_data_returns_ranks_for_every_day_present(empty_existing_ws):
 
 def test_read_daily_data_filters_out_other_months(empty_existing_ws):
     workbook, _ = empty_existing_ws
-    df = _make_daily_data_df([
-        ("2026-03-31", "alpha", "100", "1"),  # outside
-        ("2026-04-01", "alpha", "100", "1"),
-        ("2026-05-01", "alpha", "90", "1"),  # outside
-    ])
+    df = _make_daily_data_df(
+        [
+            ("2026-03-31", "alpha", "100", "1"),  # outside
+            ("2026-04-01", "alpha", "100", "1"),
+            ("2026-05-01", "alpha", "90", "1"),  # outside
+        ]
+    )
     with patch("ad_voting_metrics.sheets.get_as_dataframe", return_value=df):
         out = sheets.read_daily_data(workbook, MonthPeriod(year=2026, month=4))
     assert list(out["Date"]) == [date(2026, 4, 1)]
@@ -1595,10 +1665,12 @@ def test_read_daily_data_filters_out_other_months(empty_existing_ws):
 
 def test_read_daily_data_skips_unparseable_dates(empty_existing_ws):
     workbook, _ = empty_existing_ws
-    df = _make_daily_data_df([
-        ("2026-04-01", "alpha", "100", "1"),
-        ("garbage", "beta", "50", "2"),
-    ])
+    df = _make_daily_data_df(
+        [
+            ("2026-04-01", "alpha", "100", "1"),
+            ("garbage", "beta", "50", "2"),
+        ]
+    )
     with patch("ad_voting_metrics.sheets.get_as_dataframe", return_value=df):
         out = sheets.read_daily_data(workbook, MonthPeriod(year=2026, month=4))
     assert list(out["Delegate"]) == ["alpha"]
@@ -1759,14 +1831,16 @@ def test_read_communication_master_header_only_returns_empty(empty_existing_ws):
 
 def test_read_communication_master_pivots_into_long_dataframe(empty_existing_ws):
     workbook, _ = empty_existing_ws
-    df = pd.DataFrame({
-        "Poll Id": ["12345", "67890"],
-        "Start Date": ["2026-04-05", "2026-04-12"],
-        "End Date": ["2026-04-07", "2026-04-14"],
-        "Title": ["Poll A", "Poll B"],
-        "alpha": ["Yes", ""],
-        "beta": ["No", "Pending verification"],
-    })
+    df = pd.DataFrame(
+        {
+            "Poll Id": ["12345", "67890"],
+            "Start Date": ["2026-04-05", "2026-04-12"],
+            "End Date": ["2026-04-07", "2026-04-14"],
+            "Title": ["Poll A", "Poll B"],
+            "alpha": ["Yes", ""],
+            "beta": ["No", "Pending verification"],
+        }
+    )
     with patch("ad_voting_metrics.sheets.get_as_dataframe", return_value=df):
         out = sheets.read_communication_master(workbook)
     # 2 polls x 2 delegates = 4 long rows
@@ -1780,13 +1854,15 @@ def test_read_communication_master_pivots_into_long_dataframe(empty_existing_ws)
 
 def test_read_communication_master_skips_blank_poll_id_rows(empty_existing_ws):
     workbook, _ = empty_existing_ws
-    df = pd.DataFrame({
-        "Poll Id": ["12345", "", "  "],
-        "Start Date": ["2026-04-05", "", ""],
-        "End Date": ["2026-04-07", "", ""],
-        "Title": ["Poll A", "", ""],
-        "alpha": ["Yes", "stray", "stray"],
-    })
+    df = pd.DataFrame(
+        {
+            "Poll Id": ["12345", "", "  "],
+            "Start Date": ["2026-04-05", "", ""],
+            "End Date": ["2026-04-07", "", ""],
+            "Title": ["Poll A", "", ""],
+            "alpha": ["Yes", "stray", "stray"],
+        }
+    )
     with patch("ad_voting_metrics.sheets.get_as_dataframe", return_value=df):
         out = sheets.read_communication_master(workbook)
     assert set(out["Poll Id"]) == {"12345"}
@@ -1794,12 +1870,14 @@ def test_read_communication_master_skips_blank_poll_id_rows(empty_existing_ws):
 
 def test_read_communication_master_no_delegate_columns_returns_empty(empty_existing_ws):
     workbook, _ = empty_existing_ws
-    df = pd.DataFrame({
-        "Poll Id": ["12345"],
-        "Start Date": ["2026-04-05"],
-        "End Date": ["2026-04-07"],
-        "Title": ["Poll A"],
-    })
+    df = pd.DataFrame(
+        {
+            "Poll Id": ["12345"],
+            "Start Date": ["2026-04-05"],
+            "End Date": ["2026-04-07"],
+            "Title": ["Poll A"],
+        }
+    )
     with patch("ad_voting_metrics.sheets.get_as_dataframe", return_value=df):
         out = sheets.read_communication_master(workbook)
     assert out.empty

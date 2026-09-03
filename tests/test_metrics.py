@@ -39,15 +39,17 @@ def test_discounted_set_contents():
     pin the new contents here.
     """
     assert (
-        frozenset({
-            "Not Started",
-            "Exited",
-            "Voting Open",
-            "No Delegated SKY",
-            "Not included",
-            "Pending verification",
-            "Did not vote",
-        })
+        frozenset(
+            {
+                "Not Started",
+                "Exited",
+                "Voting Open",
+                "No Delegated SKY",
+                "Not included",
+                "Pending verification",
+                "Did not vote",
+            }
+        )
         == DISCOUNTED
     )
 

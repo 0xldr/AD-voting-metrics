@@ -60,15 +60,17 @@ PARTICIPATED = frozenset({"Yes"})
 
 NOT_PARTICIPATED = frozenset({"No", LATE})
 
-DISCOUNTED = frozenset({
-    "Not Started",
-    "Exited",
-    "Voting Open",
-    "No Delegated SKY",
-    "Not included",
-    PENDING_VERIFICATION,
-    "Did not vote",
-})
+DISCOUNTED = frozenset(
+    {
+        "Not Started",
+        "Exited",
+        "Voting Open",
+        "No Delegated SKY",
+        "Not included",
+        PENDING_VERIFICATION,
+        "Did not vote",
+    }
+)
 
 
 @dataclass(frozen=True)

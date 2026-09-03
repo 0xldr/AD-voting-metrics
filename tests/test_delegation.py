@@ -261,13 +261,17 @@ def _sky_df_indexed(rows: list[tuple[str, str, float]]) -> pd.DataFrame:
 
 def test_get_delegate_list_sky_returns_one_row_per_delegate_per_day():
     """For a 2-day period with 1 delegate, output covers both days."""
-    df = pd.DataFrame([
-        {"Delegate Name": "Alice", "Delegate Contract": "0xaaa", "Start Date": "2024-01-01"},
-    ])
-    fake_all_sky = _sky_df_indexed([
-        ("0xaaa", "2026-04-01", 1000.0),
-        ("0xaaa", "2026-04-02", 1500.0),
-    ])
+    df = pd.DataFrame(
+        [
+            {"Delegate Name": "Alice", "Delegate Contract": "0xaaa", "Start Date": "2024-01-01"},
+        ]
+    )
+    fake_all_sky = _sky_df_indexed(
+        [
+            ("0xaaa", "2026-04-01", 1000.0),
+            ("0xaaa", "2026-04-02", 1500.0),
+        ]
+    )
     period_2day = _period_stub(date(2026, 4, 1), date(2026, 4, 2))
 
     with patch.object(delegation, "get_all_sky_delegated", return_value=fake_all_sky):
@@ -279,13 +283,17 @@ def test_get_delegate_list_sky_returns_one_row_per_delegate_per_day():
 
 def test_get_delegate_list_sky_carries_balance_forward_and_zeros_before_first_event():
     """Balance set on day 2 is zero on day 1 (before first event) and carried forward to day 3."""
-    df = pd.DataFrame([
-        {"Delegate Name": "Alice", "Delegate Contract": "0xaaa", "Start Date": "2024-01-01"},
-    ])
-    fake_all_sky = _sky_df_indexed([
-        ("0xaaa", "2026-04-02", 1500.0),
-        # day 1 precedes the first event; day 3 has no new event.
-    ])
+    df = pd.DataFrame(
+        [
+            {"Delegate Name": "Alice", "Delegate Contract": "0xaaa", "Start Date": "2024-01-01"},
+        ]
+    )
+    fake_all_sky = _sky_df_indexed(
+        [
+            ("0xaaa", "2026-04-02", 1500.0),
+            # day 1 precedes the first event; day 3 has no new event.
+        ]
+    )
     period_3day = _period_stub(date(2026, 4, 1), date(2026, 4, 3))
 
     with patch.object(delegation, "get_all_sky_delegated", return_value=fake_all_sky):
@@ -299,9 +307,11 @@ def test_get_delegate_list_sky_carries_balance_forward_and_zeros_before_first_ev
 
 def test_get_delegate_list_sky_carries_pre_period_balance_across_whole_period():
     """A delegate whose last Lock/Free predates the period keeps that balance every in-period day."""
-    df = pd.DataFrame([
-        {"Delegate Name": "Alice", "Delegate Contract": "0xaaa", "Start Date": "2024-01-01"},
-    ])
+    df = pd.DataFrame(
+        [
+            {"Delegate Name": "Alice", "Delegate Contract": "0xaaa", "Start Date": "2024-01-01"},
+        ]
+    )
     # Last (and only) event is in March; the queried period is April, with no April events.
     fake_all_sky = _sky_df_indexed([("0xaaa", "2026-03-15", 1_000_000.0)])
     period_april = _period_stub(date(2026, 4, 1), date(2026, 4, 3))
@@ -314,9 +324,11 @@ def test_get_delegate_list_sky_carries_pre_period_balance_across_whole_period():
 
 def test_get_delegate_list_sky_lowercases_name():
     """The name column is the delegate's name lowercased and stripped."""
-    df = pd.DataFrame([
-        {"Delegate Name": "  Alice  ", "Delegate Contract": "0xaaa", "Start Date": "2024-01-01"},
-    ])
+    df = pd.DataFrame(
+        [
+            {"Delegate Name": "  Alice  ", "Delegate Contract": "0xaaa", "Start Date": "2024-01-01"},
+        ]
+    )
     fake_all_sky = _sky_df_indexed([("0xaaa", "2026-04-01", 1000.0)])
     period_1day = _period_stub(date(2026, 4, 1), date(2026, 4, 1))
 
@@ -328,14 +340,18 @@ def test_get_delegate_list_sky_lowercases_name():
 
 def test_get_delegate_list_sky_multiple_delegates():
     """Two delegates produce separate (contract, name, sky) entries per day."""
-    df = pd.DataFrame([
-        {"Delegate Name": "Alice", "Delegate Contract": "0xaaa", "Start Date": "2024-01-01"},
-        {"Delegate Name": "Bob", "Delegate Contract": "0xbbb", "Start Date": "2024-01-01"},
-    ])
-    fake_all_sky = _sky_df_indexed([
-        ("0xaaa", "2026-04-01", 1000.0),
-        ("0xbbb", "2026-04-01", 500.0),
-    ])
+    df = pd.DataFrame(
+        [
+            {"Delegate Name": "Alice", "Delegate Contract": "0xaaa", "Start Date": "2024-01-01"},
+            {"Delegate Name": "Bob", "Delegate Contract": "0xbbb", "Start Date": "2024-01-01"},
+        ]
+    )
+    fake_all_sky = _sky_df_indexed(
+        [
+            ("0xaaa", "2026-04-01", 1000.0),
+            ("0xbbb", "2026-04-01", 500.0),
+        ]
+    )
     period_1day = _period_stub(date(2026, 4, 1), date(2026, 4, 1))
 
     with patch.object(delegation, "get_all_sky_delegated", return_value=fake_all_sky):
@@ -352,10 +368,12 @@ def test_get_delegate_list_sky_multiple_delegates():
 
 def test_build_sky_lookup_returns_dict_keyed_by_contract_date():
     """Materialize df_sky into (contract, date) -> balance dict."""
-    df_sky = pd.DataFrame([
-        {"contract": "0xaaa", "date": date(2026, 4, 1), "sky": 1000.0},
-        {"contract": "0xbbb", "date": date(2026, 4, 1), "sky": 500.0},
-    ])
+    df_sky = pd.DataFrame(
+        [
+            {"contract": "0xaaa", "date": date(2026, 4, 1), "sky": 1000.0},
+            {"contract": "0xbbb", "date": date(2026, 4, 1), "sky": 500.0},
+        ]
+    )
 
     result = delegation.build_sky_lookup(df_sky)
 
