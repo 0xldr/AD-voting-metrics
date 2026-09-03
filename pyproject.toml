@@ -139,6 +139,7 @@ ignore = [
     "hardcoded-temp-file",         # /tmp paths in tests are not a real risk
     "import-private-name",         # tests legitimately exercise private helpers
     "compare-to-empty-string",     # `== ""` is clearer than implicit-falsiness in assertions
+    "pytest-fixture-autouse",      # autouse is the point for cross-cutting isolation fixtures
 ]
 
 [tool.ruff.lint.pydocstyle]
