@@ -48,11 +48,13 @@ def fetch_spells_for_period(period: MonthPeriod) -> list[dict]:
         for execute in data:
             date_execute = datetime.fromisoformat(execute["date"]).date()
             if period.start <= date_execute <= period.end:
-                spell_info.append({
-                    "address": execute["address"].lower(),
-                    "startDate": date_execute,
-                    "title": execute["title"],
-                })
+                spell_info.append(
+                    {
+                        "address": execute["address"].lower(),
+                        "startDate": date_execute,
+                        "title": execute["title"],
+                    }
+                )
 
     return spell_info
 

@@ -35,10 +35,12 @@ def test_load_slate_cache_missing_file_returns_empty(tmp_path):
 def test_load_slate_cache_lowercases_keys_and_addresses(tmp_path):
     cache_path = tmp_path / "slate_cache.json"
     cache_path.write_text(
-        json.dumps({
-            "0xABCDEF": ["0x1111", "0x2222"],
-            "0xBEEF": ["0x3333"],
-        })
+        json.dumps(
+            {
+                "0xABCDEF": ["0x1111", "0x2222"],
+                "0xBEEF": ["0x3333"],
+            }
+        )
     )
     out = onchain._load_slate_cache(cache_path)
     assert out == {
@@ -82,11 +84,13 @@ def _make_w3_with_slates(slate_addresses: list[str]) -> MagicMock:
 
 
 def test_resolve_slate_walks_until_revert_and_lowercases():
-    w3 = _make_w3_with_slates([
-        "0x1111111111111111111111111111111111111111",
-        "0xAABBccDDeeFF00112233445566778899AABBCCDD",  # mixed case from the RPC
-        "0x3333333333333333333333333333333333333333",
-    ])
+    w3 = _make_w3_with_slates(
+        [
+            "0x1111111111111111111111111111111111111111",
+            "0xAABBccDDeeFF00112233445566778899AABBCCDD",  # mixed case from the RPC
+            "0x3333333333333333333333333333333333333333",
+        ]
+    )
     out = onchain._resolve_slate(w3, "0xabcd")
     assert out == [
         "0x1111111111111111111111111111111111111111",
@@ -97,11 +101,13 @@ def test_resolve_slate_walks_until_revert_and_lowercases():
 
 def test_resolve_slate_stops_at_zero_address():
     """Some chiefs sentinel-terminate with the zero address rather than reverting."""
-    w3 = _make_w3_with_slates([
-        "0x1111111111111111111111111111111111111111",
-        "0x0000000000000000000000000000000000000000",  # sentinel
-        "0xshouldNotReachHere",
-    ])
+    w3 = _make_w3_with_slates(
+        [
+            "0x1111111111111111111111111111111111111111",
+            "0x0000000000000000000000000000000000000000",  # sentinel
+            "0xshouldNotReachHere",
+        ]
+    )
     out = onchain._resolve_slate(w3, "0xabcd")
     assert out == ["0x1111111111111111111111111111111111111111"]
 
@@ -245,12 +251,14 @@ def test_fetch_vote_events_caches_block_timestamps():
 
 
 def test_identify_pending_pairs_only_flags_pending_cells():
-    df = pd.DataFrame({
-        "Delegate Contract": ["0xa", "0xb", "0xc"],
-        "0xspell1": ["Yes", PENDING, "No"],
-        "0xspell2": [PENDING, PENDING, "Yes"],
-        "0xspell3": ["Yes", "Yes", "Yes"],
-    })
+    df = pd.DataFrame(
+        {
+            "Delegate Contract": ["0xa", "0xb", "0xc"],
+            "0xspell1": ["Yes", PENDING, "No"],
+            "0xspell2": [PENDING, PENDING, "Yes"],
+            "0xspell3": ["Yes", "Yes", "Yes"],
+        }
+    )
     out = onchain._identify_pending_pairs(df, ["0xspell1", "0xspell2", "0xspell3"])
     assert out == {"0xspell1": [1], "0xspell2": [0, 1]}
 
@@ -328,11 +336,13 @@ def test_first_vote_date_for_spell(events, spell_address, slate_cache, expected)
 
 def _make_df(rows: list[tuple[str, str, str]]) -> pd.DataFrame:
     """(delegate_contract, spell1_status, spell2_status) per row."""
-    return pd.DataFrame({
-        "Delegate Contract": [r[0] for r in rows],
-        "0xspell1": [r[1] for r in rows],
-        "0xspell2": [r[2] for r in rows],
-    })
+    return pd.DataFrame(
+        {
+            "Delegate Contract": [r[0] for r in rows],
+            "0xspell1": [r[1] for r in rows],
+            "0xspell2": [r[2] for r in rows],
+        }
+    )
 
 
 def _spell(addr: str, start: date) -> dict:
@@ -396,10 +406,12 @@ def test_resolve_pending_flips_cell_when_slate_contains_spell(tmp_path):
     """Happy path: a delegate's in-window vote for a slate containing the spell."""
     spell_addr = "0x" + "11" * 20
     spell_start = date(2026, 4, 1)
-    df = pd.DataFrame({
-        "Delegate Contract": [_VOTER_1],
-        spell_addr: [PENDING],
-    })
+    df = pd.DataFrame(
+        {
+            "Delegate Contract": [_VOTER_1],
+            spell_addr: [PENDING],
+        }
+    )
 
     slate = "0x" + "ab" * 32
     events = [_make_event(slate, 1000)]
@@ -420,10 +432,12 @@ def test_resolve_pending_late_vote_marked_late(tmp_path):
     """A vote past the 3-business-day deadline resolves to 'Late', not 'Yes'."""
     spell_addr = "0x" + "22" * 20
     spell_start = date(2026, 4, 1)  # Wednesday -> deadline Monday 2026-04-06
-    df = pd.DataFrame({
-        "Delegate Contract": [_VOTER_1],
-        spell_addr: [PENDING],
-    })
+    df = pd.DataFrame(
+        {
+            "Delegate Contract": [_VOTER_1],
+            spell_addr: [PENDING],
+        }
+    )
 
     slate = "0x" + "cd" * 32
     events = [_make_event(slate, 1000)]
@@ -444,10 +458,12 @@ def test_resolve_pending_vote_on_deadline_day_is_on_time(tmp_path):
     """The deadline day itself still counts; a weekend between start and deadline is skipped."""
     spell_addr = "0x" + "24" * 20
     spell_start = date(2026, 4, 1)  # Wednesday -> Thu, Fri, (weekend), Monday 2026-04-06
-    df = pd.DataFrame({
-        "Delegate Contract": [_VOTER_1],
-        spell_addr: [PENDING],
-    })
+    df = pd.DataFrame(
+        {
+            "Delegate Contract": [_VOTER_1],
+            spell_addr: [PENDING],
+        }
+    )
 
     slate = "0x" + "ce" * 32
     events = [_make_event(slate, 1000)]
@@ -467,10 +483,12 @@ def test_resolve_pending_persists_cache_growth(tmp_path):
     """Newly resolved slates are written back to the cache file."""
     spell_addr = "0x" + "33" * 20
     spell_start = date(2026, 4, 1)
-    df = pd.DataFrame({
-        "Delegate Contract": [_VOTER_1],
-        spell_addr: [PENDING],
-    })
+    df = pd.DataFrame(
+        {
+            "Delegate Contract": [_VOTER_1],
+            spell_addr: [PENDING],
+        }
+    )
 
     slate = "0x" + "ef" * 32
     events = [_make_event(slate, 1000)]
@@ -496,10 +514,12 @@ def test_resolve_pending_reuses_cached_slate(tmp_path):
     spell_addr = "0x" + "44" * 20
     spell_start = date(2026, 4, 1)
     slate = "0x" + "ef" * 32
-    df = pd.DataFrame({
-        "Delegate Contract": [_VOTER_1],
-        spell_addr: [PENDING],
-    })
+    df = pd.DataFrame(
+        {
+            "Delegate Contract": [_VOTER_1],
+            spell_addr: [PENDING],
+        }
+    )
 
     cache_path = tmp_path / "slate_cache.json"
     onchain._save_slate_cache({slate.lower(): [spell_addr]}, cache_path)
@@ -525,10 +545,12 @@ def test_resolve_pending_no_cache_write_when_no_new_slates(tmp_path):
     spell_addr = "0x" + "55" * 20
     spell_start = date(2026, 4, 1)
     slate = "0x" + "ef" * 32
-    df = pd.DataFrame({
-        "Delegate Contract": [_VOTER_1],
-        spell_addr: [PENDING],
-    })
+    df = pd.DataFrame(
+        {
+            "Delegate Contract": [_VOTER_1],
+            spell_addr: [PENDING],
+        }
+    )
 
     cache_path = tmp_path / "slate_cache.json"
     onchain._save_slate_cache({slate.lower(): [spell_addr]}, cache_path)

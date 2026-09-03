@@ -135,10 +135,6 @@ ignore = [
 convention = "google"
 
 [tool.ruff.format]
-# Preview formatting only (bracket hugging); lint preview stays off so new
-# unstable rules don't activate on ruff upgrades.
-preview = true
-
 # Like Black, use double quotes for strings.
 quote-style = "double"
 

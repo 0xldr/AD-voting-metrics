@@ -175,36 +175,42 @@ def test_run_finalize_eligibility_tie_at_cutoff_exits(finalize_mocks):
         for i in range(7)
     ]
     # All ranked 6 → tie crossing the 6-slot cutoff.
-    finalize_mocks.read_daily.return_value = pd.DataFrame([
-        {"Date": date(2026, 4, d), "Delegate": f"D{i}", "Total Delegation": 100.0, "Rank": 6}
-        for d in range(1, 31)
-        for i in range(7)
-    ])
+    finalize_mocks.read_daily.return_value = pd.DataFrame(
+        [
+            {"Date": date(2026, 4, d), "Delegate": f"D{i}", "Total Delegation": 100.0, "Rank": 6}
+            for d in range(1, 31)
+            for i in range(7)
+        ]
+    )
     # Perfect participation/communication so every delegate is eligible.
-    finalize_mocks.read_participation.return_value = pd.DataFrame([
-        {
-            "Delegate": f"D{i}",
-            "Poll Id": f"poll_{j}",
-            "Start Date": date(2026, 2, 1),
-            "End Date": date(2026, 2, 2),
-            "Title": "",
-            "Participation Status": "Yes",
-        }
-        for i in range(7)
-        for j in range(10)
-    ])
-    finalize_mocks.read_communication.return_value = pd.DataFrame([
-        {
-            "Delegate": f"D{i}",
-            "Poll Id": f"poll_{j}",
-            "Start Date": date(2026, 2, 1),
-            "End Date": date(2026, 2, 2),
-            "Title": "",
-            "Communication Status": "Yes",
-        }
-        for i in range(7)
-        for j in range(10)
-    ])
+    finalize_mocks.read_participation.return_value = pd.DataFrame(
+        [
+            {
+                "Delegate": f"D{i}",
+                "Poll Id": f"poll_{j}",
+                "Start Date": date(2026, 2, 1),
+                "End Date": date(2026, 2, 2),
+                "Title": "",
+                "Participation Status": "Yes",
+            }
+            for i in range(7)
+            for j in range(10)
+        ]
+    )
+    finalize_mocks.read_communication.return_value = pd.DataFrame(
+        [
+            {
+                "Delegate": f"D{i}",
+                "Poll Id": f"poll_{j}",
+                "Start Date": date(2026, 2, 1),
+                "End Date": date(2026, 2, 2),
+                "Title": "",
+                "Communication Status": "Yes",
+            }
+            for i in range(7)
+            for j in range(10)
+        ]
+    )
     finalize_mocks.build_roster.return_value = MagicMock(
         active_delegates=delegates,
         drift_warnings=[],
@@ -237,30 +243,34 @@ def test_run_finalize_includes_delegate_who_exited_mid_period(finalize_mocks):
         {"Date": date(2026, 4, d), "Delegate": "Stayer", "Total Delegation": 200.0, "Rank": 1} for d in range(1, 31)
     ] + [{"Date": date(2026, 4, d), "Delegate": "Exiter", "Total Delegation": 100.0, "Rank": 2} for d in range(1, 16)]
     finalize_mocks.read_daily.return_value = pd.DataFrame(daily_rows)
-    finalize_mocks.read_participation.return_value = pd.DataFrame([
-        {
-            "Delegate": name,
-            "Poll Id": f"poll_{j}",
-            "Start Date": date(2026, 2, 1),
-            "End Date": date(2026, 2, 2),
-            "Title": "",
-            "Participation Status": "Yes",
-        }
-        for name in ("Stayer", "Exiter")
-        for j in range(3)
-    ])
-    finalize_mocks.read_communication.return_value = pd.DataFrame([
-        {
-            "Delegate": name,
-            "Poll Id": f"poll_{j}",
-            "Start Date": date(2026, 2, 1),
-            "End Date": date(2026, 2, 2),
-            "Title": "",
-            "Communication Status": "Yes",
-        }
-        for name in ("Stayer", "Exiter")
-        for j in range(3)
-    ])
+    finalize_mocks.read_participation.return_value = pd.DataFrame(
+        [
+            {
+                "Delegate": name,
+                "Poll Id": f"poll_{j}",
+                "Start Date": date(2026, 2, 1),
+                "End Date": date(2026, 2, 2),
+                "Title": "",
+                "Participation Status": "Yes",
+            }
+            for name in ("Stayer", "Exiter")
+            for j in range(3)
+        ]
+    )
+    finalize_mocks.read_communication.return_value = pd.DataFrame(
+        [
+            {
+                "Delegate": name,
+                "Poll Id": f"poll_{j}",
+                "Start Date": date(2026, 2, 1),
+                "End Date": date(2026, 2, 2),
+                "Title": "",
+                "Communication Status": "Yes",
+            }
+            for name in ("Stayer", "Exiter")
+            for j in range(3)
+        ]
+    )
     finalize_mocks.build_roster.return_value = MagicMock(
         active_delegates=delegates,
         drift_warnings=[],
@@ -301,16 +311,20 @@ def test_run_finalize_logs_drift_warnings(finalize_mocks):
 def test_build_sky_and_ranking_frames_sorts_sky_and_ranks_delegates():
     """df_sky sorted by (date, sky, contract) desc; df_ranking has Rank per date."""
     period = MonthPeriod(year=2026, month=4)
-    canned = pd.DataFrame([
-        {"contract": "0xa", "name": "alpha", "date": date(2026, 4, 1), "sky": 100.0},
-        {"contract": "0xb", "name": "beta", "date": date(2026, 4, 1), "sky": 300.0},
-        {"contract": "0xc", "name": "gamma", "date": date(2026, 4, 1), "sky": 200.0},
-    ])
-    df_input = pd.DataFrame({
-        "Delegate Name": ["alpha", "beta", "gamma"],
-        "Delegate Contract": ["0xa", "0xb", "0xc"],
-        "Start Date": ["2024-01-01"] * 3,
-    })
+    canned = pd.DataFrame(
+        [
+            {"contract": "0xa", "name": "alpha", "date": date(2026, 4, 1), "sky": 100.0},
+            {"contract": "0xb", "name": "beta", "date": date(2026, 4, 1), "sky": 300.0},
+            {"contract": "0xc", "name": "gamma", "date": date(2026, 4, 1), "sky": 200.0},
+        ]
+    )
+    df_input = pd.DataFrame(
+        {
+            "Delegate Name": ["alpha", "beta", "gamma"],
+            "Delegate Contract": ["0xa", "0xb", "0xc"],
+            "Start Date": ["2024-01-01"] * 3,
+        }
+    )
 
     with patch(
         "ad_voting_metrics.pipeline.delegation.get_delegate_list_sky",
@@ -339,12 +353,14 @@ def test_write_fetch_csvs_writes_both_files_and_returns_paths(tmp_path, monkeypa
     monkeypatch.setattr(pipeline, "OUTPUT_DIR", tmp_path)
 
     df_sky = pd.DataFrame([{"contract": "0xa", "date": date(2026, 4, 1), "sky": 100.0}])
-    df = pd.DataFrame({
-        "Delegate Name": ["alpha"],
-        "Delegate Contract": ["0xa"],
-        "Start Date": ["2024-01-01"],
-        "101": ["Yes"],
-    })
+    df = pd.DataFrame(
+        {
+            "Delegate Name": ["alpha"],
+            "Delegate Contract": ["0xa"],
+            "Start Date": ["2024-01-01"],
+            "101": ["Yes"],
+        }
+    )
     poll_info = [{"pollId": 101, "startDate": date(2026, 4, 1), "endDate": date(2026, 4, 3), "title": "Test"}]
     spell_info: list[dict] = []
 
@@ -360,12 +376,14 @@ def test_write_fetch_csvs_defuses_formula_like_titles(tmp_path, monkeypatch):
     monkeypatch.setattr(pipeline, "OUTPUT_DIR", tmp_path)
 
     df_sky = pd.DataFrame([{"contract": "0xa", "date": date(2026, 4, 1), "sky": 100.0}])
-    df = pd.DataFrame({
-        "Delegate Name": ["alpha"],
-        "Delegate Contract": ["0xa"],
-        "Start Date": ["2024-01-01"],
-        "101": ["Yes"],
-    })
+    df = pd.DataFrame(
+        {
+            "Delegate Name": ["alpha"],
+            "Delegate Contract": ["0xa"],
+            "Start Date": ["2024-01-01"],
+            "101": ["Yes"],
+        }
+    )
     poll_info = [
         {
             "pollId": 101,
