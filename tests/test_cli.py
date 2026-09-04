@@ -1,6 +1,7 @@
 """Tests for cli: build_arg_parser, check_period_has_ended, and main."""
 
 from datetime import date
+from pathlib import Path
 from unittest.mock import patch
 
 import pytest
@@ -60,8 +61,8 @@ def test_check_period_has_ended_handles_year_boundary():
 # ---------------------------------------------------------------------------
 
 
-def test_parser_parses_month_and_rebuild():
-    """The parser takes --month and --rebuild."""
+def test_parser_parses_month_and_rebuild_with_default_paths():
+    """The parser takes --month and --rebuild; roster and output dir default to the working directory."""
     parser = build_arg_parser()
     args = parser.parse_args(["--month", "April 2026", "--rebuild"])
 
@@ -69,6 +70,16 @@ def test_parser_parses_month_and_rebuild():
     assert args.month.year == 2026
     assert args.month.month == 4
     assert args.rebuild is True
+    assert args.roster == Path("delegates.yaml")
+    assert args.output_dir == Path("output_data")
+
+
+def test_parser_accepts_roster_and_output_dir_overrides():
+    parser = build_arg_parser()
+    args = parser.parse_args(["--month", "April 2026", "--roster", "r.yaml", "--output-dir", "/tmp/out"])
+
+    assert args.roster == Path("r.yaml")
+    assert args.output_dir == Path("/tmp/out")
 
 
 def test_parser_rebuild_defaults_to_false():
@@ -98,4 +109,9 @@ def test_main_runs_pipeline(monkeypatch):
     with patch("ad_voting_metrics.cli.run") as run_mock:
         main(["--month", "2026-04"])
 
-    run_mock.assert_called_once_with(MonthPeriod(year=2026, month=4), rebuild=False)
+    run_mock.assert_called_once_with(
+        MonthPeriod(year=2026, month=4),
+        rebuild=False,
+        roster_path=Path("delegates.yaml"),
+        output_dir=Path("output_data"),
+    )

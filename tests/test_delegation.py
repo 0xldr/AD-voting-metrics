@@ -2,6 +2,7 @@
 
 import json
 from datetime import UTC, date, datetime
+from pathlib import Path
 from types import SimpleNamespace
 from typing import cast
 from unittest.mock import MagicMock, patch
@@ -222,12 +223,12 @@ def test_sync_events_skips_fetch_when_cache_is_current(tmp_path):
 # ---------------------------------------------------------------------------
 
 
-def test_get_all_sky_delegated_raises_if_rpc_url_missing(monkeypatch):
+def test_get_all_sky_delegated_raises_if_rpc_url_missing(monkeypatch, tmp_path):
     """If SKY_RPC_URL is unset and w3 not injected, raise RuntimeError."""
     monkeypatch.delenv("SKY_RPC_URL", raising=False)
 
     with pytest.raises(RuntimeError, match="SKY_RPC_URL"):
-        delegation.get_all_sky_delegated(["0x" + "a" * 40], w3=None)
+        delegation.get_all_sky_delegated(["0x" + "a" * 40], w3=None, cache_path=tmp_path / "cache.json")
 
 
 def test_get_all_sky_delegated_uses_injected_w3(tmp_path):
@@ -364,6 +365,9 @@ def test_build_balance_series_empty_cache_returns_empty_indexed_frame():
 # get_delegate_list_sky — per-day rows + zero-fill
 # ---------------------------------------------------------------------------
 
+# These tests patch get_all_sky_delegated, so the cache path is never opened.
+_UNUSED_CACHE = Path("unused-cache.json")
+
 
 def _sky_df_indexed(rows: list[tuple[str, str, float]]) -> pd.DataFrame:
     """Return a DataFrame shaped like get_all_sky_delegated's return value.
@@ -392,7 +396,7 @@ def test_get_delegate_list_sky_returns_one_row_per_delegate_per_day():
     period_2day = _period_stub(date(2026, 4, 1), date(2026, 4, 2))
 
     with patch.object(delegation, "get_all_sky_delegated", return_value=fake_all_sky):
-        result = delegation.get_delegate_list_sky(df, period_2day)
+        result = delegation.get_delegate_list_sky(df, period_2day, cache_path=_UNUSED_CACHE)
 
     assert len(result) == 2
     assert list(result.columns) == ["contract", "name", "date", "sky"]
@@ -414,7 +418,7 @@ def test_get_delegate_list_sky_carries_balance_forward_and_zeros_before_first_ev
     period_3day = _period_stub(date(2026, 4, 1), date(2026, 4, 3))
 
     with patch.object(delegation, "get_all_sky_delegated", return_value=fake_all_sky):
-        result = delegation.get_delegate_list_sky(df, period_3day)
+        result = delegation.get_delegate_list_sky(df, period_3day, cache_path=_UNUSED_CACHE)
 
     by_date = dict(zip(result["date"], result["sky"], strict=True))
     assert by_date[date(2026, 4, 1)] == 0.0  # before first event: no balance yet
@@ -434,7 +438,7 @@ def test_get_delegate_list_sky_carries_pre_period_balance_across_whole_period():
     period_april = _period_stub(date(2026, 4, 1), date(2026, 4, 3))
 
     with patch.object(delegation, "get_all_sky_delegated", return_value=fake_all_sky):
-        result = delegation.get_delegate_list_sky(df, period_april)
+        result = delegation.get_delegate_list_sky(df, period_april, cache_path=_UNUSED_CACHE)
 
     assert list(result["sky"]) == [1_000_000.0, 1_000_000.0, 1_000_000.0]
 
@@ -450,7 +454,7 @@ def test_get_delegate_list_sky_lowercases_name():
     period_1day = _period_stub(date(2026, 4, 1), date(2026, 4, 1))
 
     with patch.object(delegation, "get_all_sky_delegated", return_value=fake_all_sky):
-        result = delegation.get_delegate_list_sky(df, period_1day)
+        result = delegation.get_delegate_list_sky(df, period_1day, cache_path=_UNUSED_CACHE)
 
     assert result.iloc[0]["name"] == "alice"
 
@@ -472,7 +476,7 @@ def test_get_delegate_list_sky_multiple_delegates():
     period_1day = _period_stub(date(2026, 4, 1), date(2026, 4, 1))
 
     with patch.object(delegation, "get_all_sky_delegated", return_value=fake_all_sky):
-        result = delegation.get_delegate_list_sky(df, period_1day)
+        result = delegation.get_delegate_list_sky(df, period_1day, cache_path=_UNUSED_CACHE)
 
     by_name = dict(zip(result["name"], result["sky"], strict=True))
     assert by_name == {"alice": 1000.0, "bob": 500.0}

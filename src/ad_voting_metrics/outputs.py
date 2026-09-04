@@ -1,6 +1,6 @@
 """CSV outputs for one run.
 
-Everything the pipeline writes for a month lands in output_data/<YYYY-MM>/:
+The pipeline writes two files into the month's output directory (output_data/<YYYY-MM>/ by default):
 
   - sky.csv: one row per (delegate, day) with the SKY balance and that day's rank
   - vote_participation.csv: one row per poll/spell with its metadata and each delegate's participation status
@@ -15,8 +15,6 @@ from pathlib import Path
 
 import pandas as pd
 
-from .paths import output_dir_for
-from .period import MonthPeriod
 from .roster import ROSTER_COLUMNS
 
 logger = logging.getLogger(__name__)
@@ -115,21 +113,20 @@ def _defuse_csv_formulas(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def write_csvs(
-    period: MonthPeriod,
+    out_dir: Path,
     daily: pd.DataFrame,
     metrics: pd.DataFrame,
     poll_info: list[dict],
     spell_info: list[dict],
 ) -> list[Path]:
-    """Write sky.csv and vote_participation.csv into the period's output directory.
+    """Write sky.csv and vote_participation.csv into out_dir, creating it if needed.
 
     `daily` is the ranked per-(delegate, day) balance frame; `metrics` is the roster frame with one status column per
-    poll/spell. Re-runs overwrite the same month's files.
+    poll/spell. Re-runs overwrite the same files.
 
     Returns:
         The CSV paths written, in write order.
     """
-    out_dir = output_dir_for(period)
     out_dir.mkdir(parents=True, exist_ok=True)
 
     sky_csv = out_dir / "sky.csv"

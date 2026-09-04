@@ -9,7 +9,7 @@ import pandas as pd
 import pytest
 from web3.exceptions import Web3Exception
 
-from ad_voting_metrics import paths, pipeline
+from ad_voting_metrics import pipeline
 from ad_voting_metrics.period import MonthPeriod
 from ad_voting_metrics.pipeline import _rank_daily_balances, run
 from ad_voting_metrics.roster import Delegate
@@ -57,11 +57,11 @@ def test_rank_daily_balances_breaks_ties_by_row_order():
 
 
 @pytest.fixture
-def externals(tmp_path, monkeypatch):
+def externals(tmp_path):
     """Patch every external call made by run() for one delegate over April 2026.
 
-    Yields a namespace with the period, the output directory, the roster mock (so tests can shape drift warnings),
-    the delegation mock, and the write_entry mock.
+    Yields a namespace with the keyword arguments for run(), the month's output directory, the roster mock (so tests
+    can shape drift warnings), the delegation mock, and the write_entry mock.
     """
     period = MonthPeriod(year=2026, month=4)
     contract = "0x" + "a" * 40
@@ -76,9 +76,6 @@ def externals(tmp_path, monkeypatch):
         api_fetch_succeeded=True,
     )
 
-    monkeypatch.setattr(paths, "OUTPUT_DIR", tmp_path)
-    monkeypatch.setattr(pipeline, "RECONCILIATION_LOG_PATH", tmp_path / "rec")
-
     with (
         patch("ad_voting_metrics.pipeline.build_roster_for_period", return_value=roster),
         patch("ad_voting_metrics.pipeline.delegation.get_delegate_list_sky", return_value=daily) as delegation_mock,
@@ -90,6 +87,7 @@ def externals(tmp_path, monkeypatch):
     ):
         yield SimpleNamespace(
             period=period,
+            run_kwargs={"roster_path": tmp_path / "delegates.yaml", "output_dir": tmp_path},
             out_dir=tmp_path / "2026-04",
             roster=roster,
             delegation_mock=delegation_mock,
@@ -98,7 +96,7 @@ def externals(tmp_path, monkeypatch):
 
 
 def test_run_writes_both_csvs_into_the_month_directory(externals):
-    run(externals.period, rebuild=False)
+    run(externals.period, rebuild=False, **externals.run_kwargs)
 
     assert sorted(p.name for p in externals.out_dir.iterdir()) == ["sky.csv", "vote_participation.csv"]
     sky = pd.read_csv(externals.out_dir / "sky.csv")
@@ -107,11 +105,16 @@ def test_run_writes_both_csvs_into_the_month_directory(externals):
     assert set(sky["rank"]) == {1}
 
 
-def test_run_passes_rebuild_through_and_logs_output_paths_in_the_entry(externals):
-    run(externals.period, rebuild=True)
+def test_run_threads_paths_and_rebuild_through_to_collaborators(externals):
+    run(externals.period, rebuild=True, **externals.run_kwargs)
 
-    assert externals.delegation_mock.call_args.kwargs == {"rebuild": True}
-    entry = externals.entry_mock.call_args.args[2]
+    kwargs = externals.delegation_mock.call_args.kwargs
+    assert kwargs["rebuild"] is True
+    assert kwargs["cache_path"] == externals.run_kwargs["output_dir"] / "delegation_cache.json"
+
+    log_dir, _period, entry = externals.entry_mock.call_args.args
+    assert log_dir == externals.run_kwargs["output_dir"] / "reconciliation"
+    assert entry["yaml_path"] == str(externals.run_kwargs["roster_path"])
     assert [Path(p).name for p in entry["output_files"]] == ["sky.csv", "vote_participation.csv"]
 
 
@@ -119,7 +122,7 @@ def test_run_logs_drift_warnings(externals):
     externals.roster.drift_warnings = ["YAML lists Z but API doesn't"]
 
     with patch.object(pipeline.logger, "warning") as warning_mock:
-        run(externals.period, rebuild=False)
+        run(externals.period, rebuild=False, **externals.run_kwargs)
 
     warning_mock.assert_any_call("YAML lists Z but API doesn't")
 
@@ -130,7 +133,7 @@ def test_run_still_writes_outputs_when_onchain_verification_fails(externals):
         "ad_voting_metrics.pipeline.sky_executive_onchain.resolve_pending_executive_votes",
         side_effect=Web3Exception("rpc down"),
     ):
-        run(externals.period, rebuild=False)
+        run(externals.period, rebuild=False, **externals.run_kwargs)
 
     assert (externals.out_dir / "vote_participation.csv").exists()
     externals.entry_mock.assert_called_once()

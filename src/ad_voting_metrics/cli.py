@@ -7,6 +7,7 @@ then writes the month's CSVs to output_data/<YYYY-MM>/.
 import argparse
 import logging
 from datetime import UTC, date, datetime, timedelta
+from pathlib import Path
 
 from dotenv import load_dotenv
 
@@ -62,6 +63,20 @@ def build_arg_parser() -> argparse.ArgumentParser:
             "Use --rebuild to rebuild the entire delegation history."
         ),
     )
+    parser.add_argument(
+        "--roster",
+        type=Path,
+        default=Path("delegates.yaml"),
+        metavar="FILE",
+        help="Delegate roster YAML (default: %(default)s, relative to the working directory).",
+    )
+    parser.add_argument(
+        "--output-dir",
+        type=Path,
+        default=Path("output_data"),
+        metavar="DIR",
+        help="Directory for per-month CSVs, on-chain caches and reconciliation logs (default: %(default)s).",
+    )
 
     return parser
 
@@ -105,4 +120,4 @@ def main(argv: list[str] | None = None) -> None:
 
     check_period_has_ended(args.month, today=datetime.now(UTC).date())
 
-    run(args.month, rebuild=args.rebuild)
+    run(args.month, rebuild=args.rebuild, roster_path=args.roster, output_dir=args.output_dir)

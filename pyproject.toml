@@ -16,8 +16,6 @@ dependencies = [
     "web3>=7,<8",
 ]
 
-# Data paths resolve relative to the package's location on disk (see paths.py),
-# so the launcher is only correct for an editable install from a checkout.
 [project.scripts]
 ad-voting-metrics = "ad_voting_metrics.cli:main"
 

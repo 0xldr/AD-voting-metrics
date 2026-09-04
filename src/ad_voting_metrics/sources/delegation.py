@@ -5,8 +5,8 @@ Public entry points:
   - get_delegate_list_sky: forward-fill those balances onto a (delegate, day) grid for a period, zero before first event
   - build_sky_lookup: materialize per-day balance DataFrame into an O(1) (contract, date) dict
 
-Events are synced incrementally from the V3 VoteDelegateFactory (block 22368737) and cached to
-output_data/delegation_cache.json, so steady-state runs only fetch new blocks.
+Events are synced incrementally from the V3 VoteDelegateFactory (block 22368737) and cached to a JSON file the caller
+names, so steady-state runs only fetch new blocks.
 """
 
 import logging
@@ -22,7 +22,6 @@ from requests.exceptions import HTTPError
 from web3 import Web3
 from web3.exceptions import Web3RPCError
 
-from ad_voting_metrics.paths import DELEGATION_CACHE_PATH
 from ad_voting_metrics.period import MonthPeriod
 from ad_voting_metrics.sources.json_cache import load_json_cache, save_json_cache
 
@@ -209,7 +208,7 @@ def _sync_events(
     w3: Web3,
     contracts: list[str],
     *,
-    cache_path: Path = DELEGATION_CACHE_PATH,
+    cache_path: Path,
     rebuild: bool = False,
 ) -> dict[str, Any]:
     """Fetch Lock/Free events from the chain, update cache, return updated cache.
@@ -336,7 +335,7 @@ def get_all_sky_delegated(
     contracts: list[str],
     *,
     w3: Web3 | None = None,
-    cache_path: Path | None = None,
+    cache_path: Path,
     rebuild: bool = False,
 ) -> pd.DataFrame:
     """Fetch SKY delegation balances from on-chain Lock/Free events.
@@ -347,7 +346,7 @@ def get_all_sky_delegated(
     Args:
         contracts: list of delegate contract addresses (any case).
         w3: Web3 instance; if None, constructs from SKY_RPC_URL env var.
-        cache_path: path to delegation_cache.json; defaults to output_data/.
+        cache_path: JSON file holding the synced events and block timestamps.
         rebuild: if True, resyncs from V3_FACTORY_BLOCK, discarding cache.
 
     Returns:
@@ -364,8 +363,6 @@ def get_all_sky_delegated(
                 "SKY_RPC_URL environment variable is not set. Add it to your .env file (see .env.example).",
             )
         w3 = Web3(Web3.HTTPProvider(rpc_url))
-
-    cache_path = cache_path or DELEGATION_CACHE_PATH
 
     logger.info("Syncing delegation events%s...", " (rebuild)" if rebuild else "")
     cache = _sync_events(w3, contracts, cache_path=cache_path, rebuild=rebuild)
@@ -386,6 +383,7 @@ def get_delegate_list_sky(
     df: pd.DataFrame,
     period: MonthPeriod,
     *,
+    cache_path: Path,
     rebuild: bool = False,
 ) -> pd.DataFrame:
     """Build one row per (delegate, day) with SKY balance for the period.
@@ -397,16 +395,14 @@ def get_delegate_list_sky(
     Args:
         df: roster DataFrame with columns "Delegate Contract", "Delegate Name", "Start Date".
         period: MonthPeriod to cover.
+        cache_path: JSON file holding the synced events and block timestamps.
         rebuild: if True, forces a full re-sync from V3_FACTORY_BLOCK.
 
     Returns:
         DataFrame with columns: contract, name, date, sky. One row per (delegate, day)
         covering every day in the period.
     """
-    all_sky_delegated = get_all_sky_delegated(
-        df["Delegate Contract"].tolist(),
-        rebuild=rebuild,
-    )
+    all_sky_delegated = get_all_sky_delegated(df["Delegate Contract"].tolist(), cache_path=cache_path, rebuild=rebuild)
 
     days = list(pd.date_range(period.start, period.end, freq="D").date)
     contracts = df["Delegate Contract"].tolist()
@@ -445,13 +441,12 @@ def build_sky_lookup(df_sky: pd.DataFrame) -> dict[tuple[str, date], float]:
     return cast("dict[tuple[str, date], float]", lookup)
 
 
-def read_sync_state(cache_path: Path | None = None) -> dict[str, Any]:
+def read_sync_state(cache_path: Path) -> dict[str, Any]:
     """Read the current sync state from the cache file.
 
     Returns:
         Dict with keys: last_synced_block, factory_block.
     """
-    cache_path = cache_path or DELEGATION_CACHE_PATH
     cache = _load_cache(cache_path)
     return {
         "last_synced_block": cache.get("last_synced_block", V3_FACTORY_BLOCK),

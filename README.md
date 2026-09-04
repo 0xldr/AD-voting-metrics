@@ -47,7 +47,7 @@ cd <repo-dir>
 uv sync
 ```
 
-`uv sync` installs the project in editable mode, which is required rather than a convenience: `delegates.yaml` and `output_data/` are located relative to the package on disk, so a regular (non-editable) install would resolve them inside `site-packages` and fail to find the roster.
+Run the tool from the repo root so the default `delegates.yaml` and `output_data/` paths resolve, or point `--roster` and `--output-dir` elsewhere.
 
 ## Configuration
 
@@ -75,11 +75,13 @@ uv run python -m ad_voting_metrics --month "April 2026"
 
 The month argument accepts either natural form (`"April 2026"`) or ISO (`"2026-04"`). The month must have ended — the script refuses an in-progress period, since poll close-day rules can't be applied to polls still in their voting window.
 
-Runs sync only new blocks since the last one by default, reusing cached on-chain events under `output_data/`. Pass `--rebuild` to discard the cache and resync the full delegation history from the V3 factory block.
+Runs sync only new blocks since the last one by default, reusing cached on-chain events in the output directory. Pass `--rebuild` to discard the cache and resync the full delegation history from the V3 factory block.
+
+`--roster FILE` and `--output-dir DIR` override the default `delegates.yaml` and `output_data` locations, which are resolved relative to the working directory.
 
 ## Outputs
 
-All outputs for a month land in `output_data/<YYYY-MM>/`. Re-running the same month overwrites them; other months are untouched.
+All outputs for a month land in `<output-dir>/<YYYY-MM>/`, so `output_data/2026-04/` by default. Re-running the same month overwrites them; other months are untouched.
 
 - `sky.csv` — one row per delegate per day, sorted by date then rank. Columns: `contract`, `name`, `date`, `sky` (SKY delegated), `rank` (1 = most SKY that day).
 - `vote_participation.csv` — one row per poll or spell, sorted by start date. Columns: `Poll Id` (poll id or spell address), `Start Date`, `End Date` (blank for spells), `Title`, then one column per delegate holding the participation status.
@@ -88,4 +90,4 @@ Titles come from external APIs, so cells that begin with a formula character are
 
 ## Reconciliation log
 
-Every run also writes a JSON file to `output_data/reconciliation/`, named `<YYYY-MM>_<UTC-timestamp>.json`, with the period, timestamp, roster and API delegate counts, drift warnings, on-chain sync state, and the CSV paths produced. Useful for answering "what happened on this run" without re-running.
+Every run also writes a JSON file to `<output-dir>/reconciliation/`, named `<YYYY-MM>_<UTC-timestamp>.json`, with the period, timestamp, roster and API delegate counts, drift warnings, on-chain sync state, and the CSV paths produced. Useful for answering "what happened on this run" without re-running.

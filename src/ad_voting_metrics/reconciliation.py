@@ -1,6 +1,6 @@
 """Per-run reconciliation log.
 
-Each successful run writes one JSON file to output_data/reconciliation/, named <YYYY-MM>_<UTC-timestamp>.json — the
+Each successful run writes one JSON file to <output-dir>/reconciliation/, named <YYYY-MM>_<UTC-timestamp>.json — the
 period queried first, the run timestamp second, both sortable.
 
 The log captures structured metadata about a run: YAML and API delegate counts, whether the API call succeeded, drift

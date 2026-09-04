@@ -5,9 +5,8 @@ from datetime import UTC, date, datetime
 import pandas as pd
 import pytest
 
-from ad_voting_metrics import outputs, paths
+from ad_voting_metrics import outputs
 from ad_voting_metrics.outputs import PARTICIPATION_METADATA_COLUMNS, build_participation_dataframe, write_csvs
-from ad_voting_metrics.period import MonthPeriod
 
 
 def _make_participation_df():
@@ -135,19 +134,18 @@ def _daily():
     return pd.DataFrame([{"contract": "0xaaa", "name": "blue", "date": date(2026, 4, 1), "sky": 100.0, "rank": 1}])
 
 
-def test_write_csvs_writes_both_files_into_the_month_directory(tmp_path, monkeypatch):
-    monkeypatch.setattr(paths, "OUTPUT_DIR", tmp_path)
+def test_write_csvs_creates_the_directory_and_writes_both_files(tmp_path):
+    out_dir = tmp_path / "2026-04"
 
-    result = write_csvs(MonthPeriod(2026, 4), _daily(), _make_participation_df(), _make_poll_info(), _make_spell_info())
+    result = write_csvs(out_dir, _daily(), _make_participation_df(), _make_poll_info(), _make_spell_info())
 
     assert [p.relative_to(tmp_path).as_posix() for p in result] == ["2026-04/sky.csv", "2026-04/vote_participation.csv"]
     assert all(p.exists() for p in result)
-    assert (tmp_path / "2026-04" / "sky.csv").read_text().splitlines()[0] == "contract,name,date,sky,rank"
+    assert (out_dir / "sky.csv").read_text().splitlines()[0] == "contract,name,date,sky,rank"
 
 
-def test_write_csvs_defuses_formula_like_titles(tmp_path, monkeypatch):
+def test_write_csvs_defuses_formula_like_titles(tmp_path):
     """API-sourced titles starting with a formula character are quoted so spreadsheet apps render them as text."""
-    monkeypatch.setattr(paths, "OUTPUT_DIR", tmp_path)
     poll_info = [
         {
             "pollId": 12345,
@@ -157,8 +155,8 @@ def test_write_csvs_defuses_formula_like_titles(tmp_path, monkeypatch):
         }
     ]
 
-    write_csvs(MonthPeriod(2026, 4), _daily(), _make_participation_df(), poll_info, [])
+    write_csvs(tmp_path, _daily(), _make_participation_df(), poll_info, [])
 
-    participation = (tmp_path / "2026-04" / "vote_participation.csv").read_text()
+    participation = (tmp_path / "vote_participation.csv").read_text()
     assert "'=IMPORTDATA" in participation
     assert '"=IMPORTDATA' not in participation

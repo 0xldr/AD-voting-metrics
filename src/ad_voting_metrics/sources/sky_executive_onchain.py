@@ -26,7 +26,6 @@ from web3 import Web3
 from web3.constants import ADDRESS_ZERO
 from web3.exceptions import BadFunctionCallOutput, ContractLogicError, Web3RPCError
 
-from ad_voting_metrics.paths import SLATE_CACHE_PATH
 from ad_voting_metrics.sources.json_cache import load_json_cache, save_json_cache
 from ad_voting_metrics.vote_status import LATE, PENDING_VERIFICATION, YES, spell_vote_deadline
 
@@ -261,8 +260,8 @@ def resolve_pending_executive_votes(
     df: pd.DataFrame,
     spell_info: list[dict],
     *,
+    cache_path: Path,
     w3: Web3 | None = None,
-    cache_path: Path | None = None,
 ) -> pd.DataFrame:
     """Resolve "Pending verification" cells to "Yes" or "Late" from on-chain evidence.
 
@@ -297,7 +296,6 @@ def resolve_pending_executive_votes(
             return df
         w3 = Web3(Web3.HTTPProvider(rpc_url))
 
-    cache_path = cache_path or SLATE_CACHE_PATH
     slate_cache = _load_slate_cache(cache_path)
     initial_cache_size = len(slate_cache)
 
