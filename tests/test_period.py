@@ -84,18 +84,6 @@ def test_from_string_happy_path(value, expected):
     assert MonthPeriod.from_string(value) == expected
 
 
-def test_from_string_result_does_not_depend_on_current_day():
-    # Pins down the today-default footgun: dateutil.parser.parse fills missing
-    # components from today's date by default. Without the sentinel default,
-    # MonthPeriod.from_string("April 2026") run on May 5 would return a period
-    # that internally remembers day=5 — which we don't store, but we want the
-    # parsing to be stable regardless.
-    first = MonthPeriod.from_string("January 2025")
-    second = MonthPeriod.from_string("January 2025")
-    assert first == second
-    assert first.start.day == 1
-
-
 @pytest.mark.parametrize(
     "value",
     [

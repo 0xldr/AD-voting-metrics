@@ -416,7 +416,7 @@ def test_resolve_pending_flips_cell_when_slate_contains_spell(tmp_path):
     slate = "0x" + "ab" * 32
     events = [_make_event(slate, 1000)]
     w3 = _w3_for_resolver(events=events, slate_addresses={slate: [spell_addr]})
-    # The log's block falls on 2026-04-03 (within 7-day window).
+    # The log's block falls on 2026-04-03, inside the 3-business-day deadline (Monday 2026-04-06).
     w3.eth.get_block.return_value = {"timestamp": _ts(date(2026, 4, 3))}
 
     result = onchain.resolve_pending_executive_votes(
