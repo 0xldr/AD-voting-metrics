@@ -13,9 +13,6 @@ dependencies = [
     "python-dotenv>=1.2,<2",
     "pydantic>=2.0,<3",
     "pyyaml>=6.0,<7",
-    "gspread>=6.0,<7",
-    "gspread-dataframe>=4.0,<5",
-    "google-auth>=2.56.3,<3",
     "web3>=7,<8",
 ]
 
@@ -112,10 +109,6 @@ docstring-code-line-length = "dynamic"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-markers = [
-    "integration: tests that hit live external services (Google Sheets, etc.). Skipped by default; run with `pytest -m integration`.",
-]
-addopts = "-m 'not integration'"
 # Unscoped: pandas raises with stacklevel pointing at the caller, so a
 # `:pandas` module filter would never match.
 filterwarnings = [
@@ -132,7 +125,3 @@ warn_unused_ignores = true
 warn_return_any = true
 strict_equality = true
 check_untyped_defs = true
-
-[[tool.mypy.overrides]]
-module = ["gspread_dataframe"]
-ignore_missing_imports = true

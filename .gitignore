@@ -20,11 +20,9 @@ venv/
 /tmp
 /out
 
-# Generated outputs (scripts write CSVs here at runtime)
-output_data/reconciliation/*.json
-output_data/backups/
-output_data/*.csv
-output_data/*.json
+# Generated outputs (per-month CSVs, caches, reconciliation logs)
+output_data/*
+!output_data/.gitkeep
 
 # Python tooling caches
 .mypy_cache/

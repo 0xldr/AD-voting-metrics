@@ -1,7 +1,7 @@
 """Command-line entry point.
 
 Pulls SKY delegations from on-chain Lock/Free events and poll/spell vote data from vote.sky.money for a single month,
-then writes the raw participation tabs to the workbook and CSVs to output_data/.
+then writes the month's CSVs to output_data/<YYYY-MM>/.
 """
 
 import argparse
@@ -43,9 +43,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
             "Generate AD voting metrics for a single month. Pulls SKY "
             "delegations from on-chain Lock/Free events and poll/spell vote "
             "data from vote.sky.money, computes participation status per "
-            "(poll, delegate), and writes the raw participation tabs to the "
-            "workbook (and CSVs to output_data/). An operator then reviews "
-            "communication entries manually."
+            "(poll, delegate), and writes the month's CSVs to output_data/."
         ),
     )
     parser.add_argument(
