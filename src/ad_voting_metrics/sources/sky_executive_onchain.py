@@ -114,14 +114,19 @@ def _resolve_slate(w3: Web3, slate_hash: str) -> list[str]:
     return addresses
 
 
-def _block_from_date(w3: Web3, target: date) -> int:
-    """Return the first block number at or after midnight UTC on `target`.
+def _block_from_date(w3: Web3, target: date, known_timestamps: dict[int, int]) -> int:
+    """Return a block number no later than the first block on `target` (midnight UTC).
 
-    Binary search over block timestamps via the RPC (~25 get_block calls for mainnet). Seeds `eth_getLogs`'s
-    fromBlock — events are still filtered per-event by exact date afterwards, so the only requirement is that the
-    block is no later than the earliest event we care about.
+    Seeds `eth_getLogs`'s fromBlock; events are filtered per-event by exact date afterwards, so any block at or before
+    the true first block works. When `known_timestamps` (block -> UNIX timestamp, typically the delegation cache) has a
+    block before the target, the latest such block is returned with no RPC calls. Otherwise a binary search over block
+    timestamps via the RPC finds the first block at or after midnight (~25 get_block calls for mainnet).
     """
     target_ts = int(datetime.combine(target, datetime.min.time(), tzinfo=UTC).timestamp())
+    known_before = [block for block, ts in known_timestamps.items() if ts < target_ts]
+    if known_before:
+        return max(known_before)
+
     lo, hi = 1, int(w3.eth.block_number)
     while lo < hi:
         mid = (lo + hi) // 2
@@ -216,6 +221,7 @@ def resolve_pending_executive_votes(
     *,
     w3: Web3,
     cache_path: Path,
+    known_block_timestamps: dict[int, int],
 ) -> Statuses:
     """Resolve "Pending verification" cells to "Yes" or "Late" from on-chain evidence.
 
@@ -224,7 +230,9 @@ def resolve_pending_executive_votes(
       - Take the earliest event at or after the spell's start whose slate (cached) contains the spell address.
       - On or before `spell_vote_deadline(start)` -> "Yes"; after it -> "Late"; no such event -> left Pending.
 
-    Makes no RPC calls when nothing is pending. RPC and decode errors propagate.
+    `known_block_timestamps` (block -> UNIX timestamp) lets the event fetch start from an already-dated block instead
+    of binary-searching the chain; pass an empty dict to force the search. Makes no RPC calls when nothing is pending.
+    RPC and decode errors propagate.
 
     Returns:
         A new Statuses mapping with resolvable Pending cells set to "Yes" or "Late"; other entries unchanged.
@@ -238,7 +246,7 @@ def resolve_pending_executive_votes(
     initial_cache_size = len(slate_cache)
 
     earliest_start = min(spell.start for spell in spells)
-    from_block = _block_from_date(w3, earliest_start)
+    from_block = _block_from_date(w3, earliest_start, known_block_timestamps)
     logger.info("Verifying executive votes on-chain from block %d onwards", from_block)
 
     voters = {contract for contract, _ in pending}

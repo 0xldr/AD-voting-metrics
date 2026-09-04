@@ -60,7 +60,7 @@ def test_fetch_event_logs_merges_topics_and_signs_amounts():
 
     events, new_blocks = delegation._fetch_event_logs(mock_w3, [contract], from_block, from_block + 10)
 
-    assert events[contract] == [[from_block + 1, "100"], [from_block + 2, "-40"]]
+    assert events[contract] == [(from_block + 1, 100), (from_block + 2, -40)]
     assert new_blocks == {from_block + 1, from_block + 2}
     mock_w3.eth.get_logs.assert_called_once()
     params = mock_w3.eth.get_logs.call_args.args[0]
@@ -79,7 +79,7 @@ def test_fetch_block_timestamps_uses_one_batch_for_missing_blocks():
 
     out = delegation._fetch_block_timestamps(mock_w3, {5, 6}, {})
 
-    assert out == {"5": 1_700_000_000, "6": 1_700_000_100}
+    assert out == {5: 1_700_000_000, 6: 1_700_000_100}
     assert batch.add.call_count == 2
 
 
@@ -91,7 +91,7 @@ def test_fetch_block_timestamps_falls_back_to_sequential_calls():
 
     out = delegation._fetch_block_timestamps(mock_w3, {5, 6}, {})
 
-    assert out == {"5": 1, "6": 2}
+    assert out == {5: 1, 6: 2}
     assert mock_w3.eth.get_block.call_count == 2
 
 
@@ -99,9 +99,9 @@ def test_fetch_block_timestamps_skips_cached_blocks():
     """No RPC traffic when every block already has a cached timestamp."""
     mock_w3 = MagicMock()
 
-    out = delegation._fetch_block_timestamps(mock_w3, {5}, {"5": 42})
+    out = delegation._fetch_block_timestamps(mock_w3, {5}, {5: 42})
 
-    assert out == {"5": 42}
+    assert out == {5: 42}
     mock_w3.batch_requests.assert_not_called()
 
 
@@ -122,7 +122,7 @@ def test_fetch_block_timestamps_retries_batch_after_rate_limit():
     with patch.object(delegation.time, "sleep") as mock_sleep:
         out = delegation._fetch_block_timestamps(mock_w3, {5}, {})
 
-    assert out == {"5": 7}
+    assert out == {5: 7}
     mock_sleep.assert_called_once_with(delegation.RATE_LIMIT_BASE_DELAY_SECONDS)
 
 
@@ -185,7 +185,7 @@ def test_sync_events_second_run_starts_after_last_synced_block_and_appends(tmp_p
     first = delegation._sync_events(w3, [contract], cache_path=cache_path)
 
     assert w3.eth.get_logs.call_args.args[0]["fromBlock"] == factory
-    assert first["last_synced_block"] == factory + 1_000
+    assert first.last_synced_block == factory + 1_000
     assert cache_path.exists()
 
     w3.eth.block_number = first_head + 500
@@ -194,9 +194,9 @@ def test_sync_events_second_run_starts_after_last_synced_block_and_appends(tmp_p
     second = delegation._sync_events(w3, [contract], cache_path=cache_path)
 
     assert w3.eth.get_logs.call_args.args[0]["fromBlock"] == factory + 1_001
-    assert second["events"][contract] == [[factory + 10, "100"], [first_head + 100, "50"]]
-    assert second["last_synced_block"] == factory + 1_500
-    assert delegation._load_cache(cache_path)["events"][contract] == second["events"][contract]
+    assert second.events[contract] == [(factory + 10, 100), (first_head + 100, 50)]
+    assert second.last_synced_block == factory + 1_500
+    assert delegation.DelegationCache.load(cache_path).events[contract] == second.events[contract]
 
 
 def test_sync_events_skips_fetch_when_cache_is_current(tmp_path):
@@ -215,7 +215,7 @@ def test_sync_events_skips_fetch_when_cache_is_current(tmp_path):
     out = delegation._sync_events(w3, [contract], cache_path=cache_path)
 
     w3.eth.get_logs.assert_not_called()
-    assert out["last_synced_block"] == synced_to
+    assert out.last_synced_block == synced_to
     assert cache_path.stat().st_mtime_ns == mtime
 
 
@@ -255,7 +255,7 @@ def test_get_all_sky_delegated_rebuild_resyncs_from_factory_block(tmp_path):
     mock_w3.eth.get_logs.return_value = []  # No events
 
     with patch("ad_voting_metrics.sources.delegation._sync_events") as sync_mock:
-        sync_mock.return_value = {"events": {}, "last_synced_block": 100000000}
+        sync_mock.return_value = delegation.DelegationCache(last_synced_block=100000000)
         delegation.get_all_sky_delegated(
             ["0xaaaa"],
             w3=mock_w3,
@@ -304,8 +304,8 @@ def test_get_all_sky_delegated_recovers_by_shrinking_chunk(tmp_path):
 def test_contract_cumulative_balances_nets_same_day_events_and_carries_total():
     """Two events on one day collapse to one entry; later days start from the prior running total."""
     day_1, day_3 = date(2026, 4, 1), date(2026, 4, 3)
-    timestamps = {"1": _ts(day_1), "2": _ts(day_1) + 3600, "3": _ts(day_3)}
-    events = [[1, "100"], [2, "-40"], [3, "10"]]
+    timestamps = {1: _ts(day_1), 2: _ts(day_1) + 3600, 3: _ts(day_3)}
+    events = [(1, 100), (2, -40), (3, 10)]
 
     out = delegation._contract_cumulative_balances(events, timestamps, "0xc")
 
@@ -313,18 +313,18 @@ def test_contract_cumulative_balances_nets_same_day_events_and_carries_total():
 
 
 def test_contract_cumulative_balances_raises_when_total_goes_negative():
-    timestamps = {"1": _ts(date(2026, 4, 1))}
+    timestamps = {1: _ts(date(2026, 4, 1))}
 
     with pytest.raises(ValueError, match="Negative running total"):
-        delegation._contract_cumulative_balances([[1, "-5"]], timestamps, "0xc")
+        delegation._contract_cumulative_balances([(1, -5)], timestamps, "0xc")
 
 
 def test_contract_cumulative_balances_skips_events_without_cached_timestamp(caplog):
     day = date(2026, 4, 1)
-    timestamps = {"1": _ts(day)}
+    timestamps = {1: _ts(day)}
 
     with caplog.at_level("WARNING"):
-        out = delegation._contract_cumulative_balances([[1, "100"], [2, "100"]], timestamps, "0xc")
+        out = delegation._contract_cumulative_balances([(1, 100), (2, 100)], timestamps, "0xc")
 
     assert out == {day: 100}
     assert "no cached timestamp" in caplog.text
@@ -332,10 +332,10 @@ def test_contract_cumulative_balances_skips_events_without_cached_timestamp(capl
 
 def test_build_balance_series_converts_wei_to_sky_one_row_per_event_day():
     day_1, day_5 = date(2026, 4, 1), date(2026, 4, 5)
-    cache = {
-        "events": {"0xc": [[1, str(2 * 10**18)], [2, str(10**18)]]},
-        "block_timestamps": {"1": _ts(day_1), "2": _ts(day_5)},
-    }
+    cache = delegation.DelegationCache(
+        events={"0xc": [(1, 2 * 10**18), (2, 10**18)]},
+        block_timestamps={1: _ts(day_1), 2: _ts(day_5)},
+    )
 
     out = delegation._build_balance_series(cache)
 
@@ -344,7 +344,7 @@ def test_build_balance_series_converts_wei_to_sky_one_row_per_event_day():
 
 
 def test_build_balance_series_empty_cache_returns_empty_indexed_frame():
-    out = delegation._build_balance_series({})
+    out = delegation._build_balance_series(delegation.DelegationCache())
 
     assert out.empty
     assert out.index.names == ["delegation_contract", "dt"]
@@ -480,28 +480,42 @@ def test_build_sky_lookup_returns_dict_keyed_by_contract_date():
 
 
 # ---------------------------------------------------------------------------
-# read_sync_state — cache metadata
+# DelegationCache — on-disk format
 # ---------------------------------------------------------------------------
 
 
-def test_read_sync_state_returns_factory_block_and_last_synced(tmp_path):
-    """read_sync_state fetches factory_block and last_synced_block from cache."""
+def test_delegation_cache_load_normalises_legacy_string_keys_and_wads(tmp_path):
+    """Older cache files stored block keys and wads as strings; load yields ints either way."""
     cache_path = tmp_path / "delegation_cache.json"
+    cache_path.write_text(
+        json.dumps(
+            {
+                "last_synced_block": 22500000,
+                "events": {"0xABC": [[22400000, "100"], [22400500, "-40"]]},
+                "block_timestamps": {"22400000": 1_700_000_000, "22400500": 1_700_006_000},
+            }
+        )
+    )
 
-    cache_path.parent.mkdir(parents=True, exist_ok=True)
-    cache_path.write_text(json.dumps({"last_synced_block": 22500000}))
+    cache = delegation.DelegationCache.load(cache_path)
 
-    result = delegation.read_sync_state(cache_path)
-
-    assert result["factory_block"] == 22368737
-    assert result["last_synced_block"] == 22500000
+    assert cache.last_synced_block == 22500000
+    assert cache.events == {"0xabc": [(22400000, 100), (22400500, -40)]}
+    assert cache.block_timestamps == {22400000: 1_700_000_000, 22400500: 1_700_006_000}
 
 
-def test_read_sync_state_returns_factory_block_if_cache_empty(tmp_path):
-    """If cache doesn't exist or is empty, last_synced_block defaults to factory_block."""
+def test_delegation_cache_save_load_round_trip(tmp_path):
     cache_path = tmp_path / "delegation_cache.json"
+    cache = delegation.DelegationCache(
+        last_synced_block=22500000,
+        events={"0xabc": [(22400000, 10**24), (22400500, -(10**23))]},
+        block_timestamps={22400000: 1_700_000_000},
+    )
 
-    result = delegation.read_sync_state(cache_path)
+    cache.save(cache_path)
 
-    assert result["factory_block"] == 22368737
-    assert result["last_synced_block"] == 22368737
+    assert delegation.DelegationCache.load(cache_path) == cache
+
+
+def test_delegation_cache_load_missing_file_is_empty(tmp_path):
+    assert delegation.DelegationCache.load(tmp_path / "nope.json") == delegation.DelegationCache()

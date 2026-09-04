@@ -4,13 +4,13 @@ Public entry points:
   - get_all_sky_delegated: fetch Lock/Free events, return the running-total balance on each event day
   - get_delegate_list_sky: forward-fill those balances onto a (delegate, day) grid for a period, zero before first event
   - build_sky_lookup: materialize per-day balance DataFrame into an O(1) (contract, date) dict
-
-Events are synced incrementally from the V3 VoteDelegateFactory (block 22368737) and cached to a JSON file the caller
-names, so steady-state runs only fetch new blocks.
+  - DelegationCache: the synced events and block timestamps, persisted as JSON so steady-state runs only fetch new
+    blocks since the V3 VoteDelegateFactory (block 22368737)
 """
 
 import logging
 import time
+from dataclasses import asdict, dataclass, field
 from datetime import UTC, date, datetime
 from http import HTTPStatus
 from pathlib import Path
@@ -50,22 +50,49 @@ TIMESTAMP_BATCH_SIZE = 100
 RATE_LIMIT_ATTEMPTS = 5
 RATE_LIMIT_BASE_DELAY_SECONDS = 1.0
 
+# A Lock/Free event: (block number, signed wad). Lock amounts are positive, Free amounts negative.
+type Event = tuple[int, int]
+
 # ---------------------------------------------------------------------------
-# Cache load/save
+# Cache
 # ---------------------------------------------------------------------------
 
 
-def _load_cache(path: Path) -> dict[str, Any]:
-    """Load the delegation cache from disk.
+@dataclass
+class DelegationCache:
+    """Synced Lock/Free events and the block timestamps needed to date them.
 
-    Returns the cache dict with keys: last_synced_block, events, block_timestamps. Empty dict if the file doesn't
-    exist.
+    `events` maps a lowercased contract address to its events in sync order. `block_timestamps` maps a block number to
+    its UNIX timestamp. `last_synced_block` is None until the first sync completes.
+
+    On disk this is JSON, where object keys are strings and older files stored wads as strings; `load` normalises both
+    to ints so the rest of the module works with native types.
     """
-    data = load_json_cache(path)
-    # Normalize contract addresses to lowercase in the events dict.
-    if "events" in data:
-        data["events"] = {contract.lower(): events for contract, events in data["events"].items()}
-    return data
+
+    last_synced_block: int | None = None
+    events: dict[str, list[Event]] = field(default_factory=dict)
+    block_timestamps: dict[int, int] = field(default_factory=dict)
+
+    @classmethod
+    def load(cls, path: Path) -> DelegationCache:
+        """Read the cache from disk; an absent file yields an empty cache.
+
+        Returns:
+            The parsed cache.
+        """
+        data = load_json_cache(path)
+        return cls(
+            last_synced_block=data.get("last_synced_block"),
+            events={
+                contract.lower(): [(int(block), int(wad)) for block, wad in events]
+                for contract, events in data.get("events", {}).items()
+            },
+            block_timestamps={int(block): ts for block, ts in data.get("block_timestamps", {}).items()},
+        )
+
+    def save(self, path: Path) -> None:
+        """Persist the cache atomically; json turns the int block keys into strings."""
+        save_json_cache(asdict(self), path)
 
 
 # ---------------------------------------------------------------------------
@@ -78,7 +105,7 @@ def _fetch_event_logs(
     contracts: list[str],
     from_block: int,
     safe_head: int,
-) -> tuple[dict[str, list[list[Any]]], set[int]]:
+) -> tuple[dict[str, list[Event]], set[int]]:
     """Fetch Lock/Free logs across a block range using adaptive chunking.
 
     Both event types are fetched in a single eth_getLogs call per chunk (an OR-filter on topic0) and signed by topic
@@ -86,15 +113,14 @@ def _fetch_event_logs(
     retries down to MIN_CHUNK_BLOCKS. A size that worked carries over to subsequent chunks so a provider with a low
     limit isn't re-probed on every window.
 
-    Returns a tuple of (events_by_contract, new_blocks). events_by_contract maps a lowercased contract address to a
-    list of [block_number, signed_wad_str], where Lock amounts are positive and Free amounts negative. new_blocks is
-    the set of block numbers in which an event was seen.
+    Returns a tuple of (events_by_contract, new_blocks). events_by_contract maps a lowercased contract address to its
+    events; new_blocks is the set of block numbers in which an event was seen.
 
     Raises:
         RuntimeError: if eth_getLogs fails even at MIN_CHUNK_BLOCKS.
     """
     contracts_checksummed = [Web3.to_checksum_address(c) for c in contracts]
-    events_by_contract: dict[str, list[list[Any]]] = {}
+    events_by_contract: dict[str, list[Event]] = {}
     new_blocks: set[int] = set()
 
     block = from_block
@@ -130,7 +156,7 @@ def _fetch_event_logs(
                 wad = Web3.to_int(log["data"])
                 if Web3.to_hex(log["topics"][0]) == FREE_TOPIC:
                     wad = -wad
-                events_by_contract.setdefault(contract_lower, []).append([log["blockNumber"], str(wad)])
+                events_by_contract.setdefault(contract_lower, []).append((log["blockNumber"], wad))
                 new_blocks.add(log["blockNumber"])
 
             block = to_block + 1
@@ -168,8 +194,8 @@ def _get_blocks_batched(w3: Web3, block_nums: list[int]) -> list[Any]:
 def _fetch_block_timestamps(
     w3: Web3,
     blocks: set[int],
-    block_timestamps: dict[str, int],
-) -> dict[str, int]:
+    block_timestamps: dict[int, int],
+) -> dict[int, int]:
     """Fetch UNIX timestamps for any blocks not already in block_timestamps.
 
     Missing blocks are requested in JSON-RPC batches of at most TIMESTAMP_BATCH_SIZE, with backoff on rate limits;
@@ -180,7 +206,7 @@ def _fetch_block_timestamps(
     Raises:
         RuntimeError: if a sequential get_block call fails.
     """
-    missing = [b for b in sorted(blocks) if str(b) not in block_timestamps]
+    missing = sorted(blocks - block_timestamps.keys())
 
     for start in range(0, len(missing), TIMESTAMP_BATCH_SIZE):
         chunk = missing[start : start + TIMESTAMP_BATCH_SIZE]
@@ -194,12 +220,12 @@ def _fetch_block_timestamps(
                 except Web3RPCError as seq_error:
                     msg = f"get_block({block_num}) failed: {seq_error}"
                     raise RuntimeError(msg) from seq_error
-                block_timestamps[str(block_num)] = fetched_block["timestamp"]
+                block_timestamps[block_num] = fetched_block["timestamp"]
         else:
             for block_num, batched_block in zip(chunk, blocks_data, strict=True):
                 # `timestamp` is NotRequired on BlockData per web3-stubs, but full
                 # blocks always carry it at runtime; widen to plain dict for access.
-                block_timestamps[str(block_num)] = cast("dict[str, Any]", batched_block)["timestamp"]
+                block_timestamps[block_num] = cast("dict[str, Any]", batched_block)["timestamp"]
 
     return block_timestamps
 
@@ -210,30 +236,23 @@ def _sync_events(
     *,
     cache_path: Path,
     rebuild: bool = False,
-) -> dict[str, Any]:
-    """Fetch Lock/Free events from the chain, update cache, return updated cache.
+) -> DelegationCache:
+    """Fetch Lock/Free events from the chain, update the cache on disk, return it.
 
     Loads the cache; if rebuild=True, discards prior events and syncs from V3_FACTORY_BLOCK.
     Otherwise syncs from (last_synced_block + 1).
     """
-    cache = _load_cache(cache_path)
-    if rebuild:
-        cache = {"last_synced_block": None, "events": {}, "block_timestamps": {}}
-
-    # Initialize events dict per contract (lowercase).
+    cache = DelegationCache() if rebuild else DelegationCache.load(cache_path)
     for contract in contracts:
-        cache.setdefault("events", {}).setdefault(contract.lower(), [])
+        cache.events.setdefault(contract.lower(), [])
 
     from_block = V3_FACTORY_BLOCK
-    if not rebuild and cache.get("last_synced_block") is not None:
-        from_block = max(V3_FACTORY_BLOCK, cache["last_synced_block"] + 1)
+    if cache.last_synced_block is not None:
+        from_block = max(V3_FACTORY_BLOCK, cache.last_synced_block + 1)
 
     safe_head = w3.eth.block_number - FINALITY_BLOCKS
     if from_block > safe_head:
-        logger.info(
-            "Already synced up to block %d; nothing new to fetch",
-            cache.get("last_synced_block", V3_FACTORY_BLOCK),
-        )
+        logger.info("Already synced up to block %d; nothing new to fetch", cache.last_synced_block)
         return cache
 
     logger.info(
@@ -246,11 +265,11 @@ def _sync_events(
 
     events_by_contract, new_blocks = _fetch_event_logs(w3, contracts, from_block, safe_head)
     for contract_lower, events in events_by_contract.items():
-        cache["events"].setdefault(contract_lower, []).extend(events)
+        cache.events.setdefault(contract_lower, []).extend(events)
 
-    cache["block_timestamps"] = _fetch_block_timestamps(w3, new_blocks, cache.get("block_timestamps", {}))
-    cache["last_synced_block"] = safe_head
-    save_json_cache(cache, cache_path)
+    cache.block_timestamps = _fetch_block_timestamps(w3, new_blocks, cache.block_timestamps)
+    cache.last_synced_block = safe_head
+    cache.save(cache_path)
 
     logger.info(
         "Synced %d new events across %d blocks; last_synced_block=%d",
@@ -267,8 +286,8 @@ def _sync_events(
 
 
 def _contract_cumulative_balances(
-    events: list[list[Any]],
-    block_timestamps: dict[str, int],
+    events: list[Event],
+    block_timestamps: dict[int, int],
     contract: str,
 ) -> dict[date, int]:
     """Aggregate one contract's Lock/Free events into a cumulative daily balance (wei).
@@ -283,13 +302,12 @@ def _contract_cumulative_balances(
             misattributed events.
     """
     events_by_date: dict[date, int] = {}
-    for block_num, signed_wad_str in events:
-        block_key = str(block_num)
-        if block_key not in block_timestamps:
-            logger.warning("Block %s has no cached timestamp; skipping event", block_num)
+    for block, wad in events:
+        if block not in block_timestamps:
+            logger.warning("Block %d has no cached timestamp; skipping event", block)
             continue
-        event_date = datetime.fromtimestamp(block_timestamps[block_key], tz=UTC).date()
-        events_by_date[event_date] = events_by_date.get(event_date, 0) + int(signed_wad_str)
+        event_date = datetime.fromtimestamp(block_timestamps[block], tz=UTC).date()
+        events_by_date[event_date] = events_by_date.get(event_date, 0) + wad
 
     cumulative_by_date: dict[date, int] = {}
     running_total = 0
@@ -305,22 +323,21 @@ def _contract_cumulative_balances(
     return cumulative_by_date
 
 
-def _build_balance_series(cache: dict[str, Any]) -> pd.DataFrame:
+def _build_balance_series(cache: DelegationCache) -> pd.DataFrame:
     """Build each contract's running-total SKY balance on every day it changed.
 
     Days without an event are absent; `get_delegate_list_sky` forward-fills onto the period's daily grid.
 
     Returns a DataFrame indexed on (delegation_contract, dt) with a running_total_balance column in SKY.
     """
-    block_timestamps = cache.get("block_timestamps", {})
     rows = [
         {
             "delegation_contract": contract,
             "dt": event_date,
             "running_total_balance": float(Web3.from_wei(wei, "ether")),
         }
-        for contract, events in cache.get("events", {}).items()
-        for event_date, wei in _contract_cumulative_balances(events, block_timestamps, contract).items()
+        for contract, events in cache.events.items()
+        for event_date, wei in _contract_cumulative_balances(events, cache.block_timestamps, contract).items()
     ]
     columns = ["delegation_contract", "dt", "running_total_balance"]
     return pd.DataFrame(rows, columns=columns).set_index(["delegation_contract", "dt"])
@@ -359,7 +376,7 @@ def get_all_sky_delegated(
     logger.info("Syncing delegation events%s...", " (rebuild)" if rebuild else "")
     cache = _sync_events(w3, contracts, cache_path=cache_path, rebuild=rebuild)
 
-    event_count = sum(len(events) for events in cache.get("events", {}).values())
+    event_count = sum(len(events) for events in cache.events.values())
     logger.info("Building running-total balances from %d events", event_count)
     df = _build_balance_series(cache)
     logger.info(
@@ -430,16 +447,3 @@ def build_sky_lookup(df_sky: pd.DataFrame) -> dict[tuple[str, date], float]:
     """
     lookup = df_sky.set_index(["contract", "date"])["sky"].astype(float).to_dict()
     return cast("dict[tuple[str, date], float]", lookup)
-
-
-def read_sync_state(cache_path: Path) -> dict[str, Any]:
-    """Read the current sync state from the cache file.
-
-    Returns:
-        Dict with keys: last_synced_block, factory_block.
-    """
-    cache = _load_cache(cache_path)
-    return {
-        "last_synced_block": cache.get("last_synced_block", V3_FACTORY_BLOCK),
-        "factory_block": V3_FACTORY_BLOCK,
-    }

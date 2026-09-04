@@ -19,6 +19,7 @@ from typing import TypedDict
 
 from .period import MonthPeriod
 from .roster import RosterResult
+from .sources.delegation import V3_FACTORY_BLOCK
 
 logger = logging.getLogger(__name__)
 
@@ -52,12 +53,12 @@ def build_entry(
     period: MonthPeriod,
     yaml_path: Path,
     roster: RosterResult,
-    delegation: dict[str, int],
+    last_synced_block: int,
     output_files: list[Path],
 ) -> ReconciliationEntry:
     """Construct a reconciliation log entry from this run's facts.
 
-    `delegation` is the on-chain sync state {factory_block, last_synced_block}.
+    `last_synced_block` is the head of the on-chain delegation sync after this run.
 
     `roster.api_delegate_count` is 0 when api_fetch_succeeded is False (the API call raised and was soft-failed).
 
@@ -84,8 +85,8 @@ def build_entry(
         "api_fetch_succeeded": roster.api_fetch_succeeded,
         "active_during_period": len(roster.active_delegates),
         "drift_warnings": list(roster.drift_warnings),
-        "delegation_factory_block": delegation["factory_block"],
-        "delegation_last_synced_block": delegation["last_synced_block"],
+        "delegation_factory_block": V3_FACTORY_BLOCK,
+        "delegation_last_synced_block": last_synced_block,
         "output_files": [str(p) for p in output_files],
     }
 

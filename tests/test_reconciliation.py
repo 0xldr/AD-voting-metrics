@@ -115,7 +115,7 @@ def test_build_entry_minimal():
             active_delegates=active_delegates,
             api_delegate_count=2,
         ),
-        delegation={"factory_block": 22368737, "last_synced_block": 22500000},
+        last_synced_block=22500000,
         output_files=[Path("/tmp/output.csv")],
     )
 
@@ -141,7 +141,7 @@ def test_build_entry_preserves_drift_warnings():
         roster=_make_roster_result(
             drift_warnings=["Cloaky vanished from API", "Mystery delegate appeared"],
         ),
-        delegation={"factory_block": 22368737, "last_synced_block": 22500000},
+        last_synced_block=22500000,
         output_files=[],
     )
 
@@ -159,7 +159,7 @@ def test_build_entry_records_api_failure():
             drift_warnings=["API drift check skipped..."],
             api_fetch_succeeded=False,
         ),
-        delegation={"factory_block": 22368737, "last_synced_block": 22500000},
+        last_synced_block=22500000,
         output_files=[],
     )
 
@@ -173,7 +173,7 @@ def test_build_entry_run_timestamp_is_iso_with_tz():
         period=_sample_period(),
         yaml_path=Path("/tmp/delegates.yaml"),
         roster=_make_roster_result(),
-        delegation={"factory_block": 22368737, "last_synced_block": 22500000},
+        last_synced_block=22500000,
         output_files=[],
     )
 
@@ -193,7 +193,7 @@ def test_build_entry_is_json_serializable():
             drift_warnings=["w1", "w2"],
             api_delegate_count=2,
         ),
-        delegation={"factory_block": 22368737, "last_synced_block": 22500000},
+        last_synced_block=22500000,
         output_files=[Path("/o/a.csv")],
     )
 

@@ -140,7 +140,7 @@ def test_block_from_date_finds_first_block_at_or_after_midnight():
     # One block every 12 seconds from genesis_ts.
     mock_w3.eth.get_block.side_effect = lambda n: {"timestamp": genesis_ts + n * 12}
 
-    result = onchain._block_from_date(mock_w3, date(2026, 5, 13))
+    result = onchain._block_from_date(mock_w3, date(2026, 5, 13), {})
 
     # 12 days * 86400 s / 12 s per block — timestamp lands exactly on midnight, so that block is included.
     assert result == 12 * 86400 // 12
@@ -154,7 +154,17 @@ def test_block_from_date_returns_first_block_when_chain_starts_after_target():
     mock_w3.eth.block_number = 1_000
     mock_w3.eth.get_block.side_effect = lambda n: {"timestamp": _ts(date(2026, 6, 1)) + n}
 
-    assert onchain._block_from_date(mock_w3, date(2026, 5, 13)) == 1
+    assert onchain._block_from_date(mock_w3, date(2026, 5, 13), {}) == 1
+
+
+def test_block_from_date_uses_latest_known_block_before_target_without_rpc():
+    """A cached block dated before the target is returned as-is; blocks at or after the target are ignored."""
+    mock_w3 = MagicMock()
+    target = date(2026, 5, 13)
+    known = {100: _ts(date(2026, 5, 10)), 250: _ts(target) - 60, 300: _ts(target) + 60}
+
+    assert onchain._block_from_date(mock_w3, target, known) == 250
+    mock_w3.eth.get_block.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
@@ -335,12 +345,10 @@ def test_resolve_pending_no_op_when_nothing_pending(tmp_path):
     statuses = {(_VOTER_1, "0xspell1"): "Yes", (_VOTER_2, "0xspell1"): "No"}
     sentinel_w3 = MagicMock()
 
-    result = onchain.resolve_pending_executive_votes(
-        statuses, [_spell("0xspell1", date(2026, 4, 1))], w3=sentinel_w3, cache_path=tmp_path / "slate_cache.json"
-    )
-    no_spells = onchain.resolve_pending_executive_votes(
-        {(_VOTER_1, "0xspell1"): PENDING}, [], w3=sentinel_w3, cache_path=tmp_path / "slate_cache.json"
-    )
+    kwargs = {"w3": sentinel_w3, "cache_path": tmp_path / "slate_cache.json", "known_block_timestamps": {}}
+
+    result = onchain.resolve_pending_executive_votes(statuses, [_spell("0xspell1", date(2026, 4, 1))], **kwargs)
+    no_spells = onchain.resolve_pending_executive_votes({(_VOTER_1, "0xspell1"): PENDING}, [], **kwargs)
 
     sentinel_w3.eth.get_block.assert_not_called()
     assert result == statuses
@@ -395,7 +403,11 @@ def _resolve_one(
     )
     w3.eth.get_block.return_value = {"timestamp": _ts(vote_day)}
     out = onchain.resolve_pending_executive_votes(
-        statuses, [_spell(spell_addr, spell_start)], w3=w3, cache_path=tmp_path / "slate_cache.json"
+        statuses,
+        [_spell(spell_addr, spell_start)],
+        w3=w3,
+        cache_path=tmp_path / "slate_cache.json",
+        known_block_timestamps={},
     )
     return statuses, out
 
@@ -455,7 +467,11 @@ def test_resolve_pending_reuses_cached_slate(tmp_path):
     w3 = _w3_for_resolver(events=[_make_event(slate, 1000)])  # no slate_addresses configured
     w3.eth.get_block.return_value = {"timestamp": _ts(date(2026, 4, 3))}
     out = onchain.resolve_pending_executive_votes(
-        {(_VOTER_1, spell_addr): PENDING}, [_spell(spell_addr, date(2026, 4, 1))], w3=w3, cache_path=cache_path
+        {(_VOTER_1, spell_addr): PENDING},
+        [_spell(spell_addr, date(2026, 4, 1))],
+        w3=w3,
+        cache_path=cache_path,
+        known_block_timestamps={},
     )
 
     assert out[_VOTER_1, spell_addr] == "Yes"
@@ -473,7 +489,11 @@ def test_resolve_pending_no_cache_write_when_no_new_slates(tmp_path):
     w3 = _w3_for_resolver(events=[_make_event(slate, 1000)])
     w3.eth.get_block.return_value = {"timestamp": _ts(date(2026, 4, 3))}
     onchain.resolve_pending_executive_votes(
-        {(_VOTER_1, spell_addr): PENDING}, [_spell(spell_addr, date(2026, 4, 1))], w3=w3, cache_path=cache_path
+        {(_VOTER_1, spell_addr): PENDING},
+        [_spell(spell_addr, date(2026, 4, 1))],
+        w3=w3,
+        cache_path=cache_path,
+        known_block_timestamps={},
     )
 
     assert cache_path.stat().st_mtime_ns == original_mtime

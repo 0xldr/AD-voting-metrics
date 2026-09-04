@@ -41,8 +41,8 @@ def run(period: MonthPeriod, *, rebuild: bool, roster_path: Path, output_dir: Pa
     output_dir also holds the on-chain event caches and the reconciliation log. `w3` is used for both the delegation
     sync and the executive-vote verification.
     """
-    delegation_cache = output_dir / "delegation_cache.json"
-    slate_cache = output_dir / "slate_cache.json"
+    delegation_cache_path = output_dir / "delegation_cache.json"
+    slate_cache_path = output_dir / "slate_cache.json"
     month_dir = output_dir / period.start.strftime("%Y-%m")
 
     logger.info("Querying %s (%s through %s)", period, period.start.isoformat(), period.end.isoformat())
@@ -56,9 +56,11 @@ def run(period: MonthPeriod, *, rebuild: bool, roster_path: Path, output_dir: Pa
 
     logger.info("Fetching daily SKY balances...")
     daily = _rank_daily_balances(
-        delegation.get_delegate_list_sky(delegates, period, w3=w3, cache_path=delegation_cache, rebuild=rebuild)
+        delegation.get_delegate_list_sky(delegates, period, w3=w3, cache_path=delegation_cache_path, rebuild=rebuild)
     )
     sky_lookup = delegation.build_sky_lookup(daily)
+    # The sync just wrote this; its block timestamps seed the executive-vote fetch and its head goes in the log.
+    delegation_cache = delegation.DelegationCache.load(delegation_cache_path)
 
     logger.info("Fetching polls...")
     polls = sky_polling.fetch_polls_for_period(period)
@@ -73,7 +75,11 @@ def run(period: MonthPeriod, *, rebuild: bool, roster_path: Path, output_dir: Pa
     logger.info("Verifying Pending executive votes on-chain...")
     try:
         statuses = sky_executive_onchain.resolve_pending_executive_votes(
-            statuses, spells, w3=w3, cache_path=slate_cache
+            statuses,
+            spells,
+            w3=w3,
+            cache_path=slate_cache_path,
+            known_block_timestamps=delegation_cache.block_timestamps,
         )
     except requests.exceptions.RequestException, Web3Exception:
         # Transient network/RPC failures are tolerable: leave cells Pending for
@@ -88,7 +94,7 @@ def run(period: MonthPeriod, *, rebuild: bool, roster_path: Path, output_dir: Pa
         period=period,
         yaml_path=roster_path,
         roster=roster_result,
-        delegation=delegation.read_sync_state(delegation_cache),
+        last_synced_block=delegation_cache.last_synced_block or delegation.V3_FACTORY_BLOCK,
         output_files=output_files,
     )
     write_entry(output_dir / "reconciliation", period, entry)

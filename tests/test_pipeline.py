@@ -120,6 +120,8 @@ def test_run_threads_paths_client_and_rebuild_through_to_collaborators(externals
     onchain_kwargs = onchain_mock.call_args.kwargs
     assert onchain_kwargs["w3"] is externals.run_kwargs["w3"]
     assert onchain_kwargs["cache_path"] == externals.run_kwargs["output_dir"] / "slate_cache.json"
+    # No delegation cache exists under the fixture's output dir, so the block hint is empty.
+    assert onchain_kwargs["known_block_timestamps"] == {}
 
     log_dir, _period, entry = externals.entry_mock.call_args.args
     assert log_dir == externals.run_kwargs["output_dir"] / "reconciliation"
