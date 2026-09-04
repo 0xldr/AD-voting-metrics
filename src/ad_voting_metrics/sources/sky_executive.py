@@ -1,6 +1,5 @@
 """vote.sky.money executive endpoint: spell listing for a period, plus the balance-derived seed statuses."""
 
-import itertools
 import logging
 from datetime import date, datetime
 
@@ -20,20 +19,20 @@ SKY_EXECUTIVES_PAGE_SIZE = 100
 
 # Safety cap on the executives loop - the endpoint paginates by absolute
 # `start` index, so a bug returning non-empty pages forever would otherwise
-# spin without bound. Real runs exit far earlier on empty data.
+# spin without bound. Real runs exit far earlier.
 SKY_EXECUTIVES_PAGINATION_HARD_CAP = 10_000_000
 
 
 def fetch_spells_for_period(period: MonthPeriod) -> list[dict]:
-    """Fetch executive spells from vote.sky.money that occurred within the period.
+    """Fetch executive spells from vote.sky.money that went live within the period.
+
+    The listing is newest-first, so paging stops at the first spell dated before the period.
 
     Returns:
         List of dicts with address, startDate (as `date`), and title.
     """
     spell_info: list[dict] = []
-    for start in itertools.count(0, SKY_EXECUTIVES_PAGE_SIZE):
-        if start >= SKY_EXECUTIVES_PAGINATION_HARD_CAP:
-            break
+    for start in range(0, SKY_EXECUTIVES_PAGINATION_HARD_CAP, SKY_EXECUTIVES_PAGE_SIZE):
         response = get_session().get(
             SKY_EXECUTIVE_URL,
             params={"start": start, "limit": SKY_EXECUTIVES_PAGE_SIZE},
@@ -47,7 +46,9 @@ def fetch_spells_for_period(period: MonthPeriod) -> list[dict]:
 
         for execute in data:
             date_execute = datetime.fromisoformat(execute["date"]).date()
-            if period.start <= date_execute <= period.end:
+            if date_execute < period.start:
+                return spell_info
+            if date_execute <= period.end:
                 spell_info.append(
                     {
                         "address": execute["address"].lower(),

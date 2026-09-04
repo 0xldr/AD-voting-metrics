@@ -130,21 +130,19 @@ def _executive_dict(address: str, date_iso: str, title: str = "Test spell") -> d
 
 
 @responses.activate
-def test_fetch_spells_for_period_filters_to_period_and_lowercases_address():
-    """Spells outside the period are dropped; address is lowercased; date typed."""
+def test_fetch_spells_for_period_filters_to_period_and_stops_at_older_spell():
+    """Newest-first listing: later spells skipped, the in-period one kept, paging stops at the first older one."""
     period = MonthPeriod(year=2025, month=4)
     responses.add(
         responses.GET,
         sky_executive.SKY_EXECUTIVE_URL,
         json=[
+            _executive_dict("0xCCCC000000000000000000000000000000000003", "2025-06-10T00:00:00Z", "After"),
             _executive_dict("0xAAAA000000000000000000000000000000000001", "2025-04-10T00:00:00Z", "In window"),
             _executive_dict("0xBBBB000000000000000000000000000000000002", "2025-02-10T00:00:00Z", "Before"),
-            _executive_dict("0xCCCC000000000000000000000000000000000003", "2025-06-10T00:00:00Z", "After"),
         ],
         status=200,
     )
-    # Second page empty → terminates loop.
-    responses.add(responses.GET, sky_executive.SKY_EXECUTIVE_URL, json=[], status=200)
 
     result = sky_executive.fetch_spells_for_period(period)
 
@@ -153,6 +151,8 @@ def test_fetch_spells_for_period_filters_to_period_and_lowercases_address():
     assert spell["address"] == "0xaaaa000000000000000000000000000000000001"
     assert spell["startDate"] == date(2025, 4, 10)
     assert spell["title"] == "In window"
+    # The pre-period spell ended paging; no second request was made.
+    assert len(responses.calls) == 1
 
 
 @responses.activate
@@ -162,13 +162,13 @@ def test_fetch_spells_for_period_advances_start_until_empty():
     responses.add(
         responses.GET,
         sky_executive.SKY_EXECUTIVE_URL,
-        json=[_executive_dict("0xspell0000000000000000000000000000000001", "2025-04-05T00:00:00Z")],
+        json=[_executive_dict("0xspell0000000000000000000000000000000002", "2025-04-22T00:00:00Z")],
         status=200,
     )
     responses.add(
         responses.GET,
         sky_executive.SKY_EXECUTIVE_URL,
-        json=[_executive_dict("0xspell0000000000000000000000000000000002", "2025-04-22T00:00:00Z")],
+        json=[_executive_dict("0xspell0000000000000000000000000000000001", "2025-04-05T00:00:00Z")],
         status=200,
     )
     responses.add(responses.GET, sky_executive.SKY_EXECUTIVE_URL, json=[], status=200)

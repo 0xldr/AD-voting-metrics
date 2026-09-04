@@ -28,7 +28,8 @@ _POLL_VOTER_FETCH_CONCURRENCY = 8
 def fetch_polls_for_period(period: MonthPeriod) -> list[dict]:
     """Fetch polls from vote.sky.money that started within the period.
 
-    Each poll has startDate and endDate normalized to `date` objects.
+    The request's startDate parameter sets the lower bound and the listing comes back oldest-first, so paging stops at
+    the first poll that starts after the period. Each poll has startDate and endDate normalized to `date` objects.
 
     Returns:
         List of poll dicts, filtered to those starting within the period.
@@ -57,7 +58,9 @@ def fetch_polls_for_period(period: MonthPeriod) -> list[dict]:
 
         for poll in polls:
             start_date_poll = datetime.fromisoformat(poll["startDate"]).date()
-            if period.start <= start_date_poll <= period.end:
+            if start_date_poll > period.end:
+                return poll_info
+            if start_date_poll >= period.start:
                 poll["startDate"] = start_date_poll
                 poll["endDate"] = datetime.fromisoformat(poll["endDate"]).date()
                 poll_info.append(poll)

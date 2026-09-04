@@ -223,6 +223,29 @@ def test_fetch_polls_for_period_paginates_until_numpages_reached():
 
 
 @responses.activate
+def test_fetch_polls_for_period_stops_at_first_poll_after_period():
+    """Oldest-first listing: a poll starting after the period ends paging, even with more pages advertised."""
+    period = MonthPeriod(year=2025, month=4)
+    responses.add(
+        responses.GET,
+        sky_polling.SKY_ALL_POLLS_URL,
+        json={
+            "paginationInfo": {"numPages": 3},
+            "polls": [
+                _poll_dict(401, "2025-04-28T00:00:00Z", "2025-05-01T16:00:00Z", "Last in period"),
+                _poll_dict(402, "2025-05-05T00:00:00Z", "2025-05-08T16:00:00Z", "After period"),
+            ],
+        },
+        status=200,
+    )
+
+    result = sky_polling.fetch_polls_for_period(period)
+
+    assert [p["pollId"] for p in result] == [401]
+    assert len(responses.calls) == 1
+
+
+@responses.activate
 def test_fetch_polls_for_period_stops_on_empty_pagination_info():
     """Empty paginationInfo terminates the loop without raising."""
     period = MonthPeriod(year=2025, month=4)
