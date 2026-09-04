@@ -17,7 +17,6 @@ from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
 
-import pandas as pd
 import yaml
 from pydantic import BaseModel, Field, field_validator, model_validator
 
@@ -201,27 +200,4 @@ def build_roster_for_period(
         yaml_config=yaml_config,
         api_delegate_count=len(api_response),
         api_fetch_succeeded=api_fetch_succeeded,
-    )
-
-
-# Fixed columns of the per-delegate DataFrame. The sources modules add one
-# column per poll id / spell address alongside these.
-ROSTER_COLUMNS = ("Delegate Name", "Delegate Contract", "Start Date")
-
-
-def to_dataframe(delegates: list[Delegate]) -> pd.DataFrame:
-    """Build the per-delegate DataFrame consumed by the sources modules.
-
-    Columns are ROSTER_COLUMNS; Start Date holds `date` objects.
-
-    Returns:
-        Three-column DataFrame, one row per delegate.
-    """
-    return pd.DataFrame(
-        {
-            "Delegate Name": [d.name for d in delegates],
-            "Delegate Contract": [d.vote_delegate_address for d in delegates],
-            "Start Date": [d.start_date for d in delegates],
-        },
-        columns=list(ROSTER_COLUMNS),
     )

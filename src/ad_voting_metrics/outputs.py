@@ -10,12 +10,13 @@ formula-like cells are neutralised before writing.
 """
 
 import logging
-from datetime import date, datetime
 from pathlib import Path
 
 import pandas as pd
 
-from .roster import ROSTER_COLUMNS
+from .ballot import Ballot
+from .roster import Delegate
+from .vote_status import Statuses
 
 logger = logging.getLogger(__name__)
 
@@ -26,73 +27,32 @@ PARTICIPATION_METADATA_COLUMNS: tuple[str, ...] = ("Poll Id", "Start Date", "End
 _CSV_FORMULA_PREFIXES = ("=", "+", "-", "@", "\t", "\r")
 
 
-def _coerce_date(value: date | datetime | None) -> str:
-    """Render a date, datetime or pd.Timestamp as 'YYYY-MM-DD'; None becomes ''."""
-    if value is None:
-        return ""
-    if isinstance(value, datetime):
-        return value.date().isoformat()
-    return value.isoformat()
-
-
-def _metadata_by_id(poll_info: list[dict], spell_info: list[dict]) -> dict[str, dict]:
-    """Index poll and spell records by stringified ID/address.
-
-    Returns a mapping of str(pollId) / str(address) to its record. Polls win an (unexpected) key collision.
-    """
-    out: dict[str, dict] = {str(spell["address"]): spell for spell in spell_info}
-    out.update({str(poll["pollId"]): poll for poll in poll_info})
-    return out
-
-
 def build_participation_dataframe(
-    df: pd.DataFrame,
-    poll_info: list[dict],
-    spell_info: list[dict],
+    delegates: list[Delegate],
+    ballots: list[Ballot],
+    statuses: Statuses,
 ) -> pd.DataFrame:
-    """Build the wide-format participation table.
+    """Build the wide participation table: one row per ballot, sorted by start date, one column per delegate.
 
-    Input df has ROSTER_COLUMNS plus one column per poll id (str) and one per spell address, one row per delegate.
-
-    Output has one row per poll/spell with columns [Poll Id, Start Date, End Date, Title, <Delegate 1>, ...], sorted by
-    Start Date ascending. Zero-poll months return a header-only DataFrame.
-
-    Poll/spell columns with no matching poll_info or spell_info entry get blank metadata cells and sort last; the status
-    column is still written so a transient API inconsistency can't drop participation data. Spell rows have a blank
-    End Date.
+    Columns are PARTICIPATION_METADATA_COLUMNS followed by the delegate names in roster order. The id column keeps the
+    "Poll Id" header for spells too. Spell rows have a blank End Date. A (delegate, ballot) pair with no status is
+    left blank. The sort is stable, so ballots sharing a start date keep their input order.
 
     Returns:
-        Wide-format participation DataFrame.
+        Wide-format participation DataFrame; header-only when there are no ballots.
     """
-    delegate_names = df["Delegate Name"].tolist()
-    poll_columns = [c for c in df.columns if c not in ROSTER_COLUMNS]
-    columns = [*PARTICIPATION_METADATA_COLUMNS, *delegate_names]
-
-    if not poll_columns:
-        return pd.DataFrame(columns=columns)
-
-    df_by_delegate = df.set_index("Delegate Name")
-    metadata_by_id = _metadata_by_id(poll_info, spell_info)
-    rows: list[dict] = []
-    for poll_id in poll_columns:
-        metadata = metadata_by_id.get(str(poll_id), {})
-        row: dict = {
-            "Poll Id": str(poll_id),
-            "Start Date": _coerce_date(metadata.get("startDate")),
-            "End Date": _coerce_date(metadata.get("endDate")),
-            "Title": str(metadata.get("title", "")),
+    columns = [*PARTICIPATION_METADATA_COLUMNS, *(d.name for d in delegates)]
+    rows = [
+        {
+            "Poll Id": ballot.id,
+            "Start Date": ballot.start.isoformat(),
+            "End Date": ballot.end.isoformat() if ballot.end else "",
+            "Title": ballot.title,
+            **{d.name: statuses.get((d.vote_delegate_address, ballot.id), "") for d in delegates},
         }
-        for name in delegate_names:
-            row[name] = str(df_by_delegate.loc[name, poll_id])
-        rows.append(row)
-
-    out = pd.DataFrame(rows, columns=columns)
-    return out.sort_values(
-        "Start Date",
-        key=lambda s: pd.to_datetime(s, errors="coerce"),
-        na_position="last",
-        kind="stable",
-    ).reset_index(drop=True)
+        for ballot in sorted(ballots, key=lambda b: b.start)
+    ]
+    return pd.DataFrame(rows, columns=columns)
 
 
 def _defuse_csv_formulas(df: pd.DataFrame) -> pd.DataFrame:
@@ -115,14 +75,13 @@ def _defuse_csv_formulas(df: pd.DataFrame) -> pd.DataFrame:
 def write_csvs(
     out_dir: Path,
     daily: pd.DataFrame,
-    metrics: pd.DataFrame,
-    poll_info: list[dict],
-    spell_info: list[dict],
+    delegates: list[Delegate],
+    ballots: list[Ballot],
+    statuses: Statuses,
 ) -> list[Path]:
     """Write sky.csv and vote_participation.csv into out_dir, creating it if needed.
 
-    `daily` is the ranked per-(delegate, day) balance frame; `metrics` is the roster frame with one status column per
-    poll/spell. Re-runs overwrite the same files.
+    `daily` is the ranked per-(delegate, day) balance frame. Re-runs overwrite the same files.
 
     Returns:
         The CSV paths written, in write order.
@@ -134,7 +93,7 @@ def write_csvs(
     logger.info("Daily SKY balances saved to %s", sky_csv)
 
     participation_csv = out_dir / "vote_participation.csv"
-    participation = build_participation_dataframe(metrics, poll_info, spell_info)
+    participation = build_participation_dataframe(delegates, ballots, statuses)
     _defuse_csv_formulas(participation).to_csv(participation_csv, index=False)
     logger.info("Participation statuses saved to %s", participation_csv)
 

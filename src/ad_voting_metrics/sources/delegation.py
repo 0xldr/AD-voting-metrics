@@ -22,6 +22,7 @@ from web3 import Web3
 from web3.exceptions import Web3RPCError
 
 from ad_voting_metrics.period import MonthPeriod
+from ad_voting_metrics.roster import Delegate
 from ad_voting_metrics.sources.json_cache import load_json_cache, save_json_cache
 
 logger = logging.getLogger(__name__)
@@ -371,7 +372,7 @@ def get_all_sky_delegated(
 
 
 def get_delegate_list_sky(
-    df: pd.DataFrame,
+    delegates: list[Delegate],
     period: MonthPeriod,
     *,
     w3: Web3,
@@ -385,7 +386,7 @@ def get_delegate_list_sky(
     delegate's first-ever Lock/Free event (no balance yet) are zero.
 
     Args:
-        df: roster DataFrame with columns "Delegate Contract", "Delegate Name", "Start Date".
+        delegates: roster entries active during the period.
         period: MonthPeriod to cover.
         w3: connected Web3 client.
         cache_path: JSON file holding the synced events and block timestamps.
@@ -395,11 +396,11 @@ def get_delegate_list_sky(
         DataFrame with columns: contract, name, date, sky. One row per (delegate, day)
         covering every day in the period.
     """
-    contracts = df["Delegate Contract"].tolist()
+    contracts = [d.vote_delegate_address for d in delegates]
+    names_by_contract = {d.vote_delegate_address: d.name for d in delegates}
     all_sky_delegated = get_all_sky_delegated(contracts, w3=w3, cache_path=cache_path, rebuild=rebuild)
 
     days = list(pd.date_range(period.start, period.end, freq="D").date)
-    names_by_contract = dict(zip(df["Delegate Contract"], df["Delegate Name"], strict=True))
 
     # Forward-fill over event days plus period days so a pre-period balance carries in, then
     # restrict to the period; days before a contract's first event stay 0.

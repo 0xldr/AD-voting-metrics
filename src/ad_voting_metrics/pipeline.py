@@ -16,7 +16,7 @@ from web3.exceptions import Web3Exception
 from .outputs import write_csvs
 from .period import MonthPeriod
 from .reconciliation import build_entry, write_entry
-from .roster import build_roster_for_period, to_dataframe
+from .roster import build_roster_for_period
 from .sources import delegation, sky_executive, sky_executive_onchain, sky_polling
 from .sources.delegates import fetch_aligned_delegates
 
@@ -54,28 +54,26 @@ def run(period: MonthPeriod, *, rebuild: bool, roster_path: Path, output_dir: Pa
         logger.warning(warning)
     logger.info("Roster has %d delegates active during %s", len(delegates), period)
 
-    metrics = to_dataframe(delegates)
-
     logger.info("Fetching daily SKY balances...")
     daily = _rank_daily_balances(
-        delegation.get_delegate_list_sky(metrics, period, w3=w3, cache_path=delegation_cache, rebuild=rebuild)
+        delegation.get_delegate_list_sky(delegates, period, w3=w3, cache_path=delegation_cache, rebuild=rebuild)
     )
     sky_lookup = delegation.build_sky_lookup(daily)
 
     logger.info("Fetching polls...")
-    poll_info = sky_polling.fetch_polls_for_period(period)
+    polls = sky_polling.fetch_polls_for_period(period)
     logger.info("Fetching poll votes...")
-    metrics = sky_polling.add_poll_vote_statuses(poll_info, metrics, sky_lookup, current_datetime=datetime.now(UTC))
+    statuses = sky_polling.poll_statuses(polls, delegates, sky_lookup, current_datetime=datetime.now(UTC))
 
     logger.info("Fetching executive spells...")
-    spell_info = sky_executive.fetch_spells_for_period(period)
+    spells = sky_executive.fetch_spells_for_period(period)
     logger.info("Seeding spell statuses...")
-    metrics = sky_executive.add_spell_vote_statuses(spell_info, metrics, sky_lookup)
+    statuses |= sky_executive.spell_statuses(spells, delegates, sky_lookup)
 
     logger.info("Verifying Pending executive votes on-chain...")
     try:
-        metrics = sky_executive_onchain.resolve_pending_executive_votes(
-            metrics, spell_info, w3=w3, cache_path=slate_cache
+        statuses = sky_executive_onchain.resolve_pending_executive_votes(
+            statuses, spells, w3=w3, cache_path=slate_cache
         )
     except requests.exceptions.RequestException, Web3Exception:
         # Transient network/RPC failures are tolerable: leave cells Pending for
@@ -84,7 +82,7 @@ def run(period: MonthPeriod, *, rebuild: bool, roster_path: Path, output_dir: Pa
         # silently no-op'ing every time.
         logger.exception("On-chain executive-vote verification failed; leaving Pending cells as-is")
 
-    output_files = write_csvs(month_dir, daily, metrics, poll_info, spell_info)
+    output_files = write_csvs(month_dir, daily, delegates, [*polls, *spells], statuses)
 
     entry = build_entry(
         period=period,

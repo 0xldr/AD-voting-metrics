@@ -9,13 +9,11 @@ from pydantic import ValidationError
 
 from ad_voting_metrics.period import MonthPeriod
 from ad_voting_metrics.roster import (
-    ROSTER_COLUMNS,
     Delegate,
     DelegatesConfig,
     build_roster_for_period,
     detect_roster_drift,
     load_delegates,
-    to_dataframe,
 )
 
 # Reusable delegate-contract addresses for tests. All are valid
@@ -441,40 +439,3 @@ def test_build_roster_for_period_records_api_metadata(tmp_path):
     assert result.api_delegate_count == 2  # the API returned 2 entries
     # yaml_config exposed for downstream callers (reconciliation log)
     assert len(result.yaml_config.delegates) == 1
-
-
-# ---------------------------------------------------------------------------
-# to_dataframe — DataFrame shape consumed by the sources modules
-# ---------------------------------------------------------------------------
-
-
-def test_to_dataframe_columns():
-    """The sources modules read exactly Delegate Name, Delegate Contract, Start Date."""
-    delegates = [
-        Delegate(
-            name="Cloaky",
-            vote_delegate_address=_ADDR_B,
-            start_date=date(2023, 6, 6),
-        ),
-    ]
-    df = to_dataframe(delegates)
-    assert list(df.columns) == list(ROSTER_COLUMNS)
-
-
-def test_to_dataframe_start_date_is_date():
-    """Start Date is compared against poll and spell dates downstream, so it stays a date object."""
-    delegates = [
-        Delegate(
-            name="X",
-            vote_delegate_address=_ADDR_A,
-            start_date=date(2024, 7, 4),
-        ),
-    ]
-    df = to_dataframe(delegates)
-    assert df.iloc[0]["Start Date"] == date(2024, 7, 4)
-
-
-def test_to_dataframe_empty():
-    df = to_dataframe([])
-    assert list(df.columns) == list(ROSTER_COLUMNS)
-    assert len(df) == 0

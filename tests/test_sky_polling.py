@@ -3,20 +3,33 @@
 from datetime import UTC, date, datetime
 from unittest.mock import MagicMock, patch
 
-import pandas as pd
 import responses
 
+from ad_voting_metrics.ballot import Ballot
 from ad_voting_metrics.period import MonthPeriod
+from ad_voting_metrics.roster import Delegate
 from ad_voting_metrics.sources import sky_polling
 
-# ---------------------------------------------------------------------------
-# add_poll_vote_statuses — per-poll vote status, voter-set boundary normalization
-# ---------------------------------------------------------------------------
+_ADDR_A = "0x" + "a" * 40
+_ADDR_B = "0x" + "b" * 40
+
+
+def _delegate(name: str, address: str, start: date = date(2024, 1, 1)) -> Delegate:
+    return Delegate(name=name, vote_delegate_address=address, start_date=start)
+
+
+def _poll(poll_id: str, start: date, end: date) -> Ballot:
+    return Ballot(id=poll_id, kind="poll", start=start, end=end, title="Test poll")
 
 
 def _sky_lookup(rows: list[tuple[str, date, float]]) -> dict[tuple[str, date], float]:
     """Return a sky_lookup dict: (contract, date) → balance."""
     return {(contract, day): sky for contract, day, sky in rows}
+
+
+def _sky_throughout(contract: str, sky: float) -> dict[tuple[str, date], float]:
+    """Constant balance across the standard 1-3 April window."""
+    return _sky_lookup([(contract, date(2026, 4, d), sky) for d in (1, 2, 3)])
 
 
 def _mock_poll_response(voter_addresses: list[str]) -> MagicMock:
@@ -27,122 +40,65 @@ def _mock_poll_response(voter_addresses: list[str]) -> MagicMock:
     return response
 
 
-_CLOSED_POLL_NOW = datetime(2026, 4, 10, 17, 0, tzinfo=UTC)  # after poll ends 2026-04-03 16:00
+_POLL = _poll("1234", date(2026, 4, 1), date(2026, 4, 3))
+_CLOSED_POLL_NOW = datetime(2026, 4, 10, 17, 0, tzinfo=UTC)  # after the poll closes 2026-04-03 16:00
+
+# ---------------------------------------------------------------------------
+# poll_statuses — per-poll vote status, voter-set boundary normalization
+# ---------------------------------------------------------------------------
 
 
-def test_add_poll_vote_statuses_adds_column_per_poll():
-    """Each poll in poll_info gets its own column on df, keyed by str(pollId)."""
-    df = pd.DataFrame(
-        [
-            {"Delegate Name": "Alice", "Delegate Contract": "0xaaa", "Start Date": date(2024, 1, 1)},
-        ]
-    )
-    sky_lookup = _sky_lookup(
-        [
-            ("0xaaa", date(2026, 4, 1), 1000.0),
-            ("0xaaa", date(2026, 4, 2), 1000.0),
-            ("0xaaa", date(2026, 4, 3), 1000.0),
-        ]
-    )
-    poll_info = [
-        {"pollId": 1234, "startDate": date(2026, 4, 1), "endDate": date(2026, 4, 3)},
-        {"pollId": 5678, "startDate": date(2026, 4, 1), "endDate": date(2026, 4, 3)},
-    ]
+def test_poll_statuses_has_an_entry_per_delegate_per_poll():
+    delegates = [_delegate("Alice", _ADDR_A)]
+    polls = [_POLL, _poll("5678", date(2026, 4, 1), date(2026, 4, 3))]
 
     with patch("ad_voting_metrics.sources.sky_polling.get_session") as mock_session:
         mock_session.return_value.get.return_value = _mock_poll_response([])
-        result = sky_polling.add_poll_vote_statuses(poll_info, df, sky_lookup, current_datetime=_CLOSED_POLL_NOW)
+        out = sky_polling.poll_statuses(polls, delegates, _sky_throughout(_ADDR_A, 1000.0), _CLOSED_POLL_NOW)
 
-    assert "1234" in result.columns
-    assert "5678" in result.columns
+    assert set(out) == {(_ADDR_A, "1234"), (_ADDR_A, "5678")}
 
 
-def test_add_poll_vote_statuses_normalizes_voter_address_case():
+def test_poll_statuses_normalizes_voter_address_case():
     """Mixed-case voter addresses from the API are lowercased at the boundary."""
-    df = pd.DataFrame(
-        [
-            {"Delegate Name": "Alice", "Delegate Contract": "0xaaa", "Start Date": date(2024, 1, 1)},
-        ]
-    )
-    sky_lookup = _sky_lookup(
-        [
-            ("0xaaa", date(2026, 4, 1), 1000.0),
-            ("0xaaa", date(2026, 4, 2), 1000.0),
-            ("0xaaa", date(2026, 4, 3), 1000.0),
-        ]
-    )
-    poll_info = [{"pollId": 1234, "startDate": date(2026, 4, 1), "endDate": date(2026, 4, 3)}]
+    delegates = [_delegate("Alice", _ADDR_A)]
 
     with patch("ad_voting_metrics.sources.sky_polling.get_session") as mock_session:
-        # API returns mixed-case voter address; lowercasing at boundary
-        # makes the match work against the lowercase df contract.
-        mock_session.return_value.get.return_value = _mock_poll_response(["0xAAA"])
-        result = sky_polling.add_poll_vote_statuses(poll_info, df, sky_lookup, current_datetime=_CLOSED_POLL_NOW)
+        mock_session.return_value.get.return_value = _mock_poll_response([_ADDR_A.upper().replace("0X", "0x")])
+        out = sky_polling.poll_statuses([_POLL], delegates, _sky_throughout(_ADDR_A, 1000.0), _CLOSED_POLL_NOW)
 
-    assert result.loc[0, "1234"] == "Yes"
+    assert out[_ADDR_A, "1234"] == "Yes"
 
 
-def test_add_poll_vote_statuses_not_started_if_poll_ended_before_delegate_start():
-    """If poll endDate < delegate's Start Date, status overridden to 'Not Started'."""
-    df = pd.DataFrame(
-        [
-            # Alice's start date is AFTER the poll ends
-            {"Delegate Name": "Alice", "Delegate Contract": "0xaaa", "Start Date": date(2026, 5, 1)},
-        ]
-    )
-    sky_lookup = _sky_lookup([])  # no SKY data
-    poll_info = [{"pollId": 1234, "startDate": date(2026, 4, 1), "endDate": date(2026, 4, 3)}]
+def test_poll_statuses_not_started_if_poll_ended_before_delegate_start():
+    """If the poll closed before the delegate's start date, the status is overridden to 'Not Started'."""
+    delegates = [_delegate("Alice", _ADDR_A, start=date(2026, 5, 1))]
 
     with patch("ad_voting_metrics.sources.sky_polling.get_session") as mock_session:
         mock_session.return_value.get.return_value = _mock_poll_response([])
-        result = sky_polling.add_poll_vote_statuses(poll_info, df, sky_lookup, current_datetime=_CLOSED_POLL_NOW)
+        out = sky_polling.poll_statuses([_POLL], delegates, _sky_lookup([]), _CLOSED_POLL_NOW)
 
-    assert result.loc[0, "1234"] == "Not Started"
-
-
-def test_add_poll_vote_statuses_empty_poll_info_leaves_df_unchanged():
-    """No polls → df has no new columns added."""
-    df = pd.DataFrame(
-        [
-            {"Delegate Name": "Alice", "Delegate Contract": "0xaaa", "Start Date": date(2024, 1, 1)},
-        ]
-    )
-    sky_lookup = _sky_lookup([])
-    original_columns = list(df.columns)
-
-    with patch("ad_voting_metrics.sources.sky_polling.get_session"):
-        result = sky_polling.add_poll_vote_statuses([], df, sky_lookup, current_datetime=_CLOSED_POLL_NOW)
-
-    assert list(result.columns) == original_columns
+    assert out[_ADDR_A, "1234"] == "Not Started"
 
 
-def test_add_poll_vote_statuses_multiple_delegates_per_poll():
-    """Each delegate row gets its own per-poll status."""
-    df = pd.DataFrame(
-        [
-            {"Delegate Name": "Alice", "Delegate Contract": "0xaaa", "Start Date": date(2024, 1, 1)},
-            {"Delegate Name": "Bob", "Delegate Contract": "0xbbb", "Start Date": date(2024, 1, 1)},
-        ]
-    )
-    sky_lookup = _sky_lookup(
-        [
-            ("0xaaa", date(2026, 4, 1), 1000.0),
-            ("0xaaa", date(2026, 4, 2), 1000.0),
-            ("0xaaa", date(2026, 4, 3), 1000.0),
-            ("0xbbb", date(2026, 4, 1), 500.0),
-            ("0xbbb", date(2026, 4, 2), 500.0),
-            ("0xbbb", date(2026, 4, 3), 500.0),
-        ]
-    )
-    poll_info = [{"pollId": 1234, "startDate": date(2026, 4, 1), "endDate": date(2026, 4, 3)}]
+def test_poll_statuses_empty_polls_returns_empty_without_http():
+    with patch("ad_voting_metrics.sources.sky_polling.get_session") as mock_session:
+        out = sky_polling.poll_statuses([], [_delegate("Alice", _ADDR_A)], _sky_lookup([]), _CLOSED_POLL_NOW)
+
+    assert out == {}
+    mock_session.assert_not_called()
+
+
+def test_poll_statuses_multiple_delegates_per_poll():
+    """Each delegate gets its own status; only the voter is marked Yes."""
+    delegates = [_delegate("Alice", _ADDR_A), _delegate("Bob", _ADDR_B)]
+    sky_lookup = _sky_throughout(_ADDR_A, 1000.0) | _sky_throughout(_ADDR_B, 500.0)
 
     with patch("ad_voting_metrics.sources.sky_polling.get_session") as mock_session:
-        # Alice voted, Bob didn't
-        mock_session.return_value.get.return_value = _mock_poll_response(["0xaaa"])
-        result = sky_polling.add_poll_vote_statuses(poll_info, df, sky_lookup, current_datetime=_CLOSED_POLL_NOW)
+        mock_session.return_value.get.return_value = _mock_poll_response([_ADDR_A])
+        out = sky_polling.poll_statuses([_POLL], delegates, sky_lookup, _CLOSED_POLL_NOW)
 
-    assert result.loc[0, "1234"] == "Yes"
-    assert result.loc[1, "1234"] == "No"
+    assert out == {(_ADDR_A, "1234"): "Yes", (_ADDR_B, "1234"): "No"}
 
 
 # ---------------------------------------------------------------------------
@@ -152,17 +108,12 @@ def test_add_poll_vote_statuses_multiple_delegates_per_poll():
 
 def _poll_dict(poll_id: int, start_iso: str, end_iso: str, title: str = "Test poll") -> dict:
     """Return an API-shaped poll dict with ISO startDate/endDate strings."""
-    return {
-        "pollId": poll_id,
-        "startDate": start_iso,
-        "endDate": end_iso,
-        "title": title,
-    }
+    return {"pollId": poll_id, "startDate": start_iso, "endDate": end_iso, "title": title}
 
 
 @responses.activate
 def test_fetch_polls_for_period_single_page_filters_to_period():
-    """Polls outside the period are filtered; in-period polls have date-typed fields."""
+    """Polls outside the period are filtered; the in-period poll comes back as a Ballot with typed dates."""
     period = MonthPeriod(year=2025, month=4)
     responses.add(
         responses.GET,
@@ -170,8 +121,8 @@ def test_fetch_polls_for_period_single_page_filters_to_period():
         json={
             "paginationInfo": {"numPages": 1},
             "polls": [
-                _poll_dict(101, "2025-04-05T00:00:00Z", "2025-04-08T16:00:00Z", "In window"),
                 _poll_dict(102, "2025-03-30T00:00:00Z", "2025-04-02T16:00:00Z", "Before window"),
+                _poll_dict(101, "2025-04-05T00:00:00Z", "2025-04-08T16:00:00Z", "In window"),
                 _poll_dict(103, "2025-05-02T00:00:00Z", "2025-05-05T16:00:00Z", "After window"),
             ],
         },
@@ -180,12 +131,9 @@ def test_fetch_polls_for_period_single_page_filters_to_period():
 
     result = sky_polling.fetch_polls_for_period(period)
 
-    assert len(result) == 1
-    poll = result[0]
-    assert poll["pollId"] == 101
-    assert poll["title"] == "In window"
-    assert poll["startDate"] == date(2025, 4, 5)
-    assert poll["endDate"] == date(2025, 4, 8)
+    assert result == [
+        Ballot(id="101", kind="poll", start=date(2025, 4, 5), end=date(2025, 4, 8), title="In window"),
+    ]
 
 
 @responses.activate
@@ -213,7 +161,7 @@ def test_fetch_polls_for_period_paginates_until_numpages_reached():
 
     result = sky_polling.fetch_polls_for_period(period)
 
-    assert [p["pollId"] for p in result] == [201, 202]
+    assert [p.id for p in result] == ["201", "202"]
     assert len(responses.calls) == 2
     url_1, url_2 = responses.calls[0].request.url, responses.calls[1].request.url
     assert url_1 is not None
@@ -241,7 +189,7 @@ def test_fetch_polls_for_period_stops_at_first_poll_after_period():
 
     result = sky_polling.fetch_polls_for_period(period)
 
-    assert [p["pollId"] for p in result] == [401]
+    assert [p.id for p in result] == ["401"]
     assert len(responses.calls) == 1
 
 

@@ -13,6 +13,9 @@ Spell statuses are seeded in `sources.sky_executive` from balances and alignment
 
 from datetime import UTC, date, datetime, time, timedelta
 
+# Participation status per (delegate contract, ballot id). Ballot ids are poll ids as strings or spell addresses.
+type Statuses = dict[tuple[str, str], str]
+
 # ---------------------------------------------------------------------------
 # Status vocabulary
 # ---------------------------------------------------------------------------

@@ -81,8 +81,8 @@ def externals(tmp_path):
         patch("ad_voting_metrics.pipeline.delegation.get_delegate_list_sky", return_value=daily) as delegation_mock,
         patch("ad_voting_metrics.pipeline.sky_polling.fetch_polls_for_period", return_value=[]),
         patch("ad_voting_metrics.pipeline.sky_executive.fetch_spells_for_period", return_value=[]),
-        patch("ad_voting_metrics.pipeline.sky_polling.add_poll_vote_statuses", side_effect=lambda _p, df, _s, **_: df),
-        patch("ad_voting_metrics.pipeline.sky_executive.add_spell_vote_statuses", side_effect=lambda _s, df, _l: df),
+        patch("ad_voting_metrics.pipeline.sky_polling.poll_statuses", return_value={}),
+        patch("ad_voting_metrics.pipeline.sky_executive.spell_statuses", return_value={}),
         patch("ad_voting_metrics.pipeline.write_entry") as entry_mock,
     ):
         yield SimpleNamespace(
@@ -108,7 +108,7 @@ def test_run_writes_both_csvs_into_the_month_directory(externals):
 def test_run_threads_paths_client_and_rebuild_through_to_collaborators(externals):
     with patch(
         "ad_voting_metrics.pipeline.sky_executive_onchain.resolve_pending_executive_votes",
-        side_effect=lambda df, _spells, **_: df,
+        side_effect=lambda statuses, _spells, **_: statuses,
     ) as onchain_mock:
         run(externals.period, rebuild=True, **externals.run_kwargs)
 
