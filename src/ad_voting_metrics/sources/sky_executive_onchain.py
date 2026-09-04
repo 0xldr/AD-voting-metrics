@@ -9,7 +9,7 @@ vote-delegate contract emit a `Vote(usr, slate)` event whose slate contains the 
   - No such vote found                           -> left Pending for operator adjudication
 
 The deadline is 3 business days after the spell goes live (`vote_status.spell_vote_deadline`). Timing can only be
-established on-chain, so with no RPC configured every cell stays Pending rather than being credited unverified.
+established on-chain, so a vote the check cannot find is never credited; the cell stays Pending.
 
 Slate -> address-list resolution is cached persistently because slates are immutable once etched.
 """
@@ -19,17 +19,14 @@ from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import Any, cast
 
-import pandas as pd
 from eth_typing import HexStr
 from web3 import Web3
 from web3.constants import ADDRESS_ZERO
 from web3.exceptions import BadFunctionCallOutput, ContractLogicError, Web3RPCError
 
-from ad_voting_metrics.metrics import LATE, PENDING_VERIFICATION
-from ad_voting_metrics.paths import SLATE_CACHE_PATH
-from ad_voting_metrics.settings import EnvSettings
+from ad_voting_metrics.ballot import Ballot
 from ad_voting_metrics.sources.json_cache import load_json_cache, save_json_cache
-from ad_voting_metrics.vote_status import spell_vote_deadline
+from ad_voting_metrics.vote_status import LATE, PENDING_VERIFICATION, YES, Statuses, spell_vote_deadline
 
 logger = logging.getLogger(__name__)
 
@@ -73,7 +70,6 @@ def _load_slate_cache(path: Path) -> dict[str, list[str]]:
     """Load the slate-hash -> [executive addresses] cache from disk.
 
     Returns the cache, with hashes and addresses lowercased; empty dict if the file doesn't exist.
-
     """
     data = load_json_cache(path)
     return {k.lower(): [a.lower() for a in v] for k, v in data.items()}
@@ -118,14 +114,19 @@ def _resolve_slate(w3: Web3, slate_hash: str) -> list[str]:
     return addresses
 
 
-def _block_from_date(w3: Web3, target: date) -> int:
-    """Return the first block number at or after midnight UTC on `target`.
+def _block_from_date(w3: Web3, target: date, known_timestamps: dict[int, int]) -> int:
+    """Return a block number no later than the first block on `target` (midnight UTC).
 
-    Binary search over block timestamps via the RPC (~25 get_block calls for mainnet). Seeds `eth_getLogs`'s
-    fromBlock — events are still filtered per-event by exact date afterwards, so the only requirement is that the
-    block is no later than the earliest event we care about.
+    Seeds `eth_getLogs`'s fromBlock; events are filtered per-event by exact date afterwards, so any block at or before
+    the true first block works. When `known_timestamps` (block -> UNIX timestamp, typically the delegation cache) has a
+    block before the target, the latest such block is returned with no RPC calls. Otherwise a binary search over block
+    timestamps via the RPC finds the first block at or after midnight (~25 get_block calls for mainnet).
     """
     target_ts = int(datetime.combine(target, datetime.min.time(), tzinfo=UTC).timestamp())
+    known_before = [block for block, ts in known_timestamps.items() if ts < target_ts]
+    if known_before:
+        return max(known_before)
+
     lo, hi = 1, int(w3.eth.block_number)
     while lo < hi:
         mid = (lo + hi) // 2
@@ -151,7 +152,6 @@ def _fetch_vote_events(
     an empty list. web3's contract.events handles topic encoding and decoding.
 
     Returns lowercased voter address -> list of (slate_hash, event_date) tuples.
-
     """
     result: dict[str, list[tuple[str, date]]] = {v.lower(): [] for v in voters}
     if not voters:
@@ -186,23 +186,10 @@ def _fetch_vote_events(
 # ---------------------------------------------------------------------------
 
 
-def _identify_pending_pairs(
-    df: pd.DataFrame,
-    spell_addresses: list[str],
-) -> dict[str, list[int]]:
-    """Find the row indices in df where each spell column is "Pending verification".
-
-    Returns a mapping of spell address to the list of df row indices needing on-chain verification.
-
-    """
-    pending: dict[str, list[int]] = {}
-    for spell_addr in spell_addresses:
-        if spell_addr not in df.columns:
-            continue
-        mask = df[spell_addr] == PENDING_VERIFICATION
-        if mask.any():
-            pending[spell_addr] = df.index[mask].tolist()
-    return pending
+def _pending_pairs(statuses: Statuses, spells: list[Ballot]) -> set[tuple[str, str]]:
+    """Return the (delegate contract, spell address) pairs whose status is "Pending verification"."""
+    spell_ids = {spell.id for spell in spells}
+    return {key for key, status in statuses.items() if status == PENDING_VERIFICATION and key[1] in spell_ids}
 
 
 def _first_vote_date_for_spell(
@@ -228,110 +215,65 @@ def _first_vote_date_for_spell(
     return min(dates, default=None)
 
 
-def _adjudicate_cells(
-    df: pd.DataFrame,
-    spell_info: list[dict],
-    pending: dict[str, list[int]],
-    events_by_voter: dict[str, list[tuple[str, date]]],
-    slate_cache: dict[str, list[str]],
-) -> tuple[int, int]:
-    """Mutate df: resolve Pending cells to "Yes" or "Late" where on-chain events settle the question.
-
-    Cells with no matching vote event are left Pending.
-
-    Returns:
-        (on_time_count, late_count).
-    """
-    on_time = late = 0
-    for spell in spell_info:
-        spell_addr = spell["address"]
-        start = spell["startDate"]
-        deadline = spell_vote_deadline(start)
-        for idx in pending.get(spell_addr, []):
-            voter = str(df.at[idx, "Delegate Contract"])  # noqa: PD008
-            vote_date = _first_vote_date_for_spell(events_by_voter.get(voter, []), spell_addr, start, slate_cache)
-            if vote_date is None:
-                continue
-            if vote_date <= deadline:
-                df.at[idx, spell_addr] = "Yes"  # noqa: PD008
-                on_time += 1
-            else:
-                df.at[idx, spell_addr] = LATE  # noqa: PD008
-                late += 1
-    return on_time, late
-
-
 def resolve_pending_executive_votes(
-    df: pd.DataFrame,
-    spell_info: list[dict],
+    statuses: Statuses,
+    spells: list[Ballot],
     *,
-    w3: Web3 | None = None,
-    cache_path: Path | None = None,
-) -> pd.DataFrame:
+    w3: Web3,
+    cache_path: Path,
+    known_block_timestamps: dict[int, int],
+) -> Statuses:
     """Resolve "Pending verification" cells to "Yes" or "Late" from on-chain evidence.
 
-    For each (delegate, spell) cell currently "Pending verification":
+    For each (delegate, spell) pair currently "Pending verification":
       - Fetch the delegate's chief Vote events from on-chain.
-      - Take the earliest event at or after `spell.startDate` whose slate (cached) contains the spell address.
-      - On or before `spell_vote_deadline(startDate)` -> "Yes"; after it -> "Late"; no such event -> left Pending.
+      - Take the earliest event at or after the spell's start whose slate (cached) contains the spell address.
+      - On or before `spell_vote_deadline(start)` -> "Yes"; after it -> "Late"; no such event -> left Pending.
 
-    No-ops gracefully when SKY_RPC_URL is missing, when spell_info is empty, or when no cells are pending. Leaving
-    cells Pending is the deliberate no-RPC outcome: a vote's timing cannot be established off-chain, so nothing is
-    credited without evidence. Other errors (RPC failures, decode errors) propagate.
+    `known_block_timestamps` (block -> UNIX timestamp) lets the event fetch start from an already-dated block instead
+    of binary-searching the chain; pass an empty dict to force the search. Makes no RPC calls when nothing is pending.
+    RPC and decode errors propagate.
 
     Returns:
-        The same df (mutated) with resolvable Pending cells set to "Yes" or "Late".
+        A new Statuses mapping with resolvable Pending cells set to "Yes" or "Late"; other entries unchanged.
     """
-    if not spell_info:
-        return df
-
-    pending = _identify_pending_pairs(df, [s["address"] for s in spell_info])
+    pending = _pending_pairs(statuses, spells)
     if not pending:
         logger.info("No 'Pending verification' executive cells to verify on-chain.")
-        return df
+        return statuses
 
-    if w3 is None:
-        rpc_url = EnvSettings().sky_rpc_url
-        if not rpc_url:
-            logger.warning(
-                "SKY_RPC_URL is not set; leaving all %d spell cell(s) as Pending Verification. Vote timing is only "
-                "establishable on-chain, so no spell vote can be credited without it. Set SKY_RPC_URL in .env.",
-                sum(len(v) for v in pending.values()),
-            )
-            return df
-        w3 = Web3(Web3.HTTPProvider(rpc_url))
-
-    cache_path = cache_path or SLATE_CACHE_PATH
     slate_cache = _load_slate_cache(cache_path)
     initial_cache_size = len(slate_cache)
 
-    earliest_start = min(s["startDate"] for s in spell_info)
-    from_block = _block_from_date(w3, earliest_start)
+    earliest_start = min(spell.start for spell in spells)
+    from_block = _block_from_date(w3, earliest_start, known_block_timestamps)
     logger.info("Verifying executive votes on-chain from block %d onwards", from_block)
 
-    voters: set[str] = {
-        str(df.at[idx, "Delegate Contract"])  # noqa: PD008 — .at is correct for scalar access
-        for indices in pending.values()
-        for idx in indices
-    }
+    voters = {contract for contract, _ in pending}
     events_by_voter = _fetch_vote_events(w3, voters, from_block)
 
     seen_slates = {slate for events in events_by_voter.values() for slate, _ in events}
     for slate in seen_slates - slate_cache.keys():
         slate_cache[slate] = _resolve_slate(w3, slate)
 
-    on_time, late = _adjudicate_cells(df, spell_info, pending, events_by_voter, slate_cache)
+    spells_by_id = {spell.id: spell for spell in spells}
+    resolved: Statuses = {}
+    for contract, spell_id in pending:
+        spell = spells_by_id[spell_id]
+        vote_date = _first_vote_date_for_spell(events_by_voter.get(contract, []), spell.id, spell.start, slate_cache)
+        if vote_date is not None:
+            resolved[contract, spell_id] = YES if vote_date <= spell_vote_deadline(spell.start) else LATE
 
     if len(slate_cache) > initial_cache_size:
         _save_slate_cache(slate_cache, cache_path)
         logger.info("Slate cache grew by %d entries (now %d)", len(slate_cache) - initial_cache_size, len(slate_cache))
 
-    total_pending = sum(len(v) for v in pending.values())
+    on_time = sum(1 for status in resolved.values() if status == YES)
     logger.info(
         "On-chain adjudication of %d Pending Verification cell(s): %d on time, %d late, %d still pending",
-        total_pending,
+        len(pending),
         on_time,
-        late,
-        total_pending - on_time - late,
+        len(resolved) - on_time,
+        len(pending) - len(resolved),
     )
-    return df
+    return statuses | resolved

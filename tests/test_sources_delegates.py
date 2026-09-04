@@ -151,7 +151,7 @@ def test_pagination_increments_page_param():
 
 @responses.activate
 def test_query_params_include_aligned_filter():
-    """Verify the aligned=true filter is included."""
+    """The request filters to aligned delegates on mainnet."""
     responses.add(
         responses.GET,
         DELEGATES_URL,
@@ -211,7 +211,7 @@ def test_stops_on_empty_page_even_when_hasnextpage_true():
 
 @responses.activate
 def test_page_cap_stops_infinite_loop(caplog: pytest.LogCaptureFixture):
-    """If the API always returns hasNextPage=true, we should stop after 10 pages."""
+    """If the API always returns hasNextPage=true, paging stops at _MAX_PAGES with a warning."""
     # Register enough responses to satisfy _MAX_PAGES, all with hasNextPage=true
     for _ in range(_MAX_PAGES):
         responses.add(

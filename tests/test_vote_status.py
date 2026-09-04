@@ -1,10 +1,14 @@
-"""Tests for vote_status — poll close-day statuses and the spell voting deadline (pure logic)."""
+"""Tests for vote_status — the poll close-day rule and the spell voting deadline."""
 
 from datetime import UTC, date, datetime
 
 import pytest
 
 from ad_voting_metrics import vote_status
+
+# ---------------------------------------------------------------------------
+# determine_vote_status
+# ---------------------------------------------------------------------------
 
 # Standard 3-day poll spanning 4 calendar days in daily SKY delegation snapshots:
 # 16:00-24:00 on day 0, full days 1 and 2, 0:00-16:00 on day 3 (close day).

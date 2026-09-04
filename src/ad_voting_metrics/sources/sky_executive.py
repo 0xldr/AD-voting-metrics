@@ -1,13 +1,12 @@
 """vote.sky.money executive endpoint: spell listing for a period, plus the balance-derived seed statuses."""
 
-import itertools
 import logging
 from datetime import date, datetime
 
-import pandas as pd
-
-from ad_voting_metrics.metrics import PENDING_VERIFICATION
+from ad_voting_metrics.ballot import Ballot
 from ad_voting_metrics.period import MonthPeriod
+from ad_voting_metrics.roster import Delegate
+from ad_voting_metrics.vote_status import NO_DELEGATED_SKY, NOT_STARTED, PENDING_VERIFICATION, Statuses
 
 from .http import HEADERS, HTTP_TIMEOUT, get_session
 
@@ -20,20 +19,20 @@ SKY_EXECUTIVES_PAGE_SIZE = 100
 
 # Safety cap on the executives loop - the endpoint paginates by absolute
 # `start` index, so a bug returning non-empty pages forever would otherwise
-# spin without bound. Real runs exit far earlier on empty data.
+# spin without bound. Real runs exit far earlier.
 SKY_EXECUTIVES_PAGINATION_HARD_CAP = 10_000_000
 
 
-def fetch_spells_for_period(period: MonthPeriod) -> list[dict]:
-    """Fetch executive spells from vote.sky.money that occurred within the period.
+def fetch_spells_for_period(period: MonthPeriod) -> list[Ballot]:
+    """Fetch executive spells from vote.sky.money that went live within the period.
+
+    The listing is newest-first, so paging stops at the first spell dated before the period.
 
     Returns:
-        List of dicts with address, startDate (as `date`), and title.
+        Spells going live within the period, as Ballots with no end date.
     """
-    spell_info: list[dict] = []
-    for start in itertools.count(0, SKY_EXECUTIVES_PAGE_SIZE):
-        if start >= SKY_EXECUTIVES_PAGINATION_HARD_CAP:
-            break
+    spells: list[Ballot] = []
+    for start in range(0, SKY_EXECUTIVES_PAGINATION_HARD_CAP, SKY_EXECUTIVES_PAGE_SIZE):
         response = get_session().get(
             SKY_EXECUTIVE_URL,
             params={"start": start, "limit": SKY_EXECUTIVES_PAGE_SIZE},
@@ -46,30 +45,32 @@ def fetch_spells_for_period(period: MonthPeriod) -> list[dict]:
             break
 
         for execute in data:
-            date_execute = datetime.fromisoformat(execute["date"]).date()
-            if period.start <= date_execute <= period.end:
-                spell_info.append(
-                    {
-                        "address": execute["address"].lower(),
-                        "startDate": date_execute,
-                        "title": execute["title"],
-                    }
+            live = datetime.fromisoformat(execute["date"]).date()
+            if live < period.start:
+                return spells
+            if live <= period.end:
+                spells.append(
+                    Ballot(
+                        id=execute["address"].lower(),
+                        kind="spell",
+                        start=live,
+                        end=None,
+                        title=execute["title"],
+                    )
                 )
 
-    return spell_info
+    return spells
 
 
-def add_spell_vote_statuses(
-    spell_info: list[dict],
-    df: pd.DataFrame,
+def spell_statuses(
+    spells: list[Ballot],
+    delegates: list[Delegate],
     sky_lookup: dict[tuple[str, date], float],
-) -> pd.DataFrame:
-    """Add one column per spell to df, seeding each delegate's vote status.
+) -> Statuses:
+    """Seed each (delegate, spell) status from SKY balance and alignment dates.
 
-    Only the statuses that follow from SKY balance and alignment dates are decided here:
-
-      - No SKY delegated on the spell's start day -> "No Delegated SKY"
       - Aligned after the spell went live         -> "Not Started"
+      - No SKY delegated on the spell's start day -> "No Delegated SKY"
       - Otherwise                                 -> "Pending verification"
 
     Whether a delegate actually voted, and whether they did so inside the 3-business-day deadline, is settled by
@@ -77,26 +78,17 @@ def add_spell_vote_statuses(
     supports a spell, with no timestamp, so it cannot answer the deadline question and is not consulted.
 
     Returns:
-        The same df, mutated in place with one new column per spell. Returns df unchanged when spell_info is empty.
+        Mapping of (delegate contract, spell address) to status; empty when there are no spells.
     """
-    for spell in spell_info:
-        vote_statuses = []
-        spell_address = spell["address"]
-        start_date = spell["startDate"]
-
-        for _, row in df.iterrows():
-            address = row["Delegate Contract"]
-            first_delegate_date = date.fromisoformat(row["Start Date"])
-
-            sky_on_start = sky_lookup.get((address, start_date), 0.0)
-
-            voted = PENDING_VERIFICATION if sky_on_start != 0 else "No Delegated SKY"
-
-            if first_delegate_date > start_date:
-                voted = "Not Started"
-
-            vote_statuses.append(voted)
-
-        df[str(spell_address)] = vote_statuses
-
-    return df
+    statuses: Statuses = {}
+    for spell in spells:
+        for delegate in delegates:
+            contract = delegate.vote_delegate_address
+            if delegate.start_date > spell.start:
+                status = NOT_STARTED
+            elif sky_lookup.get((contract, spell.start), 0.0) == 0:
+                status = NO_DELEGATED_SKY
+            else:
+                status = PENDING_VERIFICATION
+            statuses[contract, spell.id] = status
+    return statuses

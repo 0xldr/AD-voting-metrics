@@ -1,13 +1,16 @@
-"""Tests for cli argparse callbacks, build_arg_parser, check_period_has_ended, and main dispatch."""
+"""Tests for cli: build_arg_parser, check_period_has_ended, and main."""
 
 from datetime import date
+from pathlib import Path
 from unittest.mock import patch
 
 import pytest
+from web3 import Web3
 
 from ad_voting_metrics.cli import (
     build_arg_parser,
     check_period_has_ended,
+    connect_rpc,
     main,
 )
 from ad_voting_metrics.period import MonthPeriod
@@ -56,70 +59,79 @@ def test_check_period_has_ended_handles_year_boundary():
 
 
 # ---------------------------------------------------------------------------
-# Subcommand structure — build_arg_parser
+# build_arg_parser
 # ---------------------------------------------------------------------------
 
 
-def test_parser_fetch_subcommand_parses_month_and_rebuild():
-    """The fetch subcommand takes --month and --rebuild."""
+def test_parser_parses_month_and_rebuild_with_default_paths():
+    """The parser takes --month and --rebuild; roster and output dir default to the working directory."""
     parser = build_arg_parser()
-    args = parser.parse_args(["fetch", "--month", "April 2026", "--rebuild"])
+    args = parser.parse_args(["--month", "April 2026", "--rebuild"])
 
-    assert args.command == "fetch"
     assert isinstance(args.month, MonthPeriod)
     assert args.month.year == 2026
     assert args.month.month == 4
     assert args.rebuild is True
+    assert args.roster == Path("delegates.yaml")
+    assert args.output_dir == Path("output_data")
 
 
-def test_parser_fetch_subcommand_rebuild_defaults_to_false():
+def test_parser_accepts_roster_and_output_dir_overrides():
+    parser = build_arg_parser()
+    args = parser.parse_args(["--month", "April 2026", "--roster", "r.yaml", "--output-dir", "/tmp/out"])
+
+    assert args.roster == Path("r.yaml")
+    assert args.output_dir == Path("/tmp/out")
+
+
+def test_parser_rebuild_defaults_to_false():
     """--rebuild defaults to False when omitted."""
     parser = build_arg_parser()
-    args = parser.parse_args(["fetch", "--month", "April 2026"])
+    args = parser.parse_args(["--month", "April 2026"])
 
-    assert args.command == "fetch"
     assert args.rebuild is False
 
 
-def test_parser_finalize_subcommand_parses_month():
-    """The finalize subcommand takes --month."""
+def test_parser_requires_month():
+    """--month is required; argparse exits with usage when it's absent."""
     parser = build_arg_parser()
-    args = parser.parse_args(["finalize", "--month", "April 2026"])
-
-    assert args.command == "finalize"
-    assert isinstance(args.month, MonthPeriod)
-    assert args.month.year == 2026
-    assert args.month.month == 4
+    with pytest.raises(SystemExit):
+        parser.parse_args([])
 
 
 # ---------------------------------------------------------------------------
-# main() — argparse + dispatch
+# main() — argparse + run
 # ---------------------------------------------------------------------------
 
 
-def test_main_dispatches_fetch_subcommand(monkeypatch):
-    """main(['fetch', '--month', ...]) routes to run_fetch."""
+def test_main_runs_pipeline(monkeypatch):
+    """main(['--month', ...]) runs the pipeline with the parsed period, paths, and a Web3 client."""
     monkeypatch.setattr("ad_voting_metrics.cli.check_period_has_ended", lambda *_, **__: None)
+    monkeypatch.setenv("SKY_RPC_URL", "http://localhost:8545")
 
-    with (
-        patch("ad_voting_metrics.cli.run_fetch") as fetch_mock,
-        patch("ad_voting_metrics.cli.run_finalize") as finalize_mock,
-    ):
-        main(["fetch", "--month", "2026-04"])
+    with patch("ad_voting_metrics.cli.run") as run_mock:
+        main(["--month", "2026-04"])
 
-    fetch_mock.assert_called_once()
-    finalize_mock.assert_not_called()
+    run_mock.assert_called_once()
+    args, kwargs = run_mock.call_args
+    assert args == (MonthPeriod(year=2026, month=4),)
+    assert kwargs["rebuild"] is False
+    assert kwargs["roster_path"] == Path("delegates.yaml")
+    assert kwargs["output_dir"] == Path("output_data")
+    assert isinstance(kwargs["w3"], Web3)
 
 
-def test_main_dispatches_finalize_subcommand(monkeypatch):
-    """main(['finalize', '--month', ...]) routes to run_finalize."""
-    monkeypatch.setattr("ad_voting_metrics.cli.check_period_has_ended", lambda *_, **__: None)
+# ---------------------------------------------------------------------------
+# connect_rpc
+# ---------------------------------------------------------------------------
 
-    with (
-        patch("ad_voting_metrics.cli.run_fetch") as fetch_mock,
-        patch("ad_voting_metrics.cli.run_finalize") as finalize_mock,
-    ):
-        main(["finalize", "--month", "2026-04"])
 
-    finalize_mock.assert_called_once()
-    fetch_mock.assert_not_called()
+def test_connect_rpc_exits_when_env_var_unset(monkeypatch):
+    monkeypatch.delenv("SKY_RPC_URL", raising=False)
+    with pytest.raises(SystemExit, match="SKY_RPC_URL"):
+        connect_rpc()
+
+
+def test_connect_rpc_builds_client_from_env_var(monkeypatch):
+    monkeypatch.setenv("SKY_RPC_URL", "http://localhost:8545")
+    assert isinstance(connect_rpc(), Web3)

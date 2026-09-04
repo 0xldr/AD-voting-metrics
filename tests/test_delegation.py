@@ -1,7 +1,8 @@
 """Tests for sources.delegation — on-chain event replay and daily totals."""
 
 import json
-from datetime import date
+from datetime import UTC, date, datetime
+from pathlib import Path
 from types import SimpleNamespace
 from typing import cast
 from unittest.mock import MagicMock, patch
@@ -14,7 +15,13 @@ from web3 import Web3
 from web3.exceptions import Web3RPCError
 
 from ad_voting_metrics.period import MonthPeriod
+from ad_voting_metrics.roster import Delegate
 from ad_voting_metrics.sources import delegation
+
+
+def _ts(d: date) -> int:
+    """Unix timestamp for midnight UTC on `d`."""
+    return int(datetime(d.year, d.month, d.day, tzinfo=UTC).timestamp())
 
 
 def _period_stub(start: date, end: date) -> MonthPeriod:
@@ -25,13 +32,6 @@ def _period_stub(start: date, end: date) -> MonthPeriod:
     duck-typed SimpleNamespace stands in (cast to MonthPeriod for the type checker).
     """
     return cast("MonthPeriod", SimpleNamespace(start=start, end=end, year=start.year, month=start.month))
-
-
-def test_event_topics_are_0x_prefixed_32_byte_hashes():
-    """eth_getLogs rejects bare-hex topics; hexbytes>=1.0 .hex() drops the 0x prefix."""
-    for topic in (delegation.LOCK_TOPIC, delegation.FREE_TOPIC):
-        assert topic.startswith("0x")
-        assert len(topic) == 66  # "0x" + 32 bytes * 2 hex chars
 
 
 # ---------------------------------------------------------------------------
@@ -60,7 +60,7 @@ def test_fetch_event_logs_merges_topics_and_signs_amounts():
 
     events, new_blocks = delegation._fetch_event_logs(mock_w3, [contract], from_block, from_block + 10)
 
-    assert events[contract] == [[from_block + 1, "100"], [from_block + 2, "-40"]]
+    assert events[contract] == [(from_block + 1, 100), (from_block + 2, -40)]
     assert new_blocks == {from_block + 1, from_block + 2}
     mock_w3.eth.get_logs.assert_called_once()
     params = mock_w3.eth.get_logs.call_args.args[0]
@@ -79,7 +79,7 @@ def test_fetch_block_timestamps_uses_one_batch_for_missing_blocks():
 
     out = delegation._fetch_block_timestamps(mock_w3, {5, 6}, {})
 
-    assert out == {"5": 1_700_000_000, "6": 1_700_000_100}
+    assert out == {5: 1_700_000_000, 6: 1_700_000_100}
     assert batch.add.call_count == 2
 
 
@@ -91,7 +91,7 @@ def test_fetch_block_timestamps_falls_back_to_sequential_calls():
 
     out = delegation._fetch_block_timestamps(mock_w3, {5, 6}, {})
 
-    assert out == {"5": 1, "6": 2}
+    assert out == {5: 1, 6: 2}
     assert mock_w3.eth.get_block.call_count == 2
 
 
@@ -99,9 +99,9 @@ def test_fetch_block_timestamps_skips_cached_blocks():
     """No RPC traffic when every block already has a cached timestamp."""
     mock_w3 = MagicMock()
 
-    out = delegation._fetch_block_timestamps(mock_w3, {5}, {"5": 42})
+    out = delegation._fetch_block_timestamps(mock_w3, {5}, {5: 42})
 
-    assert out == {"5": 42}
+    assert out == {5: 42}
     mock_w3.batch_requests.assert_not_called()
 
 
@@ -122,7 +122,7 @@ def test_fetch_block_timestamps_retries_batch_after_rate_limit():
     with patch.object(delegation.time, "sleep") as mock_sleep:
         out = delegation._fetch_block_timestamps(mock_w3, {5}, {})
 
-    assert out == {"5": 7}
+    assert out == {5: 7}
     mock_sleep.assert_called_once_with(delegation.RATE_LIMIT_BASE_DELAY_SECONDS)
 
 
@@ -156,20 +156,75 @@ def test_fetch_block_timestamps_splits_large_sets_into_multiple_batches():
 
 
 # ---------------------------------------------------------------------------
+# _sync_events — incremental sync against the on-disk cache
+# ---------------------------------------------------------------------------
+
+
+def _lock_log(contract: str, block: int, wad: int) -> dict:
+    return {
+        "address": contract,
+        "blockNumber": block,
+        "data": Web3.to_bytes(wad),
+        "topics": [Web3.to_bytes(hexstr=HexStr(delegation.LOCK_TOPIC))],
+    }
+
+
+def test_sync_events_second_run_starts_after_last_synced_block_and_appends(tmp_path):
+    """A follow-up sync fetches only new blocks and extends the cached events rather than replacing them."""
+    cache_path = tmp_path / "delegation_cache.json"
+    contract = "0x" + "c" * 40
+    factory = delegation.V3_FACTORY_BLOCK
+    first_head = factory + 1_000 + delegation.FINALITY_BLOCKS
+
+    w3 = MagicMock()
+    w3.batch_requests.side_effect = ValueError("no batch support")
+    w3.eth.get_block.side_effect = lambda n: {"timestamp": 1_700_000_000 + n}
+    w3.eth.block_number = first_head
+    w3.eth.get_logs.return_value = [_lock_log(contract, factory + 10, 100)]
+
+    first = delegation._sync_events(w3, [contract], cache_path=cache_path)
+
+    assert w3.eth.get_logs.call_args.args[0]["fromBlock"] == factory
+    assert first.last_synced_block == factory + 1_000
+    assert cache_path.exists()
+
+    w3.eth.block_number = first_head + 500
+    w3.eth.get_logs.return_value = [_lock_log(contract, first_head + 100, 50)]
+
+    second = delegation._sync_events(w3, [contract], cache_path=cache_path)
+
+    assert w3.eth.get_logs.call_args.args[0]["fromBlock"] == factory + 1_001
+    assert second.events[contract] == [(factory + 10, 100), (first_head + 100, 50)]
+    assert second.last_synced_block == factory + 1_500
+    assert delegation.DelegationCache.load(cache_path).events[contract] == second.events[contract]
+
+
+def test_sync_events_skips_fetch_when_cache_is_current(tmp_path):
+    """When last_synced_block already reaches the safe head, no getLogs call is made and the cache is untouched."""
+    cache_path = tmp_path / "delegation_cache.json"
+    contract = "0x" + "c" * 40
+    synced_to = delegation.V3_FACTORY_BLOCK + 500
+    cache_path.write_text(
+        json.dumps({"last_synced_block": synced_to, "events": {contract: []}, "block_timestamps": {}})
+    )
+    mtime = cache_path.stat().st_mtime_ns
+
+    w3 = MagicMock()
+    w3.eth.block_number = synced_to + delegation.FINALITY_BLOCKS  # safe head == synced_to
+
+    out = delegation._sync_events(w3, [contract], cache_path=cache_path)
+
+    w3.eth.get_logs.assert_not_called()
+    assert out.last_synced_block == synced_to
+    assert cache_path.stat().st_mtime_ns == mtime
+
+
+# ---------------------------------------------------------------------------
 # get_all_sky_delegated — event sync, cache load/save, daily series
 # ---------------------------------------------------------------------------
 
 
-def test_get_all_sky_delegated_raises_if_rpc_url_missing(monkeypatch):
-    """If SKY_RPC_URL is unset and w3 not injected, raise RuntimeError."""
-    monkeypatch.delenv("SKY_RPC_URL", raising=False)
-
-    with pytest.raises(RuntimeError, match="SKY_RPC_URL"):
-        delegation.get_all_sky_delegated(["0x" + "a" * 40], w3=None)
-
-
-def test_get_all_sky_delegated_uses_injected_w3(tmp_path):
-    """If w3 is provided, ignore SKY_RPC_URL."""
+def test_get_all_sky_delegated_returns_frame_with_no_events(tmp_path):
     cache_path = tmp_path / "delegation_cache.json"
     contract = "0x" + "c" * 40
 
@@ -177,7 +232,6 @@ def test_get_all_sky_delegated_uses_injected_w3(tmp_path):
     mock_w3.eth.block_number = 22368738
     mock_w3.eth.get_logs.return_value = []  # No events
 
-    # Should not raise even though SKY_RPC_URL unset.
     result = delegation.get_all_sky_delegated(
         [contract],
         w3=mock_w3,
@@ -187,9 +241,8 @@ def test_get_all_sky_delegated_uses_injected_w3(tmp_path):
     assert isinstance(result, pd.DataFrame)
 
 
-def test_get_all_sky_delegated_rebuild_resyncs_from_factory_block(monkeypatch, tmp_path):
+def test_get_all_sky_delegated_rebuild_resyncs_from_factory_block(tmp_path):
     """rebuild=True discards cache and resyncs from V3_FACTORY_BLOCK."""
-    monkeypatch.setenv("SKY_RPC_URL", "http://localhost:8545")
     cache_path = tmp_path / "delegation_cache.json"
 
     # Pre-populate cache with stale last_synced_block.
@@ -202,7 +255,7 @@ def test_get_all_sky_delegated_rebuild_resyncs_from_factory_block(monkeypatch, t
     mock_w3.eth.get_logs.return_value = []  # No events
 
     with patch("ad_voting_metrics.sources.delegation._sync_events") as sync_mock:
-        sync_mock.return_value = {"events": {}, "last_synced_block": 100000000}
+        sync_mock.return_value = delegation.DelegationCache(last_synced_block=100000000)
         delegation.get_all_sky_delegated(
             ["0xaaaa"],
             w3=mock_w3,
@@ -244,8 +297,74 @@ def test_get_all_sky_delegated_recovers_by_shrinking_chunk(tmp_path):
 
 
 # ---------------------------------------------------------------------------
+# _contract_cumulative_balances / _build_balance_series — running-total arithmetic
+# ---------------------------------------------------------------------------
+
+
+def test_contract_cumulative_balances_nets_same_day_events_and_carries_total():
+    """Two events on one day collapse to one entry; later days start from the prior running total."""
+    day_1, day_3 = date(2026, 4, 1), date(2026, 4, 3)
+    timestamps = {1: _ts(day_1), 2: _ts(day_1) + 3600, 3: _ts(day_3)}
+    events = [(1, 100), (2, -40), (3, 10)]
+
+    out = delegation._contract_cumulative_balances(events, timestamps, "0xc")
+
+    assert out == {day_1: 60, day_3: 70}
+
+
+def test_contract_cumulative_balances_raises_when_total_goes_negative():
+    timestamps = {1: _ts(date(2026, 4, 1))}
+
+    with pytest.raises(ValueError, match="Negative running total"):
+        delegation._contract_cumulative_balances([(1, -5)], timestamps, "0xc")
+
+
+def test_contract_cumulative_balances_skips_events_without_cached_timestamp(caplog):
+    day = date(2026, 4, 1)
+    timestamps = {1: _ts(day)}
+
+    with caplog.at_level("WARNING"):
+        out = delegation._contract_cumulative_balances([(1, 100), (2, 100)], timestamps, "0xc")
+
+    assert out == {day: 100}
+    assert "no cached timestamp" in caplog.text
+
+
+def test_build_balance_series_converts_wei_to_sky_one_row_per_event_day():
+    day_1, day_5 = date(2026, 4, 1), date(2026, 4, 5)
+    cache = delegation.DelegationCache(
+        events={"0xc": [(1, 2 * 10**18), (2, 10**18)]},
+        block_timestamps={1: _ts(day_1), 2: _ts(day_5)},
+    )
+
+    out = delegation._build_balance_series(cache)
+
+    assert out.index.names == ["delegation_contract", "dt"]
+    assert out["running_total_balance"].to_dict() == {("0xc", day_1): 2.0, ("0xc", day_5): 3.0}
+
+
+def test_build_balance_series_empty_cache_returns_empty_indexed_frame():
+    out = delegation._build_balance_series(delegation.DelegationCache())
+
+    assert out.empty
+    assert out.index.names == ["delegation_contract", "dt"]
+    assert list(out.columns) == ["running_total_balance"]
+
+
+# ---------------------------------------------------------------------------
 # get_delegate_list_sky — per-day rows + zero-fill
 # ---------------------------------------------------------------------------
+
+# These tests patch get_all_sky_delegated, so neither the client nor the cache path is touched.
+_UNUSED_W3 = MagicMock()
+_UNUSED_CACHE = Path("unused-cache.json")
+
+_ADDR_A = "0x" + "a" * 40
+_ADDR_B = "0x" + "b" * 40
+
+
+def _delegate(name: str, address: str) -> Delegate:
+    return Delegate(name=name, vote_delegate_address=address, start_date=date(2024, 1, 1))
 
 
 def _sky_df_indexed(rows: list[tuple[str, str, float]]) -> pd.DataFrame:
@@ -261,21 +380,17 @@ def _sky_df_indexed(rows: list[tuple[str, str, float]]) -> pd.DataFrame:
 
 def test_get_delegate_list_sky_returns_one_row_per_delegate_per_day():
     """For a 2-day period with 1 delegate, output covers both days."""
-    df = pd.DataFrame(
-        [
-            {"Delegate Name": "Alice", "Delegate Contract": "0xaaa", "Start Date": "2024-01-01"},
-        ]
-    )
+    delegates = [_delegate("Alice", _ADDR_A)]
     fake_all_sky = _sky_df_indexed(
         [
-            ("0xaaa", "2026-04-01", 1000.0),
-            ("0xaaa", "2026-04-02", 1500.0),
+            (_ADDR_A, "2026-04-01", 1000.0),
+            (_ADDR_A, "2026-04-02", 1500.0),
         ]
     )
     period_2day = _period_stub(date(2026, 4, 1), date(2026, 4, 2))
 
     with patch.object(delegation, "get_all_sky_delegated", return_value=fake_all_sky):
-        result = delegation.get_delegate_list_sky(df, period_2day)
+        result = delegation.get_delegate_list_sky(delegates, period_2day, w3=_UNUSED_W3, cache_path=_UNUSED_CACHE)
 
     assert len(result) == 2
     assert list(result.columns) == ["contract", "name", "date", "sky"]
@@ -283,21 +398,17 @@ def test_get_delegate_list_sky_returns_one_row_per_delegate_per_day():
 
 def test_get_delegate_list_sky_carries_balance_forward_and_zeros_before_first_event():
     """Balance set on day 2 is zero on day 1 (before first event) and carried forward to day 3."""
-    df = pd.DataFrame(
-        [
-            {"Delegate Name": "Alice", "Delegate Contract": "0xaaa", "Start Date": "2024-01-01"},
-        ]
-    )
+    delegates = [_delegate("Alice", _ADDR_A)]
     fake_all_sky = _sky_df_indexed(
         [
-            ("0xaaa", "2026-04-02", 1500.0),
+            (_ADDR_A, "2026-04-02", 1500.0),
             # day 1 precedes the first event; day 3 has no new event.
         ]
     )
     period_3day = _period_stub(date(2026, 4, 1), date(2026, 4, 3))
 
     with patch.object(delegation, "get_all_sky_delegated", return_value=fake_all_sky):
-        result = delegation.get_delegate_list_sky(df, period_3day)
+        result = delegation.get_delegate_list_sky(delegates, period_3day, w3=_UNUSED_W3, cache_path=_UNUSED_CACHE)
 
     by_date = dict(zip(result["date"], result["sky"], strict=True))
     assert by_date[date(2026, 4, 1)] == 0.0  # before first event: no balance yet
@@ -307,58 +418,45 @@ def test_get_delegate_list_sky_carries_balance_forward_and_zeros_before_first_ev
 
 def test_get_delegate_list_sky_carries_pre_period_balance_across_whole_period():
     """A delegate whose last Lock/Free predates the period keeps that balance every in-period day."""
-    df = pd.DataFrame(
-        [
-            {"Delegate Name": "Alice", "Delegate Contract": "0xaaa", "Start Date": "2024-01-01"},
-        ]
-    )
+    delegates = [_delegate("Alice", _ADDR_A)]
     # Last (and only) event is in March; the queried period is April, with no April events.
-    fake_all_sky = _sky_df_indexed([("0xaaa", "2026-03-15", 1_000_000.0)])
+    fake_all_sky = _sky_df_indexed([(_ADDR_A, "2026-03-15", 1_000_000.0)])
     period_april = _period_stub(date(2026, 4, 1), date(2026, 4, 3))
 
     with patch.object(delegation, "get_all_sky_delegated", return_value=fake_all_sky):
-        result = delegation.get_delegate_list_sky(df, period_april)
+        result = delegation.get_delegate_list_sky(delegates, period_april, w3=_UNUSED_W3, cache_path=_UNUSED_CACHE)
 
     assert list(result["sky"]) == [1_000_000.0, 1_000_000.0, 1_000_000.0]
 
 
-def test_get_delegate_list_sky_lowercases_name():
-    """The name column is the delegate's name lowercased and stripped."""
-    df = pd.DataFrame(
-        [
-            {"Delegate Name": "  Alice  ", "Delegate Contract": "0xaaa", "Start Date": "2024-01-01"},
-        ]
-    )
-    fake_all_sky = _sky_df_indexed([("0xaaa", "2026-04-01", 1000.0)])
+def test_get_delegate_list_sky_keeps_name_as_given():
+    """The name column carries the roster's display name unchanged."""
+    delegates = [_delegate("Alice", _ADDR_A)]
+    fake_all_sky = _sky_df_indexed([(_ADDR_A, "2026-04-01", 1000.0)])
     period_1day = _period_stub(date(2026, 4, 1), date(2026, 4, 1))
 
     with patch.object(delegation, "get_all_sky_delegated", return_value=fake_all_sky):
-        result = delegation.get_delegate_list_sky(df, period_1day)
+        result = delegation.get_delegate_list_sky(delegates, period_1day, w3=_UNUSED_W3, cache_path=_UNUSED_CACHE)
 
-    assert result.iloc[0]["name"] == "alice"
+    assert result.iloc[0]["name"] == "Alice"
 
 
 def test_get_delegate_list_sky_multiple_delegates():
     """Two delegates produce separate (contract, name, sky) entries per day."""
-    df = pd.DataFrame(
-        [
-            {"Delegate Name": "Alice", "Delegate Contract": "0xaaa", "Start Date": "2024-01-01"},
-            {"Delegate Name": "Bob", "Delegate Contract": "0xbbb", "Start Date": "2024-01-01"},
-        ]
-    )
+    delegates = [_delegate("Alice", _ADDR_A), _delegate("Bob", _ADDR_B)]
     fake_all_sky = _sky_df_indexed(
         [
-            ("0xaaa", "2026-04-01", 1000.0),
-            ("0xbbb", "2026-04-01", 500.0),
+            (_ADDR_A, "2026-04-01", 1000.0),
+            (_ADDR_B, "2026-04-01", 500.0),
         ]
     )
     period_1day = _period_stub(date(2026, 4, 1), date(2026, 4, 1))
 
     with patch.object(delegation, "get_all_sky_delegated", return_value=fake_all_sky):
-        result = delegation.get_delegate_list_sky(df, period_1day)
+        result = delegation.get_delegate_list_sky(delegates, period_1day, w3=_UNUSED_W3, cache_path=_UNUSED_CACHE)
 
     by_name = dict(zip(result["name"], result["sky"], strict=True))
-    assert by_name == {"alice": 1000.0, "bob": 500.0}
+    assert by_name == {"Alice": 1000.0, "Bob": 500.0}
 
 
 # ---------------------------------------------------------------------------
@@ -370,40 +468,54 @@ def test_build_sky_lookup_returns_dict_keyed_by_contract_date():
     """Materialize df_sky into (contract, date) -> balance dict."""
     df_sky = pd.DataFrame(
         [
-            {"contract": "0xaaa", "date": date(2026, 4, 1), "sky": 1000.0},
-            {"contract": "0xbbb", "date": date(2026, 4, 1), "sky": 500.0},
+            {"contract": _ADDR_A, "date": date(2026, 4, 1), "sky": 1000.0},
+            {"contract": _ADDR_B, "date": date(2026, 4, 1), "sky": 500.0},
         ]
     )
 
     result = delegation.build_sky_lookup(df_sky)
 
-    assert result["0xaaa", date(2026, 4, 1)] == 1000.0
-    assert result["0xbbb", date(2026, 4, 1)] == 500.0
+    assert result[_ADDR_A, date(2026, 4, 1)] == 1000.0
+    assert result[_ADDR_B, date(2026, 4, 1)] == 500.0
 
 
 # ---------------------------------------------------------------------------
-# read_sync_state — cache metadata
+# DelegationCache — on-disk format
 # ---------------------------------------------------------------------------
 
 
-def test_read_sync_state_returns_factory_block_and_last_synced(tmp_path):
-    """read_sync_state fetches factory_block and last_synced_block from cache."""
+def test_delegation_cache_load_normalises_legacy_string_keys_and_wads(tmp_path):
+    """Older cache files stored block keys and wads as strings; load yields ints either way."""
     cache_path = tmp_path / "delegation_cache.json"
+    cache_path.write_text(
+        json.dumps(
+            {
+                "last_synced_block": 22500000,
+                "events": {"0xABC": [[22400000, "100"], [22400500, "-40"]]},
+                "block_timestamps": {"22400000": 1_700_000_000, "22400500": 1_700_006_000},
+            }
+        )
+    )
 
-    cache_path.parent.mkdir(parents=True, exist_ok=True)
-    cache_path.write_text(json.dumps({"last_synced_block": 22500000}))
+    cache = delegation.DelegationCache.load(cache_path)
 
-    result = delegation.read_sync_state(cache_path)
-
-    assert result["factory_block"] == 22368737
-    assert result["last_synced_block"] == 22500000
+    assert cache.last_synced_block == 22500000
+    assert cache.events == {"0xabc": [(22400000, 100), (22400500, -40)]}
+    assert cache.block_timestamps == {22400000: 1_700_000_000, 22400500: 1_700_006_000}
 
 
-def test_read_sync_state_returns_factory_block_if_cache_empty(tmp_path):
-    """If cache doesn't exist or is empty, last_synced_block defaults to factory_block."""
+def test_delegation_cache_save_load_round_trip(tmp_path):
     cache_path = tmp_path / "delegation_cache.json"
+    cache = delegation.DelegationCache(
+        last_synced_block=22500000,
+        events={"0xabc": [(22400000, 10**24), (22400500, -(10**23))]},
+        block_timestamps={22400000: 1_700_000_000},
+    )
 
-    result = delegation.read_sync_state(cache_path)
+    cache.save(cache_path)
 
-    assert result["factory_block"] == 22368737
-    assert result["last_synced_block"] == 22368737
+    assert delegation.DelegationCache.load(cache_path) == cache
+
+
+def test_delegation_cache_load_missing_file_is_empty(tmp_path):
+    assert delegation.DelegationCache.load(tmp_path / "nope.json") == delegation.DelegationCache()
