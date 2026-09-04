@@ -31,11 +31,11 @@ Follow these steps to set up the project:
 
 ```bash
 git clone <repo-url>
-cd AD-voting-metrics
-pip install -e .
+cd <repo-dir>
+uv sync
 ```
 
-The editable install (`-e`) is required, not a convenience. `delegates.yaml` and `output_data/` are located relative to the package on disk, so a regular (non-editable) install would resolve them inside `site-packages` and fail to find the roster.
+`uv sync` installs the project in editable mode, which is required rather than a convenience: `delegates.yaml` and `output_data/` are located relative to the package on disk, so a regular (non-editable) install would resolve them inside `site-packages` and fail to find the roster.
 
 ## Configuration
 
@@ -65,10 +65,10 @@ When a delegate is recognized, add an entry with `end_date: null`. When they exi
 ## Usage
 
 ```bash
-ad-voting-metrics --month "April 2026"
+uv run ad-voting-metrics --month "April 2026"
 
 # equivalently, without relying on the installed console script:
-python -m ad_voting_metrics --month "April 2026"
+uv run python -m ad_voting_metrics --month "April 2026"
 ```
 
 Then review the Communication Master tab in the workbook.

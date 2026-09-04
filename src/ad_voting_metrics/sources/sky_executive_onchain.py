@@ -247,15 +247,15 @@ def _adjudicate_cells(
         start = spell["startDate"]
         deadline = spell_vote_deadline(start)
         for idx in pending.get(spell_addr, []):
-            voter = str(df.at[idx, "Delegate Contract"])  # noqa: PD008
+            voter = str(df.at[idx, "Delegate Contract"])
             vote_date = _first_vote_date_for_spell(events_by_voter.get(voter, []), spell_addr, start, slate_cache)
             if vote_date is None:
                 continue
             if vote_date <= deadline:
-                df.at[idx, spell_addr] = YES  # noqa: PD008
+                df.at[idx, spell_addr] = YES
                 on_time += 1
             else:
-                df.at[idx, spell_addr] = LATE  # noqa: PD008
+                df.at[idx, spell_addr] = LATE
                 late += 1
     return on_time, late
 
@@ -308,11 +308,7 @@ def resolve_pending_executive_votes(
     from_block = _block_from_date(w3, earliest_start)
     logger.info("Verifying executive votes on-chain from block %d onwards", from_block)
 
-    voters: set[str] = {
-        str(df.at[idx, "Delegate Contract"])  # noqa: PD008 — .at is correct for scalar access
-        for indices in pending.values()
-        for idx in indices
-    }
+    voters: set[str] = {str(df.at[idx, "Delegate Contract"]) for indices in pending.values() for idx in indices}
     events_by_voter = _fetch_vote_events(w3, voters, from_block)
 
     seen_slates = {slate for events in events_by_voter.values() for slate, _ in events}

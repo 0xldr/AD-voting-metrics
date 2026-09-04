@@ -15,11 +15,6 @@ __pycache__/
 venv/
 .venv/
 
-# Dependency directories
-/node_modules/
-/jspm_packages/
-/bower_components/
-
 # Build outputs
 /dist
 /tmp
@@ -48,7 +43,4 @@ htmlcov/
 *.history/
 *.egg-info/
 *.egg
-
-# Heroku specific
-/heroku_output/
 *.DS_Store
