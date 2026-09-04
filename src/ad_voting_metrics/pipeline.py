@@ -64,7 +64,6 @@ def _defuse_csv_formulas(df: pd.DataFrame) -> pd.DataFrame:
     on display.
 
     Returns a copy of df with formula-like string cells prefixed; non-string cells unchanged.
-
     """
 
     def defuse(value: object) -> object:
@@ -88,7 +87,6 @@ def _write_csvs(
     separately via allow_formulas=False).
 
     Returns the list of CSV paths written, in write order.
-
     """
     sky_csv = OUTPUT_DIR / "sky.csv"
     df_sky.to_csv(sky_csv, index=False)

@@ -10,6 +10,7 @@ output_data/delegation_cache.json, so steady-state runs only fetch new blocks.
 """
 
 import logging
+import os
 import time
 from datetime import UTC, date, datetime
 from http import HTTPStatus
@@ -23,7 +24,6 @@ from web3.exceptions import Web3RPCError
 
 from ad_voting_metrics.paths import DELEGATION_CACHE_PATH
 from ad_voting_metrics.period import MonthPeriod
-from ad_voting_metrics.settings import EnvSettings
 from ad_voting_metrics.sources.json_cache import load_json_cache, save_json_cache
 
 logger = logging.getLogger(__name__)
@@ -216,8 +216,6 @@ def _sync_events(
 
     Loads the cache; if rebuild=True, discards prior events and syncs from V3_FACTORY_BLOCK.
     Otherwise syncs from (last_synced_block + 1).
-
-
     """
     cache = _load_cache(cache_path)
     if rebuild:
@@ -360,7 +358,7 @@ def get_all_sky_delegated(
         RuntimeError: if SKY_RPC_URL is unset (and w3 not injected) or sync fails.
     """
     if w3 is None:
-        rpc_url = EnvSettings().sky_rpc_url
+        rpc_url = os.environ.get("SKY_RPC_URL")
         if not rpc_url:
             raise RuntimeError(
                 "SKY_RPC_URL environment variable is not set. Add it to your .env file (see .env.example).",

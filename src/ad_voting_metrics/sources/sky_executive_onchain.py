@@ -15,6 +15,7 @@ Slate -> address-list resolution is cached persistently because slates are immut
 """
 
 import logging
+import os
 from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import Any, cast
@@ -26,7 +27,6 @@ from web3.constants import ADDRESS_ZERO
 from web3.exceptions import BadFunctionCallOutput, ContractLogicError, Web3RPCError
 
 from ad_voting_metrics.paths import SLATE_CACHE_PATH
-from ad_voting_metrics.settings import EnvSettings
 from ad_voting_metrics.sources.json_cache import load_json_cache, save_json_cache
 from ad_voting_metrics.vote_status import LATE, PENDING_VERIFICATION, YES, spell_vote_deadline
 
@@ -72,7 +72,6 @@ def _load_slate_cache(path: Path) -> dict[str, list[str]]:
     """Load the slate-hash -> [executive addresses] cache from disk.
 
     Returns the cache, with hashes and addresses lowercased; empty dict if the file doesn't exist.
-
     """
     data = load_json_cache(path)
     return {k.lower(): [a.lower() for a in v] for k, v in data.items()}
@@ -150,7 +149,6 @@ def _fetch_vote_events(
     an empty list. web3's contract.events handles topic encoding and decoding.
 
     Returns lowercased voter address -> list of (slate_hash, event_date) tuples.
-
     """
     result: dict[str, list[tuple[str, date]]] = {v.lower(): [] for v in voters}
     if not voters:
@@ -192,7 +190,6 @@ def _identify_pending_pairs(
     """Find the row indices in df where each spell column is "Pending verification".
 
     Returns a mapping of spell address to the list of df row indices needing on-chain verification.
-
     """
     pending: dict[str, list[int]] = {}
     for spell_addr in spell_addresses:
@@ -290,7 +287,7 @@ def resolve_pending_executive_votes(
         return df
 
     if w3 is None:
-        rpc_url = EnvSettings().sky_rpc_url
+        rpc_url = os.environ.get("SKY_RPC_URL")
         if not rpc_url:
             logger.warning(
                 "SKY_RPC_URL is not set; leaving all %d spell cell(s) as Pending Verification. Vote timing is only "

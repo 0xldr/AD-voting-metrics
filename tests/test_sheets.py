@@ -59,39 +59,30 @@ def test_get_workbook_both_env_vars_missing_raises_service_account_first(monkeyp
 
 
 # ---------------------------------------------------------------------------
-# get_workbook — file validation
+# get_workbook — unusable key file
 # ---------------------------------------------------------------------------
 
 
-def test_get_workbook_service_account_file_missing_raises(tmp_path):
-    missing = tmp_path / "nonexistent.json"
-    with pytest.raises(RuntimeError, match="not found"):
-        sheets.get_workbook(service_account_file=missing, workbook_id="anything")
+def _write(path: Path, text: str) -> Path:
+    path.write_text(text)
+    return path
 
 
-def test_get_workbook_service_account_path_is_directory_raises(tmp_path):
-    with pytest.raises(RuntimeError, match="not a file"):
-        sheets.get_workbook(service_account_file=tmp_path, workbook_id="anything")
-
-
-# ---------------------------------------------------------------------------
-# get_workbook — credentials parsing
-# ---------------------------------------------------------------------------
-
-
-def test_get_workbook_malformed_json_raises(tmp_path):
-    bad = tmp_path / "bad.json"
-    bad.write_text("not json")
-    with pytest.raises(RuntimeError, match="service-account JSON key"):
-        sheets.get_workbook(service_account_file=bad, workbook_id="anything")
-
-
-def test_get_workbook_wrong_key_type_raises(tmp_path):
-    # JSON parses but the key type is wrong (e.g., user creds, not service account).
-    wrong = tmp_path / "wrong.json"
-    wrong.write_text(json.dumps({"type": "authorized_user"}))
-    with pytest.raises(RuntimeError, match="service-account JSON key"):
-        sheets.get_workbook(service_account_file=wrong, workbook_id="anything")
+@pytest.mark.parametrize(
+    "make_path",
+    [
+        pytest.param(lambda tmp: tmp / "nonexistent.json", id="missing file"),
+        pytest.param(lambda tmp: tmp, id="directory"),
+        pytest.param(lambda tmp: _write(tmp / "bad.json", "not json"), id="malformed json"),
+        pytest.param(
+            lambda tmp: _write(tmp / "wrong.json", json.dumps({"type": "authorized_user"})), id="wrong key type"
+        ),
+    ],
+)
+def test_get_workbook_unusable_service_account_file_raises(tmp_path, make_path):
+    """Every way the key file can be unusable surfaces as one RuntimeError naming the env var."""
+    with pytest.raises(RuntimeError, match="GOOGLE_SERVICE_ACCOUNT_FILE"):
+        sheets.get_workbook(service_account_file=make_path(tmp_path), workbook_id="anything")
 
 
 # ---------------------------------------------------------------------------

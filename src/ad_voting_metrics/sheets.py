@@ -10,6 +10,7 @@ existing history rather than replacing it.
 """
 
 import logging
+import os
 from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import cast
@@ -22,7 +23,6 @@ from gspread_dataframe import get_as_dataframe, set_with_dataframe
 from .paths import BACKUP_DIR as _DEFAULT_BACKUP_DIR
 from .period import MonthPeriod
 from .roster import ROSTER_COLUMNS
-from .settings import EnvSettings
 from .vote_status import PARTICIPATED, PENDING_VERIFICATION, cross_reference_one
 
 logger = logging.getLogger(__name__)
@@ -52,13 +52,11 @@ def get_workbook(
     Raises:
         RuntimeError: for any of:
           - Missing env var (when the corresponding arg is None)
-          - Service account file path doesn't exist or isn't readable
-          - JSON key file is malformed or wrong format
+          - Service account key file can't be read or isn't a service-account JSON key
           - Workbook ID is wrong, or not shared with the service account
     """
-    env = EnvSettings()
     if service_account_file is None:
-        service_account_file = env.google_service_account_file
+        service_account_file = os.environ.get("GOOGLE_SERVICE_ACCOUNT_FILE")
         if not service_account_file:
             raise RuntimeError(
                 "GOOGLE_SERVICE_ACCOUNT_FILE environment variable is not set. "
@@ -67,7 +65,7 @@ def get_workbook(
             )
 
     if workbook_id is None:
-        workbook_id = env.sheets_workbook_id
+        workbook_id = os.environ.get("SHEETS_WORKBOOK_ID")
         if not workbook_id:
             raise RuntimeError(
                 "SHEETS_WORKBOOK_ID environment variable is not set. "
@@ -75,25 +73,12 @@ def get_workbook(
                 "long string in the workbook URL between /d/ and /edit.",
             )
 
-    sa_path = Path(service_account_file)
-    if not sa_path.exists():
-        msg = (
-            f"Service account file not found at {sa_path}. Check GOOGLE_SERVICE_ACCOUNT_FILE in your .env file points "
-            f"at the correct path."
-        )
-        raise RuntimeError(msg)
-    if not sa_path.is_file():
-        msg = f"Service account file path {sa_path} exists but is not a file."
-        raise RuntimeError(msg)
-
     try:
-        credentials = Credentials.from_service_account_file(
-            str(sa_path),
-            scopes=list(SCOPES),
-        )
-    except ValueError as e:
+        credentials = Credentials.from_service_account_file(str(service_account_file), scopes=list(SCOPES))
+    except (OSError, ValueError) as e:
         msg = (
-            f"Service account file at {sa_path} could not be parsed as a service-account JSON key. Original error: {e}"
+            f"Could not load a service-account JSON key from {service_account_file}: {e}. Check that "
+            f"GOOGLE_SERVICE_ACCOUNT_FILE in your .env file points at the key downloaded from Google Cloud Console."
         )
         raise RuntimeError(msg) from e
 
@@ -174,19 +159,33 @@ def _read_sheet_as_strings(worksheet: gspread.Worksheet) -> pd.DataFrame:
     gspread-dataframe.
 
     Returns a DataFrame with string cells, or empty DataFrame if the tab is empty.
-
     """
-    df = cast("pd.DataFrame", get_as_dataframe(worksheet, dtype=str, na_filter=False, header=0))
-    df.fillna("", inplace=True)  # noqa: PD002 — keep DataFrame type concrete for downstream callers
-    return df
+    return cast("pd.DataFrame", get_as_dataframe(worksheet, dtype=str, na_filter=False, header=0)).fillna("")
+
+
+def _to_date_value(value: date | datetime | str | None) -> date | None:
+    """Best-effort conversion of an arbitrary input to a date object.
+
+    Strings are parsed as ISO dates; datetimes (incl. pd.Timestamp) collapse to their date portion; None stays None.
+
+    Returns date or None if value can't be parsed.
+    """
+    if value is None or (isinstance(value, float) and pd.isna(value)):
+        return None
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, date):
+        return value
+    try:
+        return date.fromisoformat(str(value))
+    except ValueError:
+        return None
 
 
 def _coerce_date(value: date | datetime | None) -> str:
     """Convert a date/datetime/pd.Timestamp/None to a 'YYYY-MM-DD' string.
 
     None becomes empty string. Datetimes (and pd.Timestamp, which subclasses datetime) collapse to their date portion.
-
-
     """
     d = _to_date_value(value)
     return "" if d is None else d.isoformat()
@@ -219,7 +218,6 @@ def _existing_daily_data(worksheet: gspread.Worksheet) -> pd.DataFrame:
     parseable rows. The caller can then treat it as a fresh write.
 
     Returns a DataFrame with columns Date (date), Delegate (str), Total Delegation (float), Rank (int).
-
     """
     df = _read_sheet_as_strings(worksheet)
     if df.empty or list(df.columns[: len(DAILY_DATA_COLUMNS)]) != list(DAILY_DATA_COLUMNS):
@@ -241,7 +239,6 @@ def _row_counts_by_date(frame: pd.DataFrame) -> dict[date, int]:
     Callers pass frames whose Date column already holds date objects (nulls, if any, are dropped by value_counts).
 
     Returns a mapping of date to the number of rows on that date.
-
     """
     return {cast("date", d): int(n) for d, n in frame["Date"].value_counts().items()}
 
@@ -288,7 +285,7 @@ def write_daily_data(
         workbook,
         DAILY_DATA_TAB_TITLE,
         rows=max(len(new_df) + 100, 200),
-        cols=max(len(DAILY_DATA_COLUMNS), 4),
+        cols=len(DAILY_DATA_COLUMNS),
     )
 
     existing = _existing_daily_data(worksheet)
@@ -323,26 +320,6 @@ def write_daily_data(
         worksheet, merged, include_index=False, include_column_header=True, resize=False, allow_formulas=False
     )
     return worksheet
-
-
-def _to_date_value(value: date | datetime | str | None) -> date | None:
-    """Best-effort conversion of an arbitrary input to a date object.
-
-    Strings are parsed as ISO dates; datetimes (incl. pd.Timestamp) collapse to their date portion; None stays None.
-
-    Returns date or None if value can't be parsed.
-
-    """
-    if value is None or (isinstance(value, float) and pd.isna(value)):
-        return None
-    if isinstance(value, datetime):
-        return value.date()
-    if isinstance(value, date):
-        return value
-    try:
-        return date.fromisoformat(str(value))
-    except ValueError:
-        return None
 
 
 # ---------------------------------------------------------------------------
@@ -461,7 +438,6 @@ def _existing_comm_master(worksheet: gspread.Worksheet) -> pd.DataFrame:
     header from the current roster.
 
     Returns a DataFrame indexed by Poll Id (string), or empty DataFrame.
-
     """
     df = _read_sheet_as_strings(worksheet)
     if df.empty or "Poll Id" not in df.columns:
@@ -486,7 +462,6 @@ def _build_comm_defaults(
     delegates; out-of-roster columns stay blank.
 
     Returns a DataFrame indexed by poll_id (string) with the given columns.
-
     """
     df_by_delegate = df.set_index("Delegate Name")
     in_roster = set(df_by_delegate.index)

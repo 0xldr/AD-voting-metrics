@@ -12,7 +12,6 @@ dependencies = [
     "pandas>=3.0.5,<4",
     "python-dotenv>=1.2,<2",
     "pydantic>=2.0,<3",
-    "pydantic-settings>=2.15.0,<3",
     "pyyaml>=6.0,<7",
     "gspread>=6.0,<7",
     "gspread-dataframe>=4.0,<5",
