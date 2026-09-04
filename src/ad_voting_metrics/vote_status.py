@@ -11,7 +11,9 @@ Spell statuses are seeded in `sources.sky_executive` from balances and alignment
 `sources.sky_executive_onchain`.
 """
 
-from datetime import UTC, date, datetime, time, timedelta
+from datetime import UTC, date, datetime, time
+
+import pandas as pd
 
 # Participation status per (delegate contract, ballot id). Ballot ids are poll ids as strings or spell addresses.
 type Statuses = dict[tuple[str, str], str]
@@ -55,9 +57,6 @@ PENDING_VERIFICATION = "Pending verification"
 # Business days a delegate has to vote on an executive spell once it goes live.
 SPELL_VOTE_BUSINESS_DAYS = 3
 
-# Monday-Friday. date.weekday() returns 0 for Monday, so 5 and 6 are the weekend.
-_SATURDAY = 5
-
 
 def spell_vote_deadline(spell_start: date, business_days: int = SPELL_VOTE_BUSINESS_DAYS) -> date:
     """Return the last UTC day on which a vote for a spell still counts.
@@ -66,18 +65,12 @@ def spell_vote_deadline(spell_start: date, business_days: int = SPELL_VOTE_BUSIN
     applied. The returned date is inclusive - a vote landing anywhere within it (up to 23:59:59 UTC) is on time.
 
     Live Monday gives a Thursday deadline; live Friday gives the following Wednesday. A spell going live on a weekend
-    starts counting from the Monday, which is day 1.
+    starts counting from the Monday, which is day 1 (pandas' BDay rolls a weekend start back to Friday first).
 
     Returns:
         The inclusive deadline date.
     """
-    deadline = spell_start
-    remaining = business_days
-    while remaining > 0:
-        deadline += timedelta(days=1)
-        if deadline.weekday() < _SATURDAY:
-            remaining -= 1
-    return deadline
+    return (pd.Timestamp(spell_start) + pd.offsets.BDay(business_days)).date()
 
 
 # ---------------------------------------------------------------------------

@@ -10,9 +10,11 @@ Public entry points:
 
 import logging
 import time
+from collections.abc import Sequence
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, date, datetime
 from http import HTTPStatus
+from itertools import batched
 from pathlib import Path
 from typing import Any, cast
 
@@ -165,7 +167,7 @@ def _fetch_event_logs(
     return events_by_contract, new_blocks
 
 
-def _get_blocks_batched(w3: Web3, block_nums: list[int]) -> list[Any]:
+def _get_blocks_batched(w3: Web3, block_nums: Sequence[int]) -> list[Any]:
     """Fetch full blocks for block_nums in one JSON-RPC batch.
 
     A rate-limited batch (HTTP 429) is retried with exponential backoff, up to RATE_LIMIT_ATTEMPTS attempts total.
@@ -208,8 +210,7 @@ def _fetch_block_timestamps(
     """
     missing = sorted(blocks - block_timestamps.keys())
 
-    for start in range(0, len(missing), TIMESTAMP_BATCH_SIZE):
-        chunk = missing[start : start + TIMESTAMP_BATCH_SIZE]
+    for chunk in batched(missing, TIMESTAMP_BATCH_SIZE, strict=False):
         try:
             blocks_data = _get_blocks_batched(w3, chunk)
         except (Web3RPCError, ValueError) as e:
