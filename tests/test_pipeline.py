@@ -87,7 +87,7 @@ def externals(tmp_path):
     ):
         yield SimpleNamespace(
             period=period,
-            run_kwargs={"roster_path": tmp_path / "delegates.yaml", "output_dir": tmp_path},
+            run_kwargs={"roster_path": tmp_path / "delegates.yaml", "output_dir": tmp_path, "w3": MagicMock()},
             out_dir=tmp_path / "2026-04",
             roster=roster,
             delegation_mock=delegation_mock,
@@ -105,12 +105,21 @@ def test_run_writes_both_csvs_into_the_month_directory(externals):
     assert set(sky["rank"]) == {1}
 
 
-def test_run_threads_paths_and_rebuild_through_to_collaborators(externals):
-    run(externals.period, rebuild=True, **externals.run_kwargs)
+def test_run_threads_paths_client_and_rebuild_through_to_collaborators(externals):
+    with patch(
+        "ad_voting_metrics.pipeline.sky_executive_onchain.resolve_pending_executive_votes",
+        side_effect=lambda df, _spells, **_: df,
+    ) as onchain_mock:
+        run(externals.period, rebuild=True, **externals.run_kwargs)
 
     kwargs = externals.delegation_mock.call_args.kwargs
     assert kwargs["rebuild"] is True
+    assert kwargs["w3"] is externals.run_kwargs["w3"]
     assert kwargs["cache_path"] == externals.run_kwargs["output_dir"] / "delegation_cache.json"
+
+    onchain_kwargs = onchain_mock.call_args.kwargs
+    assert onchain_kwargs["w3"] is externals.run_kwargs["w3"]
+    assert onchain_kwargs["cache_path"] == externals.run_kwargs["output_dir"] / "slate_cache.json"
 
     log_dir, _period, entry = externals.entry_mock.call_args.args
     assert log_dir == externals.run_kwargs["output_dir"] / "reconciliation"

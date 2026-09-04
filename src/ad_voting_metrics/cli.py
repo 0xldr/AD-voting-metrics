@@ -6,10 +6,12 @@ then writes the month's CSVs to output_data/<YYYY-MM>/.
 
 import argparse
 import logging
+import os
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 
 from dotenv import load_dotenv
+from web3 import Web3
 
 from .period import MonthPeriod
 from .pipeline import run
@@ -104,10 +106,28 @@ def check_period_has_ended(period: MonthPeriod, today: date) -> None:
         raise SystemExit(msg)
 
 
+def connect_rpc() -> Web3:
+    """Build the Web3 client from SKY_RPC_URL.
+
+    The client is used for both the delegation sync and executive-vote verification, so a run cannot proceed without
+    it. Construction does not open a connection; the first RPC call does.
+
+    Returns:
+        A Web3 client over HTTP.
+
+    Raises:
+        SystemExit: if SKY_RPC_URL is unset or blank.
+    """
+    rpc_url = os.environ.get("SKY_RPC_URL")
+    if not rpc_url:
+        raise SystemExit("SKY_RPC_URL environment variable is not set. Add it to your .env file (see .env.example).")
+    return Web3(Web3.HTTPProvider(rpc_url))
+
+
 def main(argv: list[str] | None = None) -> None:
     """Entry point: configure logging, parse argv, run the pipeline.
 
-    SystemExit propagates from `check_period_has_ended` and from argparse on a bad command line.
+    SystemExit propagates from `check_period_has_ended`, `connect_rpc`, and from argparse on a bad command line.
     """
     logging.basicConfig(
         level=logging.INFO,
@@ -120,4 +140,4 @@ def main(argv: list[str] | None = None) -> None:
 
     check_period_has_ended(args.month, today=datetime.now(UTC).date())
 
-    run(args.month, rebuild=args.rebuild, roster_path=args.roster, output_dir=args.output_dir)
+    run(args.month, rebuild=args.rebuild, roster_path=args.roster, output_dir=args.output_dir, w3=connect_rpc())

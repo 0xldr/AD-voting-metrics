@@ -10,7 +10,6 @@ names, so steady-state runs only fetch new blocks.
 """
 
 import logging
-import os
 import time
 from datetime import UTC, date, datetime
 from http import HTTPStatus
@@ -334,7 +333,7 @@ def _build_balance_series(cache: dict[str, Any]) -> pd.DataFrame:
 def get_all_sky_delegated(
     contracts: list[str],
     *,
-    w3: Web3 | None = None,
+    w3: Web3,
     cache_path: Path,
     rebuild: bool = False,
 ) -> pd.DataFrame:
@@ -345,7 +344,7 @@ def get_all_sky_delegated(
 
     Args:
         contracts: list of delegate contract addresses (any case).
-        w3: Web3 instance; if None, constructs from SKY_RPC_URL env var.
+        w3: connected Web3 client.
         cache_path: JSON file holding the synced events and block timestamps.
         rebuild: if True, resyncs from V3_FACTORY_BLOCK, discarding cache.
 
@@ -354,16 +353,8 @@ def get_all_sky_delegated(
         delegation_contract is lowercased; dt is datetime.date.
 
     Raises:
-        RuntimeError: if SKY_RPC_URL is unset (and w3 not injected) or sync fails.
+        RuntimeError: if the sync fails even at the minimum getLogs chunk size.
     """
-    if w3 is None:
-        rpc_url = os.environ.get("SKY_RPC_URL")
-        if not rpc_url:
-            raise RuntimeError(
-                "SKY_RPC_URL environment variable is not set. Add it to your .env file (see .env.example).",
-            )
-        w3 = Web3(Web3.HTTPProvider(rpc_url))
-
     logger.info("Syncing delegation events%s...", " (rebuild)" if rebuild else "")
     cache = _sync_events(w3, contracts, cache_path=cache_path, rebuild=rebuild)
 
@@ -383,6 +374,7 @@ def get_delegate_list_sky(
     df: pd.DataFrame,
     period: MonthPeriod,
     *,
+    w3: Web3,
     cache_path: Path,
     rebuild: bool = False,
 ) -> pd.DataFrame:
@@ -395,6 +387,7 @@ def get_delegate_list_sky(
     Args:
         df: roster DataFrame with columns "Delegate Contract", "Delegate Name", "Start Date".
         period: MonthPeriod to cover.
+        w3: connected Web3 client.
         cache_path: JSON file holding the synced events and block timestamps.
         rebuild: if True, forces a full re-sync from V3_FACTORY_BLOCK.
 
@@ -402,14 +395,11 @@ def get_delegate_list_sky(
         DataFrame with columns: contract, name, date, sky. One row per (delegate, day)
         covering every day in the period.
     """
-    all_sky_delegated = get_all_sky_delegated(df["Delegate Contract"].tolist(), cache_path=cache_path, rebuild=rebuild)
+    contracts = df["Delegate Contract"].tolist()
+    all_sky_delegated = get_all_sky_delegated(contracts, w3=w3, cache_path=cache_path, rebuild=rebuild)
 
     days = list(pd.date_range(period.start, period.end, freq="D").date)
-    contracts = df["Delegate Contract"].tolist()
-    names_by_contract = {
-        contract: name.strip().lower()
-        for contract, name in zip(df["Delegate Contract"], df["Delegate Name"], strict=True)
-    }
+    names_by_contract = dict(zip(df["Delegate Contract"], df["Delegate Name"], strict=True))
 
     # Forward-fill over event days plus period days so a pre-period balance carries in, then
     # restrict to the period; days before a contract's first event stay 0.

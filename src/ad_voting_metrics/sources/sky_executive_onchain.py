@@ -9,13 +9,12 @@ vote-delegate contract emit a `Vote(usr, slate)` event whose slate contains the 
   - No such vote found                           -> left Pending for operator adjudication
 
 The deadline is 3 business days after the spell goes live (`vote_status.spell_vote_deadline`). Timing can only be
-established on-chain, so with no RPC configured every cell stays Pending rather than being credited unverified.
+established on-chain, so a vote the check cannot find is never credited; the cell stays Pending.
 
 Slate -> address-list resolution is cached persistently because slates are immutable once etched.
 """
 
 import logging
-import os
 from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import Any, cast
@@ -260,8 +259,8 @@ def resolve_pending_executive_votes(
     df: pd.DataFrame,
     spell_info: list[dict],
     *,
+    w3: Web3,
     cache_path: Path,
-    w3: Web3 | None = None,
 ) -> pd.DataFrame:
     """Resolve "Pending verification" cells to "Yes" or "Late" from on-chain evidence.
 
@@ -270,9 +269,7 @@ def resolve_pending_executive_votes(
       - Take the earliest event at or after `spell.startDate` whose slate (cached) contains the spell address.
       - On or before `spell_vote_deadline(startDate)` -> "Yes"; after it -> "Late"; no such event -> left Pending.
 
-    No-ops gracefully when SKY_RPC_URL is missing, when spell_info is empty, or when no cells are pending. Leaving
-    cells Pending is the deliberate no-RPC outcome: a vote's timing cannot be established off-chain, so nothing is
-    credited without evidence. Other errors (RPC failures, decode errors) propagate.
+    Makes no RPC calls when spell_info is empty or no cells are pending. RPC and decode errors propagate.
 
     Returns:
         The same df (mutated) with resolvable Pending cells set to "Yes" or "Late".
@@ -284,17 +281,6 @@ def resolve_pending_executive_votes(
     if not pending:
         logger.info("No 'Pending verification' executive cells to verify on-chain.")
         return df
-
-    if w3 is None:
-        rpc_url = os.environ.get("SKY_RPC_URL")
-        if not rpc_url:
-            logger.warning(
-                "SKY_RPC_URL is not set; leaving all %d spell cell(s) as Pending Verification. Vote timing is only "
-                "establishable on-chain, so no spell vote can be credited without it. Set SKY_RPC_URL in .env.",
-                sum(len(v) for v in pending.values()),
-            )
-            return df
-        w3 = Web3(Web3.HTTPProvider(rpc_url))
 
     slate_cache = _load_slate_cache(cache_path)
     initial_cache_size = len(slate_cache)

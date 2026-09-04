@@ -223,16 +223,7 @@ def test_sync_events_skips_fetch_when_cache_is_current(tmp_path):
 # ---------------------------------------------------------------------------
 
 
-def test_get_all_sky_delegated_raises_if_rpc_url_missing(monkeypatch, tmp_path):
-    """If SKY_RPC_URL is unset and w3 not injected, raise RuntimeError."""
-    monkeypatch.delenv("SKY_RPC_URL", raising=False)
-
-    with pytest.raises(RuntimeError, match="SKY_RPC_URL"):
-        delegation.get_all_sky_delegated(["0x" + "a" * 40], w3=None, cache_path=tmp_path / "cache.json")
-
-
-def test_get_all_sky_delegated_uses_injected_w3(tmp_path):
-    """If w3 is provided, ignore SKY_RPC_URL."""
+def test_get_all_sky_delegated_returns_frame_with_no_events(tmp_path):
     cache_path = tmp_path / "delegation_cache.json"
     contract = "0x" + "c" * 40
 
@@ -240,7 +231,6 @@ def test_get_all_sky_delegated_uses_injected_w3(tmp_path):
     mock_w3.eth.block_number = 22368738
     mock_w3.eth.get_logs.return_value = []  # No events
 
-    # Should not raise even though SKY_RPC_URL unset.
     result = delegation.get_all_sky_delegated(
         [contract],
         w3=mock_w3,
@@ -250,9 +240,8 @@ def test_get_all_sky_delegated_uses_injected_w3(tmp_path):
     assert isinstance(result, pd.DataFrame)
 
 
-def test_get_all_sky_delegated_rebuild_resyncs_from_factory_block(monkeypatch, tmp_path):
+def test_get_all_sky_delegated_rebuild_resyncs_from_factory_block(tmp_path):
     """rebuild=True discards cache and resyncs from V3_FACTORY_BLOCK."""
-    monkeypatch.setenv("SKY_RPC_URL", "http://localhost:8545")
     cache_path = tmp_path / "delegation_cache.json"
 
     # Pre-populate cache with stale last_synced_block.
@@ -365,7 +354,8 @@ def test_build_balance_series_empty_cache_returns_empty_indexed_frame():
 # get_delegate_list_sky — per-day rows + zero-fill
 # ---------------------------------------------------------------------------
 
-# These tests patch get_all_sky_delegated, so the cache path is never opened.
+# These tests patch get_all_sky_delegated, so neither the client nor the cache path is touched.
+_UNUSED_W3 = MagicMock()
 _UNUSED_CACHE = Path("unused-cache.json")
 
 
@@ -396,7 +386,7 @@ def test_get_delegate_list_sky_returns_one_row_per_delegate_per_day():
     period_2day = _period_stub(date(2026, 4, 1), date(2026, 4, 2))
 
     with patch.object(delegation, "get_all_sky_delegated", return_value=fake_all_sky):
-        result = delegation.get_delegate_list_sky(df, period_2day, cache_path=_UNUSED_CACHE)
+        result = delegation.get_delegate_list_sky(df, period_2day, w3=_UNUSED_W3, cache_path=_UNUSED_CACHE)
 
     assert len(result) == 2
     assert list(result.columns) == ["contract", "name", "date", "sky"]
@@ -418,7 +408,7 @@ def test_get_delegate_list_sky_carries_balance_forward_and_zeros_before_first_ev
     period_3day = _period_stub(date(2026, 4, 1), date(2026, 4, 3))
 
     with patch.object(delegation, "get_all_sky_delegated", return_value=fake_all_sky):
-        result = delegation.get_delegate_list_sky(df, period_3day, cache_path=_UNUSED_CACHE)
+        result = delegation.get_delegate_list_sky(df, period_3day, w3=_UNUSED_W3, cache_path=_UNUSED_CACHE)
 
     by_date = dict(zip(result["date"], result["sky"], strict=True))
     assert by_date[date(2026, 4, 1)] == 0.0  # before first event: no balance yet
@@ -438,25 +428,25 @@ def test_get_delegate_list_sky_carries_pre_period_balance_across_whole_period():
     period_april = _period_stub(date(2026, 4, 1), date(2026, 4, 3))
 
     with patch.object(delegation, "get_all_sky_delegated", return_value=fake_all_sky):
-        result = delegation.get_delegate_list_sky(df, period_april, cache_path=_UNUSED_CACHE)
+        result = delegation.get_delegate_list_sky(df, period_april, w3=_UNUSED_W3, cache_path=_UNUSED_CACHE)
 
     assert list(result["sky"]) == [1_000_000.0, 1_000_000.0, 1_000_000.0]
 
 
-def test_get_delegate_list_sky_lowercases_name():
-    """The name column is the delegate's name lowercased and stripped."""
+def test_get_delegate_list_sky_keeps_name_as_given():
+    """The name column carries the roster's display name unchanged."""
     df = pd.DataFrame(
         [
-            {"Delegate Name": "  Alice  ", "Delegate Contract": "0xaaa", "Start Date": date(2024, 1, 1)},
+            {"Delegate Name": "Alice", "Delegate Contract": "0xaaa", "Start Date": date(2024, 1, 1)},
         ]
     )
     fake_all_sky = _sky_df_indexed([("0xaaa", "2026-04-01", 1000.0)])
     period_1day = _period_stub(date(2026, 4, 1), date(2026, 4, 1))
 
     with patch.object(delegation, "get_all_sky_delegated", return_value=fake_all_sky):
-        result = delegation.get_delegate_list_sky(df, period_1day, cache_path=_UNUSED_CACHE)
+        result = delegation.get_delegate_list_sky(df, period_1day, w3=_UNUSED_W3, cache_path=_UNUSED_CACHE)
 
-    assert result.iloc[0]["name"] == "alice"
+    assert result.iloc[0]["name"] == "Alice"
 
 
 def test_get_delegate_list_sky_multiple_delegates():
@@ -476,10 +466,10 @@ def test_get_delegate_list_sky_multiple_delegates():
     period_1day = _period_stub(date(2026, 4, 1), date(2026, 4, 1))
 
     with patch.object(delegation, "get_all_sky_delegated", return_value=fake_all_sky):
-        result = delegation.get_delegate_list_sky(df, period_1day, cache_path=_UNUSED_CACHE)
+        result = delegation.get_delegate_list_sky(df, period_1day, w3=_UNUSED_W3, cache_path=_UNUSED_CACHE)
 
     by_name = dict(zip(result["name"], result["sky"], strict=True))
-    assert by_name == {"alice": 1000.0, "bob": 500.0}
+    assert by_name == {"Alice": 1000.0, "Bob": 500.0}
 
 
 # ---------------------------------------------------------------------------

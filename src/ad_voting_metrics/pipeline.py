@@ -10,6 +10,7 @@ from pathlib import Path
 
 import pandas as pd
 import requests
+from web3 import Web3
 from web3.exceptions import Web3Exception
 
 from .outputs import write_csvs
@@ -34,10 +35,11 @@ def _rank_daily_balances(daily: pd.DataFrame) -> pd.DataFrame:
     return daily.assign(rank=rank).sort_values(["date", "rank"]).reset_index(drop=True)
 
 
-def run(period: MonthPeriod, *, rebuild: bool, roster_path: Path, output_dir: Path) -> None:
+def run(period: MonthPeriod, *, rebuild: bool, roster_path: Path, output_dir: Path, w3: Web3) -> None:
     """Pull data from on-chain + APIs and write the month's CSVs under output_dir/<YYYY-MM>/.
 
-    output_dir also holds the on-chain event caches and the reconciliation log.
+    output_dir also holds the on-chain event caches and the reconciliation log. `w3` is used for both the delegation
+    sync and the executive-vote verification.
     """
     delegation_cache = output_dir / "delegation_cache.json"
     slate_cache = output_dir / "slate_cache.json"
@@ -56,7 +58,7 @@ def run(period: MonthPeriod, *, rebuild: bool, roster_path: Path, output_dir: Pa
 
     logger.info("Fetching daily SKY balances...")
     daily = _rank_daily_balances(
-        delegation.get_delegate_list_sky(metrics, period, cache_path=delegation_cache, rebuild=rebuild)
+        delegation.get_delegate_list_sky(metrics, period, w3=w3, cache_path=delegation_cache, rebuild=rebuild)
     )
     sky_lookup = delegation.build_sky_lookup(daily)
 
@@ -72,7 +74,9 @@ def run(period: MonthPeriod, *, rebuild: bool, roster_path: Path, output_dir: Pa
 
     logger.info("Verifying Pending executive votes on-chain...")
     try:
-        metrics = sky_executive_onchain.resolve_pending_executive_votes(metrics, spell_info, cache_path=slate_cache)
+        metrics = sky_executive_onchain.resolve_pending_executive_votes(
+            metrics, spell_info, w3=w3, cache_path=slate_cache
+        )
     except requests.exceptions.RequestException, Web3Exception:
         # Transient network/RPC failures are tolerable: leave cells Pending for
         # operator adjudication. Anything else (schema drift, decode/logic bugs)

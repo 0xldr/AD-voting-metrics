@@ -32,7 +32,7 @@ A poll counts against a delegate only if they held SKY on the close day and on a
 
 A delegate has **3 business days (UTC)** from the day a spell goes live to vote for it. Weekends are skipped and no holiday calendar is applied, so a spell going live Monday must be voted on by Thursday, and one going live Friday by the following Wednesday. A vote landing anywhere within the deadline day counts.
 
-Timing can only be established on-chain, from chief `Vote` events. The public supporters endpoint reports who currently supports a spell but carries no timestamp, so it is not used. Any spell cell the on-chain check cannot settle — including every cell when `SKY_RPC_URL` is unset — stays `Pending verification` rather than being credited unverified.
+Timing can only be established on-chain, from chief `Vote` events. The public supporters endpoint reports who currently supports a spell but carries no timestamp, so it is not used. Any spell cell the on-chain check cannot settle stays `Pending verification` rather than being credited unverified.
 
 ## Requirements
 

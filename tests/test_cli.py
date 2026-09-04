@@ -5,10 +5,12 @@ from pathlib import Path
 from unittest.mock import patch
 
 import pytest
+from web3 import Web3
 
 from ad_voting_metrics.cli import (
     build_arg_parser,
     check_period_has_ended,
+    connect_rpc,
     main,
 )
 from ad_voting_metrics.period import MonthPeriod
@@ -103,15 +105,33 @@ def test_parser_requires_month():
 
 
 def test_main_runs_pipeline(monkeypatch):
-    """main(['--month', ...]) runs the pipeline with the parsed period and rebuild flag."""
+    """main(['--month', ...]) runs the pipeline with the parsed period, paths, and a Web3 client."""
     monkeypatch.setattr("ad_voting_metrics.cli.check_period_has_ended", lambda *_, **__: None)
+    monkeypatch.setenv("SKY_RPC_URL", "http://localhost:8545")
 
     with patch("ad_voting_metrics.cli.run") as run_mock:
         main(["--month", "2026-04"])
 
-    run_mock.assert_called_once_with(
-        MonthPeriod(year=2026, month=4),
-        rebuild=False,
-        roster_path=Path("delegates.yaml"),
-        output_dir=Path("output_data"),
-    )
+    run_mock.assert_called_once()
+    args, kwargs = run_mock.call_args
+    assert args == (MonthPeriod(year=2026, month=4),)
+    assert kwargs["rebuild"] is False
+    assert kwargs["roster_path"] == Path("delegates.yaml")
+    assert kwargs["output_dir"] == Path("output_data")
+    assert isinstance(kwargs["w3"], Web3)
+
+
+# ---------------------------------------------------------------------------
+# connect_rpc
+# ---------------------------------------------------------------------------
+
+
+def test_connect_rpc_exits_when_env_var_unset(monkeypatch):
+    monkeypatch.delenv("SKY_RPC_URL", raising=False)
+    with pytest.raises(SystemExit, match="SKY_RPC_URL"):
+        connect_rpc()
+
+
+def test_connect_rpc_builds_client_from_env_var(monkeypatch):
+    monkeypatch.setenv("SKY_RPC_URL", "http://localhost:8545")
+    assert isinstance(connect_rpc(), Web3)

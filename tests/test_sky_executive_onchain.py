@@ -351,7 +351,9 @@ def _spell(addr: str, start: date) -> dict:
 
 def test_resolve_pending_no_op_when_spell_info_empty(tmp_path):
     df = pd.DataFrame({"Delegate Contract": ["0xa"], "0xspell1": [PENDING]})
-    result = onchain.resolve_pending_executive_votes(df, spell_info=[], cache_path=tmp_path / "slate_cache.json")
+    result = onchain.resolve_pending_executive_votes(
+        df, spell_info=[], w3=MagicMock(), cache_path=tmp_path / "slate_cache.json"
+    )
     assert result is df  # mutated in place; nothing to do
 
 
@@ -365,16 +367,6 @@ def test_resolve_pending_no_op_when_no_pending_cells(tmp_path):
     )
     sentinel_w3.eth.get_block.assert_not_called()
     assert result.equals(df)
-
-
-def test_resolve_pending_skips_when_rpc_url_missing(monkeypatch, caplog, tmp_path):
-    monkeypatch.delenv("SKY_RPC_URL", raising=False)
-    df = _make_df([("0xa", PENDING, "Yes")])
-    spell_info = [_spell("0xspell1", date(2026, 4, 1))]
-    with caplog.at_level("WARNING"):
-        result = onchain.resolve_pending_executive_votes(df, spell_info, cache_path=tmp_path / "slate_cache.json")
-    assert "SKY_RPC_URL is not set" in caplog.text
-    assert result.loc[0, "0xspell1"] == PENDING
 
 
 def _w3_for_resolver(
