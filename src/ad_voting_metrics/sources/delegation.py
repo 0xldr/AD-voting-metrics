@@ -1,8 +1,8 @@
 """On-chain delegation: Lock/Free event replay for daily SKY delegation totals.
 
 Public entry points:
-  - get_all_sky_delegated: fetch Lock/Free events, build daily running totals, return indexed DataFrame
-  - get_delegate_list_sky: project daily totals onto (delegate, day) grid for a period, zero-filling missing days
+  - get_all_sky_delegated: fetch Lock/Free events, return the running-total balance on each event day
+  - get_delegate_list_sky: forward-fill those balances onto a (delegate, day) grid for a period, zero before first event
   - build_sky_lookup: materialize per-day balance DataFrame into an O(1) (contract, date) dict
 
 Events are synced incrementally from the V3 VoteDelegateFactory (block 22368737) and cached to
@@ -308,56 +308,25 @@ def _contract_cumulative_balances(
     return cumulative_by_date
 
 
-def _build_daily_series(cache: dict[str, Any]) -> pd.DataFrame:
-    """Build forward-filled daily running totals from cached events.
+def _build_balance_series(cache: dict[str, Any]) -> pd.DataFrame:
+    """Build each contract's running-total SKY balance on every day it changed.
 
-    For each contract, aggregates Lock/Free events into cumulative daily balances, then
-    forward-fills each day between the first and last event.
+    Days without an event are absent; `get_delegate_list_sky` forward-fills onto the period's daily grid.
 
-    Returns a DataFrame indexed on (delegation_contract, dt) with running_total_balance column. Forward-filled: each
-    day carries the prior day's balance if no events occur.
+    Returns a DataFrame indexed on (delegation_contract, dt) with a running_total_balance column in SKY.
     """
-    rows: list[dict[str, Any]] = []
     block_timestamps = cache.get("block_timestamps", {})
-
-    for contract, events in cache.get("events", {}).items():
-        if not events:
-            continue
-
-        cumulative_by_date = _contract_cumulative_balances(events, block_timestamps, contract)
-        if not cumulative_by_date:
-            continue
-
-        # Forward-fill from first event to last event.
-        sorted_dates = sorted(cumulative_by_date)
-        current_balance = 0
-        for dt in pd.date_range(sorted_dates[0], sorted_dates[-1], freq="D").date:
-            if dt in cumulative_by_date:
-                current_balance = cumulative_by_date[dt]
-            rows.append(
-                {
-                    "delegation_contract": contract,
-                    "dt": dt,
-                    "running_total_balance_wei": current_balance,
-                }
-            )
-
-    if not rows:
-        # No events for any contract; return empty DataFrame with correct shape.
-        return pd.DataFrame(columns=["delegation_contract", "dt", "running_total_balance_wei"]).set_index(
-            [
-                "delegation_contract",
-                "dt",
-            ]
-        )
-
-    df = pd.DataFrame(rows)
-    df["dt"] = pd.to_datetime(df["dt"]).dt.date
-    df = df.set_index(["delegation_contract", "dt"])
-
-    # Convert wei to human-readable SKY.
-    df["running_total_balance"] = df["running_total_balance_wei"].apply(lambda wei: float(Web3.from_wei(wei, "ether")))
-    return df[["running_total_balance"]]
+    rows = [
+        {
+            "delegation_contract": contract,
+            "dt": event_date,
+            "running_total_balance": float(Web3.from_wei(wei, "ether")),
+        }
+        for contract, events in cache.get("events", {}).items()
+        for event_date, wei in _contract_cumulative_balances(events, block_timestamps, contract).items()
+    ]
+    columns = ["delegation_contract", "dt", "running_total_balance"]
+    return pd.DataFrame(rows, columns=columns).set_index(["delegation_contract", "dt"])
 
 
 # ---------------------------------------------------------------------------
@@ -372,11 +341,10 @@ def get_all_sky_delegated(
     cache_path: Path | None = None,
     rebuild: bool = False,
 ) -> pd.DataFrame:
-    """Fetch daily SKY delegations from on-chain Lock/Free events.
+    """Fetch SKY delegation balances from on-chain Lock/Free events.
 
-    Replays events from the V3 VoteDelegateFactory block, caching them to disk
-    for incremental syncs. Returns one running_total_balance row per
-    (delegation_contract, date), forward-filled daily.
+    Replays events from the V3 VoteDelegateFactory block, caching them to disk for incremental syncs. Returns one
+    running_total_balance row per (delegation_contract, event day).
 
     Args:
         contracts: list of delegate contract addresses (any case).
@@ -405,11 +373,11 @@ def get_all_sky_delegated(
     cache = _sync_events(w3, contracts, cache_path=cache_path, rebuild=rebuild)
 
     event_count = sum(len(events) for events in cache.get("events", {}).values())
-    logger.info("Building daily running-total series from %d events", event_count)
-    df = _build_daily_series(cache)
+    logger.info("Building running-total balances from %d events", event_count)
+    df = _build_balance_series(cache)
     logger.info(
-        "Delegation totals cover %d days across %d contracts",
-        len(df.index.get_level_values(1).unique()),
+        "%d balance changes across %d contracts",
+        len(df),
         len(df.index.get_level_values(0).unique()),
     )
 

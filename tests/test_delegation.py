@@ -1,7 +1,7 @@
 """Tests for sources.delegation — on-chain event replay and daily totals."""
 
 import json
-from datetime import date
+from datetime import UTC, date, datetime
 from types import SimpleNamespace
 from typing import cast
 from unittest.mock import MagicMock, patch
@@ -15,6 +15,11 @@ from web3.exceptions import Web3RPCError
 
 from ad_voting_metrics.period import MonthPeriod
 from ad_voting_metrics.sources import delegation
+
+
+def _ts(d: date) -> int:
+    """Unix timestamp for midnight UTC on `d`."""
+    return int(datetime(d.year, d.month, d.day, tzinfo=UTC).timestamp())
 
 
 def _period_stub(start: date, end: date) -> MonthPeriod:
@@ -156,6 +161,70 @@ def test_fetch_block_timestamps_splits_large_sets_into_multiple_batches():
 
 
 # ---------------------------------------------------------------------------
+# _sync_events — incremental sync against the on-disk cache
+# ---------------------------------------------------------------------------
+
+
+def _lock_log(contract: str, block: int, wad: int) -> dict:
+    return {
+        "address": contract,
+        "blockNumber": block,
+        "data": Web3.to_bytes(wad),
+        "topics": [Web3.to_bytes(hexstr=HexStr(delegation.LOCK_TOPIC))],
+    }
+
+
+def test_sync_events_second_run_starts_after_last_synced_block_and_appends(tmp_path):
+    """A follow-up sync fetches only new blocks and extends the cached events rather than replacing them."""
+    cache_path = tmp_path / "delegation_cache.json"
+    contract = "0x" + "c" * 40
+    factory = delegation.V3_FACTORY_BLOCK
+    first_head = factory + 1_000 + delegation.FINALITY_BLOCKS
+
+    w3 = MagicMock()
+    w3.batch_requests.side_effect = ValueError("no batch support")
+    w3.eth.get_block.side_effect = lambda n: {"timestamp": 1_700_000_000 + n}
+    w3.eth.block_number = first_head
+    w3.eth.get_logs.return_value = [_lock_log(contract, factory + 10, 100)]
+
+    first = delegation._sync_events(w3, [contract], cache_path=cache_path)
+
+    assert w3.eth.get_logs.call_args.args[0]["fromBlock"] == factory
+    assert first["last_synced_block"] == factory + 1_000
+    assert cache_path.exists()
+
+    w3.eth.block_number = first_head + 500
+    w3.eth.get_logs.return_value = [_lock_log(contract, first_head + 100, 50)]
+
+    second = delegation._sync_events(w3, [contract], cache_path=cache_path)
+
+    assert w3.eth.get_logs.call_args.args[0]["fromBlock"] == factory + 1_001
+    assert second["events"][contract] == [[factory + 10, "100"], [first_head + 100, "50"]]
+    assert second["last_synced_block"] == factory + 1_500
+    assert delegation._load_cache(cache_path)["events"][contract] == second["events"][contract]
+
+
+def test_sync_events_skips_fetch_when_cache_is_current(tmp_path):
+    """When last_synced_block already reaches the safe head, no getLogs call is made and the cache is untouched."""
+    cache_path = tmp_path / "delegation_cache.json"
+    contract = "0x" + "c" * 40
+    synced_to = delegation.V3_FACTORY_BLOCK + 500
+    cache_path.write_text(
+        json.dumps({"last_synced_block": synced_to, "events": {contract: []}, "block_timestamps": {}})
+    )
+    mtime = cache_path.stat().st_mtime_ns
+
+    w3 = MagicMock()
+    w3.eth.block_number = synced_to + delegation.FINALITY_BLOCKS  # safe head == synced_to
+
+    out = delegation._sync_events(w3, [contract], cache_path=cache_path)
+
+    w3.eth.get_logs.assert_not_called()
+    assert out["last_synced_block"] == synced_to
+    assert cache_path.stat().st_mtime_ns == mtime
+
+
+# ---------------------------------------------------------------------------
 # get_all_sky_delegated — event sync, cache load/save, daily series
 # ---------------------------------------------------------------------------
 
@@ -241,6 +310,61 @@ def test_get_all_sky_delegated_recovers_by_shrinking_chunk(tmp_path):
     result = delegation.get_all_sky_delegated(["0x" + "a" * 40], w3=mock_w3, cache_path=cache_path, rebuild=True)
     assert isinstance(result, pd.DataFrame)
     assert result.empty
+
+
+# ---------------------------------------------------------------------------
+# _contract_cumulative_balances / _build_balance_series — running-total arithmetic
+# ---------------------------------------------------------------------------
+
+
+def test_contract_cumulative_balances_nets_same_day_events_and_carries_total():
+    """Two events on one day collapse to one entry; later days start from the prior running total."""
+    day_1, day_3 = date(2026, 4, 1), date(2026, 4, 3)
+    timestamps = {"1": _ts(day_1), "2": _ts(day_1) + 3600, "3": _ts(day_3)}
+    events = [[1, "100"], [2, "-40"], [3, "10"]]
+
+    out = delegation._contract_cumulative_balances(events, timestamps, "0xc")
+
+    assert out == {day_1: 60, day_3: 70}
+
+
+def test_contract_cumulative_balances_raises_when_total_goes_negative():
+    timestamps = {"1": _ts(date(2026, 4, 1))}
+
+    with pytest.raises(ValueError, match="Negative running total"):
+        delegation._contract_cumulative_balances([[1, "-5"]], timestamps, "0xc")
+
+
+def test_contract_cumulative_balances_skips_events_without_cached_timestamp(caplog):
+    day = date(2026, 4, 1)
+    timestamps = {"1": _ts(day)}
+
+    with caplog.at_level("WARNING"):
+        out = delegation._contract_cumulative_balances([[1, "100"], [2, "100"]], timestamps, "0xc")
+
+    assert out == {day: 100}
+    assert "no cached timestamp" in caplog.text
+
+
+def test_build_balance_series_converts_wei_to_sky_one_row_per_event_day():
+    day_1, day_5 = date(2026, 4, 1), date(2026, 4, 5)
+    cache = {
+        "events": {"0xc": [[1, str(2 * 10**18)], [2, str(10**18)]]},
+        "block_timestamps": {"1": _ts(day_1), "2": _ts(day_5)},
+    }
+
+    out = delegation._build_balance_series(cache)
+
+    assert out.index.names == ["delegation_contract", "dt"]
+    assert out["running_total_balance"].to_dict() == {("0xc", day_1): 2.0, ("0xc", day_5): 3.0}
+
+
+def test_build_balance_series_empty_cache_returns_empty_indexed_frame():
+    out = delegation._build_balance_series({})
+
+    assert out.empty
+    assert out.index.names == ["delegation_contract", "dt"]
+    assert list(out.columns) == ["running_total_balance"]
 
 
 # ---------------------------------------------------------------------------
