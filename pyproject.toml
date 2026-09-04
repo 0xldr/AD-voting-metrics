@@ -12,13 +12,12 @@ dependencies = [
     "pandas>=3.0.5,<4",
     "python-dotenv>=1.2,<2",
     "pydantic>=2.0,<3",
-    "pydantic-settings>=2.15.0,<3",
     "pyyaml>=6.0,<7",
-    "gspread>=6.0,<7",
-    "gspread-dataframe>=4.0,<5",
-    "google-auth>=2.56.3,<3",
     "web3>=7,<8",
 ]
+
+[project.scripts]
+ad-voting-metrics = "ad_voting_metrics.cli:main"
 
 [dependency-groups]
 dev = [
@@ -44,40 +43,7 @@ typeCheckingMode = "standard"
 reportMissingTypeStubs = false
 
 [tool.ruff]
-# Exclude a variety of commonly ignored directories.
-exclude = [
-    ".bzr",
-    ".direnv",
-    ".eggs",
-    ".git",
-    ".git-rewrite",
-    ".hg",
-    ".ipynb_checkpoints",
-    ".mypy_cache",
-    ".nox",
-    ".pants.d",
-    ".pyenv",
-    ".pytest_cache",
-    ".pytype",
-    ".ruff_cache",
-    ".svn",
-    ".tox",
-    ".venv",
-    ".vscode",
-    "__pypackages__",
-    "_build",
-    "buck-out",
-    "build",
-    "dist",
-    "node_modules",
-    "site-packages",
-    "venv",
-]
-
 line-length = 120
-indent-width = 4
-target-version = "py314"
-preview = true
 
 [tool.ruff.lint]
 # Allow unused variables when underscore-prefixed.
@@ -86,8 +52,8 @@ dummy-variable-rgx = "^(_+|(_+[a-zA-Z0-9_]*[a-zA-Z0-9]+?))$"
 # Everything on, including new linters as ruff adds them; deliberate
 # exclusions live in `ignore` below.
 select = ["ALL"]
-# Individual rules are named rather than coded; only whole-linter and
-# multi-rule prefixes (which have no name form) stay as codes.
+# Individual rules carry their name in a trailing comment (the name form
+# of a selector requires preview mode, so codes are used here).
 ignore = [
     # Whole linters and rule groups.
     "CPY", # Flake8-copyright - would require a copyright notice atop every file
@@ -98,88 +64,56 @@ ignore = [
     "D1",  # Pydocstyle - missing docstring in public module, class, or function
 
     # Individual rules.
-    "docstring-missing-returns", # ruff can't scope this to public functions only, so it's off
-                                 # globally. Convention: public functions document Returns;
-                                 # private helpers may use a one-line docstring.
-    "boolean-positional-value-in-call",
-    "incorrect-blank-line-before-class",
-    "multi-line-summary-first-line",
-    "suspicious-non-cryptographic-random-usage",
-    "raise-vanilla-args", # long exception messages need not live on the exception class
-    "raw-string-in-exception",
+    "FBT003", # boolean-positional-value-in-call
+    "D212",   # multi-line-summary-first-line
+    "PD008",  # pandas-use-of-dot-at - `.at` is the right accessor for scalar cell reads/writes
+    "TRY003", # raise-vanilla-args - long exception messages need not live on the exception class
+    "EM101",  # raw-string-in-exception
     # All three flake8-type-checking import rules are off. The imports they would
     # defer are stdlib, or already loaded at runtime by another module, so there is
     # no import-time gain to collect. Against that, pydantic resolves annotations
     # at runtime to build validators, so a field whose type is only imported under
     # TYPE_CHECKING fails at class creation.
-    "typing-only-third-party-import",
-    "typing-only-standard-library-import",
-    "typing-only-first-party-import",
-    "missing-trailing-comma", # conflicts with ruff format
-    "noqa-comments",          # `# noqa` is portable across linters; `ruff: ignore` is
-                              # ruff-only and still preview. Revisit once it stabilizes.
+    "TC001", # typing-only-first-party-import
+    "TC002", # typing-only-third-party-import
+    "TC003", # typing-only-standard-library-import
+    "COM812", # missing-trailing-comma - conflicts with ruff format
 ]
 
 [tool.ruff.lint.per-file-ignores]
 "tests/*" = [
     "D",   # docstrings not required on tests
     "ANN", # annotations not required on tests
-    "DOC", # docstring sections (returns/yields) not required on test helpers
 
-    "assert",                      # bare `assert` is how tests assert
-    "hardcoded-password-string",
-    "hardcoded-password-func-arg",
-    "hardcoded-password-default",
-    "magic-value-comparison",
-    "private-member-access",
-    "unused-function-argument",
-    "import-outside-top-level",
-    "f-string-in-exception",
-    "float-equality-comparison",   # float equality fine in tests; values are exact, not approximations
-    "hardcoded-temp-file",         # /tmp paths in tests are not a real risk
-    "import-private-name",         # tests legitimately exercise private helpers
-    "compare-to-empty-string",     # `== ""` is clearer than implicit-falsiness in assertions
+    "S101",    # assert - bare `assert` is how tests assert
+    "S105",    # hardcoded-password-string
+    "S106",    # hardcoded-password-func-arg
+    "S107",    # hardcoded-password-default
+    "PLR2004", # magic-value-comparison
+    "SLF001",  # private-member-access
+    "ARG001",  # unused-function-argument
+    "PLC0415", # import-outside-top-level
+    "EM102",   # f-string-in-exception
+    "S108",    # hardcoded-temp-file - /tmp paths in tests are not a real risk
 ]
 
 [tool.ruff.lint.pydocstyle]
 convention = "google"
 
 [tool.ruff.format]
-# Like Black, use double quotes for strings.
-quote-style = "double"
-
-# Like Black, indent with spaces, rather than tabs.
-indent-style = "space"
-
-# Like Black, respect magic trailing commas.
-skip-magic-trailing-comma = false
-
-# Like Black, automatically detect the appropriate line ending.
-line-ending = "auto"
-
-# Enable auto-formatting of code examples in docstrings. Markdown,
-# reStructuredText code/literal blocks and doctests are all supported.
-#
-# This is currently disabled by default, but it is planned for this
-# to be opt-out in the future.
+# Format code examples inside docstrings too.
 docstring-code-format = true
-
-# Set the line length limit used when formatting code snippets in
-# docstrings.
-#
-# This only has an effect when the `docstring-code-format` setting is
-# enabled.
 docstring-code-line-length = "dynamic"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-markers = [
-    "integration: tests that hit live external services (Google Sheets, etc.). Skipped by default; run with `pytest -m integration`.",
-]
-addopts = "-m 'not integration'"
 # Unscoped: pandas raises with stacklevel pointing at the caller, so a
 # `:pandas` module filter would never match.
-filterwarnings = ["error::FutureWarning"]
+filterwarnings = [
+    "error::FutureWarning",
+    # web3's WebSocket provider imports websockets.legacy; this repo only uses the HTTP provider.
+    "ignore:websockets.legacy is deprecated:DeprecationWarning",
+]
 
 [tool.mypy]
 files = ["src", "tests"]
@@ -189,7 +123,3 @@ warn_unused_ignores = true
 warn_return_any = true
 strict_equality = true
 check_untyped_defs = true
-
-[[tool.mypy.overrides]]
-module = ["gspread_dataframe"]
-ignore_missing_imports = true

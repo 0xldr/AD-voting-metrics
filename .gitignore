@@ -15,21 +15,14 @@ __pycache__/
 venv/
 .venv/
 
-# Dependency directories
-/node_modules/
-/jspm_packages/
-/bower_components/
-
 # Build outputs
 /dist
 /tmp
 /out
 
-# Generated outputs (scripts write CSVs here at runtime)
-output_data/reconciliation/*.json
-output_data/backups/
-output_data/*.csv
-output_data/*.json
+# Generated outputs (per-month CSVs, caches, reconciliation logs)
+output_data/*
+!output_data/.gitkeep
 
 # Python tooling caches
 .mypy_cache/
@@ -48,7 +41,4 @@ htmlcov/
 *.history/
 *.egg-info/
 *.egg
-
-# Heroku specific
-/heroku_output/
 *.DS_Store

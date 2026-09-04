@@ -6,8 +6,6 @@ The YAML is the source of truth. Each entry:
 - vote_delegate_address: on-chain vote delegate contract (lowercase 0x...)
 - start_date: when AD compensation begins (not the contract creation date)
 - end_date: optional, inclusive last day of alignment
-- levels: optional L1/L2 governance assignments (sequences allowed, no overlaps). Level 3 is computed daily from rank
-  plus eligibility, never set in the YAML.
 
 Drift detection: every YAML entry with end_date=None should be in the API's currently-aligned response, and vice-versa.
 Mismatches produce warnings - typically the YAML needs updating after a new alignment or an exit.
@@ -17,54 +15,14 @@ import logging
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import date
-from itertools import pairwise
 from pathlib import Path
 
-import pandas as pd
 import yaml
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 from .period import MonthPeriod
 
 logger = logging.getLogger(__name__)
-
-
-class LevelAssignment(BaseModel):
-    """A single L1 or L2 governance assignment.
-
-    A delegate may have a sequence of level assignments over their lifetime (e.g. promoted from L2 to L1) but never two
-    concurrent levels - see Delegate validation for the no-overlap enforcement. Level 3 is never represented here; it's
-    computed daily.
-    """
-
-    level: int
-    start_date: date
-    end_date: date | None = None
-
-    @field_validator("level")
-    @classmethod
-    def _level_is_1_or_2(cls, v: int) -> int:
-        if v not in {1, 2}:
-            msg = f"level must be 1 or 2 (got {v}); level 3 is computed daily and is never set in the YAML"
-            raise ValueError(msg)
-        return v
-
-    @model_validator(mode="after")
-    def _end_after_start(self) -> LevelAssignment:
-        if self.end_date is not None and self.end_date <= self.start_date:
-            msg = f"LevelAssignment end_date {self.end_date} must be after start_date {self.start_date}"
-            raise ValueError(msg)
-        return self
-
-    def covers(self, d: date) -> bool:
-        """True if d falls within this assignment's period (inclusive).
-
-        Returns:
-            Whether d is in the period.
-        """
-        if d < self.start_date:
-            return False
-        return not (self.end_date is not None and d > self.end_date)
 
 
 class Delegate(BaseModel):
@@ -74,9 +32,6 @@ class Delegate(BaseModel):
     vote_delegate_address: str = Field(pattern=r"^0x[0-9a-f]{40}$")
     start_date: date
     end_date: date | None = None
-    # Governance-assigned L1/L2 history. Most delegates have an empty list
-    # (L3 candidates only, with daily eligibility computed at runtime).
-    levels: list[LevelAssignment] = Field(default_factory=list)
 
     @field_validator("name")
     @classmethod
@@ -92,62 +47,6 @@ class Delegate(BaseModel):
             raise ValueError(msg)
         return self
 
-    @model_validator(mode="after")
-    def _level_periods_fit_alignment(self) -> Delegate:
-        """Every LevelAssignment must fall within the delegate's alignment period.
-
-        Raises:
-            ValueError: if any LevelAssignment falls outside the
-            delegate's alignment period.
-        """
-        for la in self.levels:
-            if la.start_date < self.start_date:
-                msg = (
-                    f"LevelAssignment start_date {la.start_date} for delegate "
-                    f"{self.name} is before alignment start_date {self.start_date}"
-                )
-                raise ValueError(msg)
-            if la.end_date is not None and self.end_date is not None and la.end_date > self.end_date:
-                msg = (
-                    f"LevelAssignment end_date {la.end_date} for delegate "
-                    f"{self.name} is after alignment end_date {self.end_date}"
-                )
-                raise ValueError(msg)
-            # An open-ended LevelAssignment on an exited delegate is invalid.
-            if la.end_date is None and self.end_date is not None:
-                msg = (
-                    f"LevelAssignment for delegate {self.name} has no end_date but the delegate's alignment ends on "
-                    f"{self.end_date}; set the LevelAssignment end_date too."
-                )
-                raise ValueError(msg)
-        return self
-
-    @model_validator(mode="after")
-    def _level_periods_no_overlap(self) -> Delegate:
-        """Sequential LevelAssignments are allowed; overlapping ones aren't.
-
-        Raises:
-            ValueError: if two LevelAssignments overlap, or a non-final
-                one lacks an end_date.
-        """
-        if len(self.levels) <= 1:
-            return self
-        sorted_levels = sorted(self.levels, key=lambda la: la.start_date)
-        for prev, curr in pairwise(sorted_levels):
-            if prev.end_date is None:
-                msg = (
-                    f"LevelAssignment starting {prev.start_date} for delegate {self.name} has no end_date but is "
-                    f"followed by another LevelAssignment starting {curr.start_date}; set the earlier end_date"
-                )
-                raise ValueError(msg)
-            if prev.end_date >= curr.start_date:
-                msg = (
-                    f"LevelAssignments for delegate {self.name} overlap period ending {prev.end_date} overlaps with "
-                    f"period starting {curr.start_date}."
-                )
-                raise ValueError(msg)
-        return self
-
     def is_active_during(self, period_start: date, period_end: date) -> bool:
         """True if this delegate was active at any point during the given period.
 
@@ -159,17 +58,6 @@ class Delegate(BaseModel):
         if self.start_date > period_end:
             return False
         return not (self.end_date is not None and self.end_date < period_start)
-
-    def level_at(self, d: date) -> int | None:
-        """Return the governance level (1 or 2) on date d, or None if unassigned.
-
-        Used by the L3 daily computation to determine whether a delegate is governance-assigned (and therefore not
-        eligible for an L3 slot).
-        """
-        for la in self.levels:
-            if la.covers(d):
-                return la.level
-        return None
 
 
 class DelegatesConfig(BaseModel):
@@ -278,39 +166,32 @@ def build_roster_for_period(
     yaml_path: Path,
     period: MonthPeriod,
     api_fetcher: Callable[[], list[dict]],
-    *,
-    skip_api_check: bool = False,
 ) -> RosterResult:
-    """Load YAML, optionally fetch API, run drift detection, filter to active-during-period.
+    """Load YAML, fetch the API, run drift detection, filter to active-during-period.
 
-    Drift detection compares the YAML against the live vote.sky.money listing. It's most useful at fetch time; finalize
-    works on a closed historical period where renaming after the fact would be counterproductive, so finalize callers
-    should pass skip_api_check=True.
+    Drift detection compares the YAML against the live vote.sky.money listing. A fetch failure degrades to YAML-only
+    with a warning rather than aborting the run.
 
     Returns:
-        RosterResult with active delegates, drift warnings (empty when skip_api_check=True), the full YAML config, and
-        API-fetch metadata.
+        RosterResult with active delegates, drift warnings, the full YAML config, and API-fetch metadata.
     """
     yaml_config = load_delegates(yaml_path)
 
     api_response: list[dict] = []
     api_fetch_succeeded = False
     warnings: list[str] = []
-    if skip_api_check:
-        logger.info("API drift check skipped (skip_api_check=True).")
-    else:
-        try:
-            api_response = api_fetcher()
-            api_fetch_succeeded = True
-            warnings = detect_roster_drift(yaml_config, api_response)
-        except Exception as e:  # noqa: BLE001 — api_fetcher is caller-supplied; any failure degrades to YAML-only
-            warnings = [
-                (
-                    f"API drift check skipped due to fetch failure: {type(e).__name__}: {e}. "
-                    f"Proceeding with delegates.yaml as the sole source."
-                )
-            ]
-            logger.warning("API fetch failed during drift check: %s", e)
+    try:
+        api_response = api_fetcher()
+        api_fetch_succeeded = True
+        warnings = detect_roster_drift(yaml_config, api_response)
+    except Exception as e:  # noqa: BLE001 — api_fetcher is caller-supplied; any failure degrades to YAML-only
+        warnings = [
+            (
+                f"API drift check skipped due to fetch failure: {type(e).__name__}: {e}. "
+                f"Proceeding with delegates.yaml as the sole source."
+            )
+        ]
+        logger.warning("API fetch failed during drift check: %s", e)
 
     active = [d for d in yaml_config.delegates if d.is_active_during(period.start, period.end)]
     return RosterResult(
@@ -320,19 +201,3 @@ def build_roster_for_period(
         api_delegate_count=len(api_response),
         api_fetch_succeeded=api_fetch_succeeded,
     )
-
-
-def to_dataframe(delegates: list[Delegate]) -> pd.DataFrame:
-    """Build the per-delegate Dataframe consumed by sky_protocol.
-
-    Columns:'Delegate Name', 'Delegate Contract', 'Start Date'. Start Date is formatted '%Y-%m-%d - sky_protocol parses
-    it back with date.fromisoformat, so the format matters.
-
-    Returns:
-        Three-column DataFrame, one row per delegate.
-    """
-    return pd.DataFrame({
-        "Delegate Name": [d.name for d in delegates],
-        "Delegate Contract": [d.vote_delegate_address for d in delegates],
-        "Start Date": [d.start_date.strftime("%Y-%m-%d") for d in delegates],
-    })

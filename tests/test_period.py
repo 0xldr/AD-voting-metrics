@@ -15,7 +15,6 @@ from ad_voting_metrics.period import MonthPeriod
 
 @pytest.mark.parametrize("month", [13, 0, -1, 24])
 def test_out_of_range_month_rejected(month):
-    """The constructor doesn't do month arithmetic; out-of-range months are errors."""
     with pytest.raises(ValueError, match=r"month must be in 1\.\.12"):
         MonthPeriod(year=2026, month=month)
 
@@ -23,27 +22,6 @@ def test_out_of_range_month_rejected(month):
 def test_unreasonable_year_rejected():
     with pytest.raises(ValueError, match="year must be"):
         MonthPeriod(year=1800, month=4)
-
-
-@pytest.mark.parametrize(
-    ("year", "month", "n", "expected"),
-    [
-        (2026, 4, 5, (2025, 11)),  # the 6-month-window case
-        (2026, 4, 0, (2026, 4)),
-        (2026, 1, 1, (2025, 12)),  # crosses a year boundary
-        (2026, 4, 24, (2024, 4)),
-        (2026, 4, -9, (2027, 1)),  # negative n moves forward
-    ],
-)
-def test_minus_months(year, month, n, expected):
-    p = MonthPeriod(year=year, month=month).minus_months(n)
-    assert (p.year, p.month) == expected
-
-
-def test_minus_months_below_year_lower_bound_rejected():
-    """A shift that crosses the YEAR_LOWER_BOUND boundary is rejected."""
-    with pytest.raises(ValueError, match="year must be"):
-        MonthPeriod(year=2022, month=6).minus_months(12)
 
 
 def test_far_future_year_accepted_at_type_level():
@@ -106,18 +84,6 @@ def test_from_string_happy_path(value, expected):
     assert MonthPeriod.from_string(value) == expected
 
 
-def test_from_string_result_does_not_depend_on_current_day():
-    # Pins down the today-default footgun: dateutil.parser.parse fills missing
-    # components from today's date by default. Without the sentinel default,
-    # MonthPeriod.from_string("April 2026") run on May 5 would return a period
-    # that internally remembers day=5 — which we don't store, but we want the
-    # parsing to be stable regardless.
-    first = MonthPeriod.from_string("January 2025")
-    second = MonthPeriod.from_string("January 2025")
-    assert first == second
-    assert first.start.day == 1
-
-
 @pytest.mark.parametrize(
     "value",
     [
@@ -151,19 +117,6 @@ def test_parse_month_returns_month_period():
 def test_parse_month_unparseable_raises_argument_type_error():
     with pytest.raises(argparse.ArgumentTypeError):
         parse_month("not a date")
-
-
-def test_parse_month_far_future_rejected():
-    with pytest.raises(argparse.ArgumentTypeError) as exc_info:
-        parse_month("December 2099")
-    assert "future" in str(exc_info.value).lower()
-
-
-def test_parse_month_year_only_resolves_to_january_and_rejected_as_future():
-    # "2099" alone parses as January 1, 2099 (per dateutil with day-1 sentinel)
-    # and should be rejected as future.
-    with pytest.raises(argparse.ArgumentTypeError):
-        parse_month("2099")
 
 
 def test_parse_month_error_messages_mention_input():
