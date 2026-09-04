@@ -213,7 +213,7 @@ def _make_fetch_args(
 
 
 def _canned_delegation_outputs(period: MonthPeriod, contract: str, name: str) -> pd.DataFrame:
-    """Return a sky_protocol-shaped DataFrame covering one delegate for every day in period."""
+    """Return a get_delegate_list_sky-shaped DataFrame covering one delegate for every day in period."""
     days = list(pd.date_range(period.start, period.end, freq="D").date)
     return pd.DataFrame([{"contract": contract, "name": name, "date": d, "sky": 100.0} for d in days])
 

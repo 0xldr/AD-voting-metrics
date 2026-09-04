@@ -2,7 +2,6 @@
 
 from datetime import date
 from pathlib import Path
-from typing import cast
 
 import pytest
 import yaml
@@ -70,128 +69,6 @@ def test_end_date_must_be_strictly_after_start(end_date):
             vote_delegate_address=_ADDR_GENERIC,
             start_date=date(2025, 1, 1),
             end_date=end_date,
-        )
-
-
-# ---------------------------------------------------------------------------
-# LevelAssignment — schema and validation
-# ---------------------------------------------------------------------------
-
-
-def _delegate_with_levels(
-    *,
-    levels: list[dict] | None = None,
-    name: str = "TestDelegate",
-    vote_delegate_address: str = "0x0000000000000000000000000000000000000001",
-    start_date: date = date(2024, 1, 1),
-    end_date: date | None = None,
-) -> Delegate:
-    """Return a Delegate with optional level assignments and field overrides.
-
-    `levels` is typed `list[dict]` rather than `list[LevelAssignment]`
-    because test callers feed in raw YAML-shaped dicts to exercise
-    pydantic's coercion. Pydantic accepts that, but pyright treats
-    `list` as invariant and won't accept `list[dict]` where
-    `list[LevelAssignment]` is declared - hence the cast at the
-    boundary.
-    """
-    return Delegate(
-        name=name,
-        vote_delegate_address=vote_delegate_address,
-        start_date=start_date,
-        end_date=end_date,
-        levels=cast("list", levels) if levels is not None else [],
-    )
-
-
-def test_delegate_with_no_levels_constructs():
-    """The common case: a delegate with no governance level assignment."""
-    d = _delegate_with_levels(levels=[])
-    assert d.levels == []
-
-
-@pytest.mark.parametrize("bad_level", [3, 0, -1])
-def test_level_must_be_1_or_2(bad_level):
-    """Level 3 is daily-computed, never YAML-set. Zero and negative are invalid."""
-    with pytest.raises(ValidationError, match="level must be 1 or 2"):
-        _delegate_with_levels(levels=[{"level": bad_level, "start_date": date(2025, 12, 1)}])
-
-
-def test_level_assignment_end_must_be_after_start():
-    with pytest.raises(ValidationError, match="must be after"):
-        _delegate_with_levels(
-            levels=[
-                {
-                    "level": 1,
-                    "start_date": date(2025, 12, 1),
-                    "end_date": date(2025, 11, 1),
-                },
-            ],
-        )
-
-
-def test_level_period_must_fit_within_alignment_start():
-    """LevelAssignment can't predate the delegate's alignment start_date."""
-    with pytest.raises(ValidationError, match="before alignment start_date"):
-        _delegate_with_levels(
-            start_date=date(2024, 1, 1),
-            levels=[{"level": 1, "start_date": date(2023, 6, 1)}],
-        )
-
-
-def test_level_period_must_fit_within_alignment_end():
-    """LevelAssignment can't extend past the delegate's alignment end_date."""
-    with pytest.raises(ValidationError, match="after alignment end_date"):
-        _delegate_with_levels(
-            start_date=date(2024, 1, 1),
-            end_date=date(2025, 6, 30),
-            levels=[
-                {
-                    "level": 1,
-                    "start_date": date(2025, 1, 1),
-                    "end_date": date(2025, 12, 31),
-                },
-            ],
-        )
-
-
-def test_open_level_with_exited_delegate_rejected():
-    """A delegate who exited can't have an open-ended level — set both."""
-    with pytest.raises(ValidationError, match="end_date"):
-        _delegate_with_levels(
-            start_date=date(2024, 1, 1),
-            end_date=date(2025, 6, 30),
-            levels=[{"level": 1, "start_date": date(2025, 1, 1), "end_date": None}],
-        )
-
-
-def test_overlapping_levels_rejected():
-    """Two LevelAssignments for the same delegate may not overlap."""
-    with pytest.raises(ValidationError, match="overlap"):
-        _delegate_with_levels(
-            levels=[
-                {
-                    "level": 2,
-                    "start_date": date(2024, 6, 1),
-                    "end_date": date(2025, 6, 30),
-                },
-                {
-                    "level": 1,
-                    "start_date": date(2025, 1, 1),  # overlaps with above
-                    "end_date": date(2025, 12, 31),
-                },
-            ],
-        )
-
-
-def test_levels_with_open_ended_earlier_period_rejected():
-    """An earlier LevelAssignment with no end_date can't be followed by another."""
-    with pytest.raises(ValidationError, match="no end_date"):
-        _delegate_with_levels(
-            levels=[
-                {"level": 2, "start_date": date(2024, 6, 1), "end_date": None},
-                {"level": 1, "start_date": date(2025, 6, 1), "end_date": None},
-            ],
         )
 
 
@@ -566,12 +443,12 @@ def test_build_roster_for_period_records_api_metadata(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# to_dataframe — DataFrame shape compatible with sky_protocol
+# to_dataframe — DataFrame shape consumed by the sources modules
 # ---------------------------------------------------------------------------
 
 
 def test_to_dataframe_columns():
-    """sky_protocol reads exactly Delegate Name, Delegate Contract, Start Date."""
+    """The sources modules read exactly Delegate Name, Delegate Contract, Start Date."""
     delegates = [
         Delegate(
             name="Cloaky",
@@ -584,7 +461,7 @@ def test_to_dataframe_columns():
 
 
 def test_to_dataframe_start_date_is_string():
-    """sky_protocol parses Start Date with date.fromisoformat, so it must be a string in '%Y-%m-%d'."""
+    """Start Date is parsed downstream with date.fromisoformat, so it must be a string in '%Y-%m-%d'."""
     delegates = [
         Delegate(
             name="X",

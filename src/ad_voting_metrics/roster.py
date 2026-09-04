@@ -6,8 +6,6 @@ The YAML is the source of truth. Each entry:
 - vote_delegate_address: on-chain vote delegate contract (lowercase 0x...)
 - start_date: when AD compensation begins (not the contract creation date)
 - end_date: optional, inclusive last day of alignment
-- levels: optional L1/L2 governance assignments (sequences allowed, no overlaps). Level 3 is a computed daily
-  assignment, not roster data, and is never set in the YAML.
 
 Drift detection: every YAML entry with end_date=None should be in the API's currently-aligned response, and vice-versa.
 Mismatches produce warnings - typically the YAML needs updating after a new alignment or an exit.
@@ -17,7 +15,6 @@ import logging
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import date
-from itertools import pairwise
 from pathlib import Path
 
 import pandas as pd
@@ -29,34 +26,6 @@ from .period import MonthPeriod
 logger = logging.getLogger(__name__)
 
 
-class LevelAssignment(BaseModel):
-    """A single L1 or L2 governance assignment.
-
-    A delegate may have a sequence of level assignments over their lifetime (e.g. promoted from L2 to L1) but never two
-    concurrent levels - see Delegate validation for the no-overlap enforcement. Level 3 is never represented here; it's
-    computed daily.
-    """
-
-    level: int
-    start_date: date
-    end_date: date | None = None
-
-    @field_validator("level")
-    @classmethod
-    def _level_is_1_or_2(cls, v: int) -> int:
-        if v not in {1, 2}:
-            msg = f"level must be 1 or 2 (got {v}); level 3 is computed daily and is never set in the YAML"
-            raise ValueError(msg)
-        return v
-
-    @model_validator(mode="after")
-    def _end_after_start(self) -> LevelAssignment:
-        if self.end_date is not None and self.end_date <= self.start_date:
-            msg = f"LevelAssignment end_date {self.end_date} must be after start_date {self.start_date}"
-            raise ValueError(msg)
-        return self
-
-
 class Delegate(BaseModel):
     """A single AD entry, currently or previously active."""
 
@@ -64,9 +33,6 @@ class Delegate(BaseModel):
     vote_delegate_address: str = Field(pattern=r"^0x[0-9a-f]{40}$")
     start_date: date
     end_date: date | None = None
-    # Governance-assigned L1/L2 history. Most delegates have an empty list -
-    # they are L3 candidates, and L3 is never recorded in the YAML.
-    levels: list[LevelAssignment] = Field(default_factory=list)
 
     @field_validator("name")
     @classmethod
@@ -80,62 +46,6 @@ class Delegate(BaseModel):
         if self.end_date is not None and self.end_date <= self.start_date:
             msg = f"end_date {self.end_date} must be after start_date {self.start_date} for delegate {self.name}"
             raise ValueError(msg)
-        return self
-
-    @model_validator(mode="after")
-    def _level_periods_fit_alignment(self) -> Delegate:
-        """Every LevelAssignment must fall within the delegate's alignment period.
-
-        Raises:
-            ValueError: if any LevelAssignment falls outside the
-            delegate's alignment period.
-        """
-        for la in self.levels:
-            if la.start_date < self.start_date:
-                msg = (
-                    f"LevelAssignment start_date {la.start_date} for delegate "
-                    f"{self.name} is before alignment start_date {self.start_date}"
-                )
-                raise ValueError(msg)
-            if la.end_date is not None and self.end_date is not None and la.end_date > self.end_date:
-                msg = (
-                    f"LevelAssignment end_date {la.end_date} for delegate "
-                    f"{self.name} is after alignment end_date {self.end_date}"
-                )
-                raise ValueError(msg)
-            # An open-ended LevelAssignment on an exited delegate is invalid.
-            if la.end_date is None and self.end_date is not None:
-                msg = (
-                    f"LevelAssignment for delegate {self.name} has no end_date but the delegate's alignment ends on "
-                    f"{self.end_date}; set the LevelAssignment end_date too."
-                )
-                raise ValueError(msg)
-        return self
-
-    @model_validator(mode="after")
-    def _level_periods_no_overlap(self) -> Delegate:
-        """Sequential LevelAssignments are allowed; overlapping ones aren't.
-
-        Raises:
-            ValueError: if two LevelAssignments overlap, or a non-final
-                one lacks an end_date.
-        """
-        if len(self.levels) <= 1:
-            return self
-        sorted_levels = sorted(self.levels, key=lambda la: la.start_date)
-        for prev, curr in pairwise(sorted_levels):
-            if prev.end_date is None:
-                msg = (
-                    f"LevelAssignment starting {prev.start_date} for delegate {self.name} has no end_date but is "
-                    f"followed by another LevelAssignment starting {curr.start_date}; set the earlier end_date"
-                )
-                raise ValueError(msg)
-            if prev.end_date >= curr.start_date:
-                msg = (
-                    f"LevelAssignments for delegate {self.name} overlap period ending {prev.end_date} overlaps with "
-                    f"period starting {curr.start_date}."
-                )
-                raise ValueError(msg)
         return self
 
     def is_active_during(self, period_start: date, period_end: date) -> bool:
@@ -295,10 +205,10 @@ def build_roster_for_period(
 
 
 def to_dataframe(delegates: list[Delegate]) -> pd.DataFrame:
-    """Build the per-delegate Dataframe consumed by sky_protocol.
+    """Build the per-delegate DataFrame consumed by the sources modules.
 
-    Columns:'Delegate Name', 'Delegate Contract', 'Start Date'. Start Date is formatted '%Y-%m-%d - sky_protocol parses
-    it back with date.fromisoformat, so the format matters.
+    Columns: 'Delegate Name', 'Delegate Contract', 'Start Date'. Start Date is formatted '%Y-%m-%d'; sky_polling and
+    sky_executive parse it back with date.fromisoformat, so the format matters.
 
     Returns:
         Three-column DataFrame, one row per delegate.

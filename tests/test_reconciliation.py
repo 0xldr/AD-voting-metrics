@@ -89,7 +89,6 @@ def _make_entry(**overrides: object) -> ReconciliationEntry:
         "api_fetch_succeeded": True,
         "active_during_period": 0,
         "drift_warnings": [],
-        "delegation_source": "onchain",
         "delegation_factory_block": 22368737,
         "delegation_last_synced_block": 22500000,
         "output_files": [],
@@ -130,7 +129,6 @@ def test_build_entry_minimal():
     assert entry["api_fetch_succeeded"] is True
     assert entry["active_during_period"] == 2
     assert entry["drift_warnings"] == []
-    assert entry["delegation_source"] == "onchain"
     assert entry["delegation_factory_block"] == 22368737
     assert entry["delegation_last_synced_block"] == 22500000
     assert entry["output_files"] == ["/tmp/output.csv"]

@@ -22,19 +22,11 @@ delegates:
     vote_delegate_address: "0xfc48fbca739079aab08216c4d5e506b96593753d"
     start_date: 2023-07-04
     end_date: null
-    levels:
-      - level: 2
-        start_date: 2025-12-01
-        end_date: null
 
   - name: BLUE
     vote_delegate_address: "0x173a1c04b79ed9266721c1154daa29addc0b9558"
     start_date: 2023-09-28
     end_date: null
-    levels:
-      - level: 1
-        start_date: 2025-12-01
-        end_date: null
 
   - name: PBG
     vote_delegate_address: "0x555230eca835a808518ec3ea3082f05502bab850"
@@ -50,10 +42,6 @@ delegates:
     vote_delegate_address: "0x0f23de72e1581857eacd6308aebb69cf3a49cc86"
     start_date: 2023-06-06
     end_date: null
-    levels:
-      - level: 1
-        start_date: 2025-12-01
-        end_date: null
 
   - name: AegisD
     vote_delegate_address: "0xd260762e442ea1893e5ed5e7d28984e19aafbf5e"
@@ -84,12 +72,12 @@ delegates:
     vote_delegate_address: "0x2c89024c13a80bc1b662a3db990524652c15221c"
     start_date: 2025-07-01
     end_date: 2026-06-11
-  
+
   - name: OPEX
     vote_delegate_address: "0x16a5a76904140e01f31c7e7abd9fb81988469ba4"
     start_date: 2026-01-21
     end_date: null
-  
+
   - name: AxisLegati
     vote_delegate_address: "0x7bc5a420b6524fa925f1321a01825438369e3c2e"
     start_date: 2026-02-01
