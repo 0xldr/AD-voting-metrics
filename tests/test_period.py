@@ -131,19 +131,6 @@ def test_parse_month_unparseable_raises_argument_type_error():
         parse_month("not a date")
 
 
-def test_parse_month_far_future_rejected():
-    with pytest.raises(argparse.ArgumentTypeError) as exc_info:
-        parse_month("December 2099")
-    assert "future" in str(exc_info.value).lower()
-
-
-def test_parse_month_year_only_resolves_to_january_and_rejected_as_future():
-    # "2099" alone parses as January 1, 2099 (per dateutil with day-1 sentinel)
-    # and should be rejected as future.
-    with pytest.raises(argparse.ArgumentTypeError):
-        parse_month("2099")
-
-
 def test_parse_month_error_messages_mention_input():
     """The error message helps the user fix their input."""
     with pytest.raises(argparse.ArgumentTypeError) as exc_info:

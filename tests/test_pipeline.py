@@ -1,6 +1,5 @@
-"""Tests for pipeline.run_fetch and its helpers."""
+"""Tests for pipeline.run and its helpers."""
 
-import argparse
 from datetime import date
 from unittest.mock import MagicMock, patch
 
@@ -11,9 +10,9 @@ from ad_voting_metrics import pipeline
 from ad_voting_metrics.period import MonthPeriod
 from ad_voting_metrics.pipeline import (
     _build_sky_and_ranking_frames,
-    _write_fetch_csvs,
-    _write_fetch_workbook_tabs,
-    run_fetch,
+    _write_csvs,
+    _write_workbook_tabs,
+    run,
 )
 from ad_voting_metrics.roster import Delegate
 
@@ -58,11 +57,11 @@ def test_build_sky_and_ranking_frames_sorts_sky_and_ranks_delegates():
 
 
 # ---------------------------------------------------------------------------
-# _write_fetch_csvs — file IO to OUTPUT_DIR
+# _write_csvs — file IO to OUTPUT_DIR
 # ---------------------------------------------------------------------------
 
 
-def test_write_fetch_csvs_writes_both_files_and_returns_paths(tmp_path, monkeypatch):
+def test_write_csvs_writes_both_files_and_returns_paths(tmp_path, monkeypatch):
     """Writes sky.csv and vote_participation.csv to OUTPUT_DIR; returns both paths in order."""
     monkeypatch.setattr(pipeline, "OUTPUT_DIR", tmp_path)
 
@@ -78,14 +77,14 @@ def test_write_fetch_csvs_writes_both_files_and_returns_paths(tmp_path, monkeypa
     poll_info = [{"pollId": 101, "startDate": date(2026, 4, 1), "endDate": date(2026, 4, 3), "title": "Test"}]
     spell_info: list[dict] = []
 
-    result = _write_fetch_csvs(df, df_sky, poll_info, spell_info)
+    result = _write_csvs(df, df_sky, poll_info, spell_info)
 
     assert [p.name for p in result] == ["sky.csv", "vote_participation.csv"]
     assert all(p.exists() for p in result)
     assert (tmp_path / "sky.csv").read_text().splitlines()[0] == "contract,date,sky"
 
 
-def test_write_fetch_csvs_defuses_formula_like_titles(tmp_path, monkeypatch):
+def test_write_csvs_defuses_formula_like_titles(tmp_path, monkeypatch):
     """API-sourced titles starting with a formula character are quoted so spreadsheet apps render them as text."""
     monkeypatch.setattr(pipeline, "OUTPUT_DIR", tmp_path)
 
@@ -107,7 +106,7 @@ def test_write_fetch_csvs_defuses_formula_like_titles(tmp_path, monkeypatch):
         },
     ]
 
-    _write_fetch_csvs(df, df_sky, poll_info, [])
+    _write_csvs(df, df_sky, poll_info, [])
 
     participation = (tmp_path / "vote_participation.csv").read_text()
     assert "'=IMPORTDATA" in participation
@@ -115,11 +114,11 @@ def test_write_fetch_csvs_defuses_formula_like_titles(tmp_path, monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# _write_fetch_workbook_tabs — sheets writer orchestration
+# _write_workbook_tabs — sheets writer orchestration
 # ---------------------------------------------------------------------------
 
 
-def test_write_fetch_workbook_tabs_calls_three_writers_on_success():
+def test_write_workbook_tabs_calls_three_writers_on_success():
     """All three tab writers are invoked when get_workbook succeeds."""
     period = MonthPeriod(year=2026, month=4)
     workbook = MagicMock()
@@ -130,14 +129,14 @@ def test_write_fetch_workbook_tabs_calls_three_writers_on_success():
         patch("ad_voting_metrics.pipeline.sheets.write_communication_master") as c_mock,
         patch("ad_voting_metrics.pipeline.sheets.write_daily_data") as d_mock,
     ):
-        _write_fetch_workbook_tabs(period, pd.DataFrame(), pd.DataFrame(), [], [])
+        _write_workbook_tabs(period, pd.DataFrame(), pd.DataFrame(), [], [])
 
     p_mock.assert_called_once()
     c_mock.assert_called_once()
     d_mock.assert_called_once()
 
 
-def test_write_fetch_workbook_tabs_skips_tabs_when_workbook_open_fails():
+def test_write_workbook_tabs_skips_tabs_when_workbook_open_fails():
     """If get_workbook raises RuntimeError, no tab writer runs and no exception propagates."""
     period = MonthPeriod(year=2026, month=4)
 
@@ -147,14 +146,14 @@ def test_write_fetch_workbook_tabs_skips_tabs_when_workbook_open_fails():
         patch("ad_voting_metrics.pipeline.sheets.write_communication_master") as c_mock,
         patch("ad_voting_metrics.pipeline.sheets.write_daily_data") as d_mock,
     ):
-        _write_fetch_workbook_tabs(period, pd.DataFrame(), pd.DataFrame(), [], [])
+        _write_workbook_tabs(period, pd.DataFrame(), pd.DataFrame(), [], [])
 
     p_mock.assert_not_called()
     c_mock.assert_not_called()
     d_mock.assert_not_called()
 
 
-def test_write_fetch_workbook_tabs_continues_after_value_error():
+def test_write_workbook_tabs_continues_after_value_error():
     """A ValueError from one writer is logged; remaining writers still run."""
     period = MonthPeriod(year=2026, month=4)
     workbook = MagicMock()
@@ -168,13 +167,13 @@ def test_write_fetch_workbook_tabs_continues_after_value_error():
         patch("ad_voting_metrics.pipeline.sheets.write_communication_master") as c_mock,
         patch("ad_voting_metrics.pipeline.sheets.write_daily_data") as d_mock,
     ):
-        _write_fetch_workbook_tabs(period, pd.DataFrame(), pd.DataFrame(), [], [])
+        _write_workbook_tabs(period, pd.DataFrame(), pd.DataFrame(), [], [])
 
     c_mock.assert_called_once()
     d_mock.assert_called_once()
 
 
-def test_write_fetch_workbook_tabs_continues_after_gspread_api_error():
+def test_write_workbook_tabs_continues_after_gspread_api_error():
     """A gspread APIError from a writer is logged; remaining writers still run."""
     period = MonthPeriod(year=2026, month=4)
     workbook = MagicMock()
@@ -190,26 +189,15 @@ def test_write_fetch_workbook_tabs_continues_after_gspread_api_error():
         patch("ad_voting_metrics.pipeline.sheets.write_communication_master") as c_mock,
         patch("ad_voting_metrics.pipeline.sheets.write_daily_data") as d_mock,
     ):
-        _write_fetch_workbook_tabs(period, pd.DataFrame(), pd.DataFrame(), [], [])
+        _write_workbook_tabs(period, pd.DataFrame(), pd.DataFrame(), [], [])
 
     c_mock.assert_called_once()
     d_mock.assert_called_once()
 
 
 # ---------------------------------------------------------------------------
-# run_fetch — end-to-end orchestration with everything mocked
+# run — end-to-end orchestration with everything mocked
 # ---------------------------------------------------------------------------
-
-
-def _make_fetch_args(
-    month: MonthPeriod | None = None,
-    *,
-    rebuild: bool = False,
-) -> argparse.Namespace:
-    return argparse.Namespace(
-        month=month or MonthPeriod(year=2026, month=4),
-        rebuild=rebuild,
-    )
 
 
 def _canned_delegation_outputs(period: MonthPeriod, contract: str, name: str) -> pd.DataFrame:
@@ -218,8 +206,8 @@ def _canned_delegation_outputs(period: MonthPeriod, contract: str, name: str) ->
     return pd.DataFrame([{"contract": contract, "name": name, "date": d, "sky": 100.0} for d in days])
 
 
-def test_run_fetch_writes_csvs_and_workbook_tabs(tmp_path, monkeypatch):
-    """End-to-end fetch with all externals mocked → CSVs + 3 workbook tabs written."""
+def test_run_writes_csvs_and_workbook_tabs(tmp_path, monkeypatch):
+    """End-to-end run with all externals mocked → CSVs + 3 workbook tabs written."""
     monkeypatch.setattr(pipeline, "OUTPUT_DIR", tmp_path)
     monkeypatch.setattr(pipeline, "RECONCILIATION_LOG_PATH", tmp_path / "rec")
 
@@ -256,7 +244,7 @@ def test_run_fetch_writes_csvs_and_workbook_tabs(tmp_path, monkeypatch):
             api_delegate_count=1,
             api_fetch_succeeded=True,
         )
-        run_fetch(_make_fetch_args(period, rebuild=False))
+        run(period, rebuild=False)
 
     assert (tmp_path / "sky.csv").exists()
     assert (tmp_path / "vote_participation.csv").exists()
@@ -266,7 +254,7 @@ def test_run_fetch_writes_csvs_and_workbook_tabs(tmp_path, monkeypatch):
     entry_mock.assert_called_once()
 
 
-def test_run_fetch_logs_drift_warnings(tmp_path, monkeypatch):
+def test_run_logs_drift_warnings(tmp_path, monkeypatch):
     """Drift warnings on the roster surface through logger.warning."""
     monkeypatch.setattr(pipeline, "OUTPUT_DIR", tmp_path)
     monkeypatch.setattr(pipeline, "RECONCILIATION_LOG_PATH", tmp_path / "rec")
@@ -302,6 +290,6 @@ def test_run_fetch_logs_drift_warnings(tmp_path, monkeypatch):
             api_delegate_count=1,
             api_fetch_succeeded=True,
         )
-        run_fetch(_make_fetch_args(period))
+        run(period, rebuild=False)
 
     warning_mock.assert_any_call("YAML lists Z but API doesn't")

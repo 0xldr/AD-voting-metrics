@@ -94,17 +94,14 @@ def test_parser_requires_month():
 # ---------------------------------------------------------------------------
 
 
-def test_main_runs_fetch(monkeypatch):
-    """main(['--month', ...]) runs the fetch pipeline with the parsed period."""
+def test_main_runs_pipeline(monkeypatch):
+    """main(['--month', ...]) runs the pipeline with the parsed period and rebuild flag."""
     monkeypatch.setattr("ad_voting_metrics.cli.check_period_has_ended", lambda *_, **__: None)
 
-    with patch("ad_voting_metrics.cli.run_fetch") as fetch_mock:
+    with patch("ad_voting_metrics.cli.run") as run_mock:
         main(["--month", "2026-04"])
 
-    fetch_mock.assert_called_once()
-    args = fetch_mock.call_args.args[0]
-    assert args.month == MonthPeriod(year=2026, month=4)
-    assert args.rebuild is False
+    run_mock.assert_called_once_with(MonthPeriod(year=2026, month=4), rebuild=False)
 
 
 # ---------------------------------------------------------------------------

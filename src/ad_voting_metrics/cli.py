@@ -11,35 +11,24 @@ from datetime import UTC, date, datetime, timedelta
 from dotenv import load_dotenv
 
 from .period import MonthPeriod
-from .pipeline import run_fetch
+from .pipeline import run
 
 
 def parse_month(value: str) -> MonthPeriod:
-    """Argparse type callback: parse --month value into a MonthPeriod.
+    """Argparse type callback: parse the --month value into a MonthPeriod.
 
-    Wraps MonthPeriod.from_string() and rejects future months.
+    Whether the month has ended is checked separately in `check_period_has_ended`.
 
     Returns:
-        The parsed MonthPeriod
+        The parsed MonthPeriod.
 
     Raises:
-        argparse.ArgumentTypeError: if the value is unparseable or
-            resolves entirely to a future month.
+        argparse.ArgumentTypeError: if the value is unparseable.
     """
     try:
-        period = MonthPeriod.from_string(value)
+        return MonthPeriod.from_string(value)
     except ValueError as e:
         raise argparse.ArgumentTypeError(str(e)) from e
-
-    today = datetime.now(UTC).date()
-    if period.start > today:
-        msg = (
-            f"{value!r} resolves to {period.start.isoformat()}..{period.end.isoformat()}, "
-            f"which is entirely in the future."
-        )
-        raise argparse.ArgumentTypeError(msg)
-
-    return period
 
 
 def build_arg_parser() -> argparse.ArgumentParser:
@@ -103,7 +92,7 @@ def check_period_has_ended(period: MonthPeriod, today: date) -> None:
 
 
 def main(argv: list[str] | None = None) -> None:
-    """Entry point: configure logging, parse argv, run the fetch pipeline.
+    """Entry point: configure logging, parse argv, run the pipeline.
 
     SystemExit propagates from `check_period_has_ended` and from argparse on a bad command line.
     """
@@ -118,4 +107,4 @@ def main(argv: list[str] | None = None) -> None:
 
     check_period_has_ended(args.month, today=datetime.now(UTC).date())
 
-    run_fetch(args)
+    run(args.month, rebuild=args.rebuild)

@@ -1,10 +1,9 @@
-"""Orchestration for the fetch run.
+"""Orchestration for a single run.
 
 Pulls SKY balances from on-chain delegation events + poll/spell vote data from vote.sky.money, writes CSV outputs to
 OUTPUT_DIR, and (best-effort) writes the Participation/Communication/Daily tabs to the workbook.
 """
 
-import argparse
 import logging
 from collections.abc import Callable
 from datetime import UTC, datetime
@@ -76,7 +75,7 @@ def _defuse_csv_formulas(df: pd.DataFrame) -> pd.DataFrame:
     return df.map(defuse)
 
 
-def _write_fetch_csvs(
+def _write_csvs(
     df: pd.DataFrame,
     df_sky: pd.DataFrame,
     poll_info: list[dict],
@@ -102,7 +101,7 @@ def _write_fetch_csvs(
     return [sky_csv, participation_csv]
 
 
-def _write_fetch_workbook_tabs(
+def _write_workbook_tabs(
     period: MonthPeriod,
     df: pd.DataFrame,
     df_ranking: pd.DataFrame,
@@ -133,10 +132,8 @@ def _write_fetch_workbook_tabs(
     _safe_write("Daily Data", sheets.write_daily_data, workbook, period, df_ranking)
 
 
-def run_fetch(args: argparse.Namespace) -> None:
+def run(period: MonthPeriod, *, rebuild: bool) -> None:
     """Pull data from on-chain + APIs, write CSVs and workbook tabs."""
-    period = args.month
-
     logger.info("Querying %s (%s through %s)", period, period.start.isoformat(), period.end.isoformat())
 
     logger.info("Building delegate roster from delegates.yaml and vote.sky.money API...")
@@ -149,7 +146,7 @@ def run_fetch(args: argparse.Namespace) -> None:
     metrics = to_dataframe(delegates)
 
     logger.info("Getting RANKING...")
-    df_sky, df_ranking = _build_sky_and_ranking_frames(metrics, period, rebuild=args.rebuild)
+    df_sky, df_ranking = _build_sky_and_ranking_frames(metrics, period, rebuild=rebuild)
     sky_lookup = delegation.build_sky_lookup(df_sky)
 
     logger.info("Getting POLL IDS...")
@@ -172,8 +169,8 @@ def run_fetch(args: argparse.Namespace) -> None:
         # silently no-op'ing every time.
         logger.exception("On-chain executive-vote verification failed; leaving Pending cells as-is")
 
-    output_files = _write_fetch_csvs(metrics, df_sky, poll_info, spell_info)
-    _write_fetch_workbook_tabs(period, metrics, df_ranking, poll_info, spell_info)
+    output_files = _write_csvs(metrics, df_sky, poll_info, spell_info)
+    _write_workbook_tabs(period, metrics, df_ranking, poll_info, spell_info)
 
     entry = build_entry(
         period=period,
