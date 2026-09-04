@@ -119,7 +119,11 @@ markers = [
 addopts = "-m 'not integration'"
 # Unscoped: pandas raises with stacklevel pointing at the caller, so a
 # `:pandas` module filter would never match.
-filterwarnings = ["error::FutureWarning"]
+filterwarnings = [
+    "error::FutureWarning",
+    # web3's WebSocket provider imports websockets.legacy; this repo only uses the HTTP provider.
+    "ignore:websockets.legacy is deprecated:DeprecationWarning",
+]
 
 [tool.mypy]
 files = ["src", "tests"]
