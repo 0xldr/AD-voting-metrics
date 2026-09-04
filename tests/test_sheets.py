@@ -704,7 +704,7 @@ def _make_participation_df():
         {
             "Delegate Name": ["BLUE", "Cloaky", "BONAPUBLICA"],
             "Delegate Contract": ["0xaaa", "0xbbb", "0xccc"],
-            "Start Date": ["2025-12-01", "2025-12-01", "2025-12-01"],
+            "Start Date": [date(2025, 12, 1), date(2025, 12, 1), date(2025, 12, 1)],
             "12345": ["Yes", "No", "Yes"],
             "67890": ["Pending verification", "Yes", "Yes"],
             "0xspell001": ["Yes", "No Delegated SKY", "Yes"],
@@ -801,7 +801,7 @@ def test_build_participation_dataframe_unknown_column_has_blank_metadata():
         {
             "Delegate Name": ["BLUE"],
             "Delegate Contract": ["0xaaa"],
-            "Start Date": ["2025-12-01"],
+            "Start Date": [date(2025, 12, 1)],
             "99999": ["Yes"],
         }
     )
@@ -819,7 +819,7 @@ def test_build_participation_dataframe_zero_polls_returns_header_only():
         {
             "Delegate Name": ["BLUE", "Cloaky"],
             "Delegate Contract": ["0xaaa", "0xbbb"],
-            "Start Date": ["2025-12-01", "2025-12-01"],
+            "Start Date": [date(2025, 12, 1), date(2025, 12, 1)],
         }
     )
     out = sheets.build_participation_dataframe(df, [], [])
@@ -1010,7 +1010,7 @@ def test_write_communication_master_first_fetch_defaults(participation, expected
         {
             "Delegate Name": ["BLUE"],
             "Delegate Contract": ["0xaaa"],
-            "Start Date": ["2025-12-01"],
+            "Start Date": [date(2025, 12, 1)],
             "12345": [participation],
         }
     )
@@ -1036,7 +1036,7 @@ def test_write_communication_master_missing_column_raises(empty_existing_ws):
         {
             "Delegate Name": ["BLUE", "NewDelegate"],
             "Delegate Contract": ["0xaaa", "0xddd"],
-            "Start Date": ["2025-12-01", "2025-12-01"],
+            "Start Date": [date(2025, 12, 1), date(2025, 12, 1)],
             "12345": ["Yes", "Yes"],
         }
     )

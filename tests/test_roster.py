@@ -9,6 +9,7 @@ from pydantic import ValidationError
 
 from ad_voting_metrics.period import MonthPeriod
 from ad_voting_metrics.roster import (
+    ROSTER_COLUMNS,
     Delegate,
     DelegatesConfig,
     build_roster_for_period,
@@ -457,11 +458,11 @@ def test_to_dataframe_columns():
         ),
     ]
     df = to_dataframe(delegates)
-    assert list(df.columns) == ["Delegate Name", "Delegate Contract", "Start Date"]
+    assert list(df.columns) == list(ROSTER_COLUMNS)
 
 
-def test_to_dataframe_start_date_is_string():
-    """Start Date is parsed downstream with date.fromisoformat, so it must be a string in '%Y-%m-%d'."""
+def test_to_dataframe_start_date_is_date():
+    """Start Date is compared against poll and spell dates downstream, so it stays a date object."""
     delegates = [
         Delegate(
             name="X",
@@ -470,10 +471,10 @@ def test_to_dataframe_start_date_is_string():
         ),
     ]
     df = to_dataframe(delegates)
-    assert df.iloc[0]["Start Date"] == "2024-07-04"
+    assert df.iloc[0]["Start Date"] == date(2024, 7, 4)
 
 
 def test_to_dataframe_empty():
     df = to_dataframe([])
-    assert list(df.columns) == ["Delegate Name", "Delegate Contract", "Start Date"]
+    assert list(df.columns) == list(ROSTER_COLUMNS)
     assert len(df) == 0

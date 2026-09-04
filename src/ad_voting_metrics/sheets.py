@@ -21,6 +21,7 @@ from gspread_dataframe import get_as_dataframe, set_with_dataframe
 
 from .paths import BACKUP_DIR as _DEFAULT_BACKUP_DIR
 from .period import MonthPeriod
+from .roster import ROSTER_COLUMNS
 from .settings import EnvSettings
 from .vote_status import PARTICIPATED, PENDING_VERIFICATION, cross_reference_one
 
@@ -386,8 +387,7 @@ def build_participation_dataframe(
         Wide-format participation DataFrame.
     """
     delegate_names = df["Delegate Name"].tolist()
-    fixed_cols = {"Delegate Name", "Delegate Contract", "Start Date"}
-    poll_columns = [c for c in df.columns if c not in fixed_cols]
+    poll_columns = [c for c in df.columns if c not in ROSTER_COLUMNS]
     columns = [*PARTICIPATION_METADATA_COLUMNS, *delegate_names]
 
     if not poll_columns:
@@ -566,8 +566,7 @@ def write_communication_master(
         raise ValueError("df must have a 'Delegate Name' column")
 
     delegate_names = df["Delegate Name"].tolist()
-    fixed_cols = {"Delegate Name", "Delegate Contract", "Start Date"}
-    poll_columns = [str(c) for c in df.columns if c not in fixed_cols]
+    poll_columns = [str(c) for c in df.columns if c not in ROSTER_COLUMNS]
 
     worksheet = get_or_create_tab(
         workbook,

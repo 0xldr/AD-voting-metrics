@@ -387,7 +387,7 @@ def test_get_delegate_list_sky_returns_one_row_per_delegate_per_day():
     """For a 2-day period with 1 delegate, output covers both days."""
     df = pd.DataFrame(
         [
-            {"Delegate Name": "Alice", "Delegate Contract": "0xaaa", "Start Date": "2024-01-01"},
+            {"Delegate Name": "Alice", "Delegate Contract": "0xaaa", "Start Date": date(2024, 1, 1)},
         ]
     )
     fake_all_sky = _sky_df_indexed(
@@ -409,7 +409,7 @@ def test_get_delegate_list_sky_carries_balance_forward_and_zeros_before_first_ev
     """Balance set on day 2 is zero on day 1 (before first event) and carried forward to day 3."""
     df = pd.DataFrame(
         [
-            {"Delegate Name": "Alice", "Delegate Contract": "0xaaa", "Start Date": "2024-01-01"},
+            {"Delegate Name": "Alice", "Delegate Contract": "0xaaa", "Start Date": date(2024, 1, 1)},
         ]
     )
     fake_all_sky = _sky_df_indexed(
@@ -433,7 +433,7 @@ def test_get_delegate_list_sky_carries_pre_period_balance_across_whole_period():
     """A delegate whose last Lock/Free predates the period keeps that balance every in-period day."""
     df = pd.DataFrame(
         [
-            {"Delegate Name": "Alice", "Delegate Contract": "0xaaa", "Start Date": "2024-01-01"},
+            {"Delegate Name": "Alice", "Delegate Contract": "0xaaa", "Start Date": date(2024, 1, 1)},
         ]
     )
     # Last (and only) event is in March; the queried period is April, with no April events.
@@ -450,7 +450,7 @@ def test_get_delegate_list_sky_lowercases_name():
     """The name column is the delegate's name lowercased and stripped."""
     df = pd.DataFrame(
         [
-            {"Delegate Name": "  Alice  ", "Delegate Contract": "0xaaa", "Start Date": "2024-01-01"},
+            {"Delegate Name": "  Alice  ", "Delegate Contract": "0xaaa", "Start Date": date(2024, 1, 1)},
         ]
     )
     fake_all_sky = _sky_df_indexed([("0xaaa", "2026-04-01", 1000.0)])
@@ -466,8 +466,8 @@ def test_get_delegate_list_sky_multiple_delegates():
     """Two delegates produce separate (contract, name, sky) entries per day."""
     df = pd.DataFrame(
         [
-            {"Delegate Name": "Alice", "Delegate Contract": "0xaaa", "Start Date": "2024-01-01"},
-            {"Delegate Name": "Bob", "Delegate Contract": "0xbbb", "Start Date": "2024-01-01"},
+            {"Delegate Name": "Alice", "Delegate Contract": "0xaaa", "Start Date": date(2024, 1, 1)},
+            {"Delegate Name": "Bob", "Delegate Contract": "0xbbb", "Start Date": date(2024, 1, 1)},
         ]
     )
     fake_all_sky = _sky_df_indexed(

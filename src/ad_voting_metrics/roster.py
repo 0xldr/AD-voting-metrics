@@ -204,11 +204,15 @@ def build_roster_for_period(
     )
 
 
+# Fixed columns of the per-delegate DataFrame. The sources modules add one
+# column per poll id / spell address alongside these.
+ROSTER_COLUMNS = ("Delegate Name", "Delegate Contract", "Start Date")
+
+
 def to_dataframe(delegates: list[Delegate]) -> pd.DataFrame:
     """Build the per-delegate DataFrame consumed by the sources modules.
 
-    Columns: 'Delegate Name', 'Delegate Contract', 'Start Date'. Start Date is formatted '%Y-%m-%d'; sky_polling and
-    sky_executive parse it back with date.fromisoformat, so the format matters.
+    Columns are ROSTER_COLUMNS; Start Date holds `date` objects.
 
     Returns:
         Three-column DataFrame, one row per delegate.
@@ -217,6 +221,7 @@ def to_dataframe(delegates: list[Delegate]) -> pd.DataFrame:
         {
             "Delegate Name": [d.name for d in delegates],
             "Delegate Contract": [d.vote_delegate_address for d in delegates],
-            "Start Date": [d.start_date.strftime("%Y-%m-%d") for d in delegates],
-        }
+            "Start Date": [d.start_date for d in delegates],
+        },
+        columns=list(ROSTER_COLUMNS),
     )

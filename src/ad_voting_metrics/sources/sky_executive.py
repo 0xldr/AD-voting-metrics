@@ -87,7 +87,7 @@ def add_spell_vote_statuses(
 
         for _, row in df.iterrows():
             address = row["Delegate Contract"]
-            first_delegate_date = date.fromisoformat(row["Start Date"])
+            first_delegate_date = row["Start Date"]
 
             sky_on_start = sky_lookup.get((address, start_date), 0.0)
 

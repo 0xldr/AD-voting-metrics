@@ -35,7 +35,7 @@ def test_build_sky_and_ranking_frames_sorts_sky_and_ranks_delegates():
         {
             "Delegate Name": ["alpha", "beta", "gamma"],
             "Delegate Contract": ["0xa", "0xb", "0xc"],
-            "Start Date": ["2024-01-01"] * 3,
+            "Start Date": [date(2024, 1, 1)] * 3,
         }
     )
 
@@ -70,7 +70,7 @@ def test_write_csvs_writes_both_files_and_returns_paths(tmp_path, monkeypatch):
         {
             "Delegate Name": ["alpha"],
             "Delegate Contract": ["0xa"],
-            "Start Date": ["2024-01-01"],
+            "Start Date": [date(2024, 1, 1)],
             "101": ["Yes"],
         }
     )
@@ -93,7 +93,7 @@ def test_write_csvs_defuses_formula_like_titles(tmp_path, monkeypatch):
         {
             "Delegate Name": ["alpha"],
             "Delegate Contract": ["0xa"],
-            "Start Date": ["2024-01-01"],
+            "Start Date": [date(2024, 1, 1)],
             "101": ["Yes"],
         }
     )

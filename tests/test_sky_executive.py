@@ -24,7 +24,7 @@ def test_add_spell_vote_statuses_adds_column_per_spell():
     """Each spell in spell_info gets its own column on df, keyed by spell address."""
     df = pd.DataFrame(
         [
-            {"Delegate Name": "Alice", "Delegate Contract": "0xaaa", "Start Date": "2024-01-01"},
+            {"Delegate Name": "Alice", "Delegate Contract": "0xaaa", "Start Date": date(2024, 1, 1)},
         ]
     )
     sky_lookup = _sky_lookup([("0xaaa", date(2026, 4, 5), 1000.0)])
@@ -43,7 +43,7 @@ def test_add_spell_vote_statuses_with_sky_returns_pending():
     """Non-zero SKY on startDate → 'Pending verification', awaiting on-chain timing."""
     df = pd.DataFrame(
         [
-            {"Delegate Name": "Alice", "Delegate Contract": "0xaaa", "Start Date": "2024-01-01"},
+            {"Delegate Name": "Alice", "Delegate Contract": "0xaaa", "Start Date": date(2024, 1, 1)},
         ]
     )
     sky_lookup = _sky_lookup([("0xaaa", date(2026, 4, 5), 1000.0)])
@@ -58,7 +58,7 @@ def test_add_spell_vote_statuses_zero_sky_returns_no_delegated_sky():
     """SKY balance is 0 on startDate → 'No Delegated SKY'."""
     df = pd.DataFrame(
         [
-            {"Delegate Name": "Alice", "Delegate Contract": "0xaaa", "Start Date": "2024-01-01"},
+            {"Delegate Name": "Alice", "Delegate Contract": "0xaaa", "Start Date": date(2024, 1, 1)},
         ]
     )
     sky_lookup = _sky_lookup([("0xaaa", date(2026, 4, 5), 0.0)])
@@ -73,7 +73,7 @@ def test_add_spell_vote_statuses_not_started_if_spell_started_before_delegate():
     """spell startDate < delegate Start Date → 'Not Started' (overrides everything)."""
     df = pd.DataFrame(
         [
-            {"Delegate Name": "Alice", "Delegate Contract": "0xaaa", "Start Date": "2026-05-01"},
+            {"Delegate Name": "Alice", "Delegate Contract": "0xaaa", "Start Date": date(2026, 5, 1)},
         ]
     )
     sky_lookup = _sky_lookup([("0xaaa", date(2026, 4, 5), 1000.0)])
@@ -92,7 +92,7 @@ def test_add_spell_vote_statuses_makes_no_http_call():
     """
     df = pd.DataFrame(
         [
-            {"Delegate Name": "Alice", "Delegate Contract": "0xaaa", "Start Date": "2024-01-01"},
+            {"Delegate Name": "Alice", "Delegate Contract": "0xaaa", "Start Date": date(2024, 1, 1)},
         ]
     )
     sky_lookup = _sky_lookup([("0xaaa", date(2026, 4, 5), 1000.0)])
@@ -108,7 +108,7 @@ def test_add_spell_vote_statuses_empty_spell_info_leaves_df_unchanged():
     """No spells → df is returned unchanged."""
     df = pd.DataFrame(
         [
-            {"Delegate Name": "Alice", "Delegate Contract": "0xaaa", "Start Date": "2024-01-01"},
+            {"Delegate Name": "Alice", "Delegate Contract": "0xaaa", "Start Date": date(2024, 1, 1)},
         ]
     )
     sky_lookup = _sky_lookup([])

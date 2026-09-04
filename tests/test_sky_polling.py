@@ -34,7 +34,7 @@ def test_add_poll_vote_statuses_adds_column_per_poll():
     """Each poll in poll_info gets its own column on df, keyed by str(pollId)."""
     df = pd.DataFrame(
         [
-            {"Delegate Name": "Alice", "Delegate Contract": "0xaaa", "Start Date": "2024-01-01"},
+            {"Delegate Name": "Alice", "Delegate Contract": "0xaaa", "Start Date": date(2024, 1, 1)},
         ]
     )
     sky_lookup = _sky_lookup(
@@ -61,7 +61,7 @@ def test_add_poll_vote_statuses_normalizes_voter_address_case():
     """Mixed-case voter addresses from the API are lowercased at the boundary."""
     df = pd.DataFrame(
         [
-            {"Delegate Name": "Alice", "Delegate Contract": "0xaaa", "Start Date": "2024-01-01"},
+            {"Delegate Name": "Alice", "Delegate Contract": "0xaaa", "Start Date": date(2024, 1, 1)},
         ]
     )
     sky_lookup = _sky_lookup(
@@ -87,7 +87,7 @@ def test_add_poll_vote_statuses_not_started_if_poll_ended_before_delegate_start(
     df = pd.DataFrame(
         [
             # Alice's start date is AFTER the poll ends
-            {"Delegate Name": "Alice", "Delegate Contract": "0xaaa", "Start Date": "2026-05-01"},
+            {"Delegate Name": "Alice", "Delegate Contract": "0xaaa", "Start Date": date(2026, 5, 1)},
         ]
     )
     sky_lookup = _sky_lookup([])  # no SKY data
@@ -104,7 +104,7 @@ def test_add_poll_vote_statuses_empty_poll_info_leaves_df_unchanged():
     """No polls → df has no new columns added."""
     df = pd.DataFrame(
         [
-            {"Delegate Name": "Alice", "Delegate Contract": "0xaaa", "Start Date": "2024-01-01"},
+            {"Delegate Name": "Alice", "Delegate Contract": "0xaaa", "Start Date": date(2024, 1, 1)},
         ]
     )
     sky_lookup = _sky_lookup([])
@@ -120,8 +120,8 @@ def test_add_poll_vote_statuses_multiple_delegates_per_poll():
     """Each delegate row gets its own per-poll status."""
     df = pd.DataFrame(
         [
-            {"Delegate Name": "Alice", "Delegate Contract": "0xaaa", "Start Date": "2024-01-01"},
-            {"Delegate Name": "Bob", "Delegate Contract": "0xbbb", "Start Date": "2024-01-01"},
+            {"Delegate Name": "Alice", "Delegate Contract": "0xaaa", "Start Date": date(2024, 1, 1)},
+            {"Delegate Name": "Bob", "Delegate Contract": "0xbbb", "Start Date": date(2024, 1, 1)},
         ]
     )
     sky_lookup = _sky_lookup(

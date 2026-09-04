@@ -106,9 +106,7 @@ def add_poll_vote_statuses(
     if not poll_info:
         return df
 
-    first_dates_by_contract = dict(
-        zip(df["Delegate Contract"], df["Start Date"].map(date.fromisoformat), strict=True),
-    )
+    first_dates_by_contract = dict(zip(df["Delegate Contract"], df["Start Date"], strict=True))
 
     with ThreadPoolExecutor(max_workers=_POLL_VOTER_FETCH_CONCURRENCY) as executor:
         voter_sets = dict(executor.map(_fetch_poll_voters, poll_info))
