@@ -82,7 +82,7 @@ Runs sync only new blocks since the last one by default, reusing cached on-chain
 All outputs for a month land in `output_data/<YYYY-MM>/`. Re-running the same month overwrites them; other months are untouched.
 
 - `sky.csv` — one row per delegate per day, sorted by date then rank. Columns: `contract`, `name`, `date`, `sky` (SKY delegated), `rank` (1 = most SKY that day).
-- `vote_participation.csv` — one row per poll or spell. Columns: `Poll Id` (poll id or spell address), `Start Date`, `End Date` (blank for spells), `Title`, then one column per delegate holding the participation status.
+- `vote_participation.csv` — one row per poll or spell, sorted by start date. Columns: `Poll Id` (poll id or spell address), `Start Date`, `End Date` (blank for spells), `Title`, then one column per delegate holding the participation status.
 
 Titles come from external APIs, so cells that begin with a formula character are prefixed with an apostrophe to stop spreadsheet applications executing them.
 

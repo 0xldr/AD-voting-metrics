@@ -77,6 +77,25 @@ def test_build_participation_dataframe_unknown_column_keeps_statuses_with_blank_
     assert row["BLUE"] == "Yes"
 
 
+def test_build_participation_dataframe_sorts_by_start_date_with_unknown_last():
+    """Rows come out chronologically regardless of column order; a row with no metadata sorts to the end."""
+    df = pd.DataFrame(
+        {
+            "Delegate Name": ["BLUE"],
+            "Delegate Contract": ["0xaaa"],
+            "Start Date": [date(2025, 12, 1)],
+            "99999": ["Yes"],  # no metadata
+            "0xspell001": ["Yes"],  # 2026-04-20
+            "67890": ["Yes"],  # 2026-04-12
+            "12345": ["Yes"],  # 2026-04-05
+        }
+    )
+
+    out = build_participation_dataframe(df, _make_poll_info(), _make_spell_info())
+
+    assert list(out["Poll Id"]) == ["12345", "67890", "0xspell001", "99999"]
+
+
 def test_build_participation_dataframe_zero_polls_returns_header_only():
     df = _make_participation_df()[["Delegate Name", "Delegate Contract", "Start Date"]]
 

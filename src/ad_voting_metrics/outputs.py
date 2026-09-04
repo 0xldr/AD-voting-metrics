@@ -56,11 +56,12 @@ def build_participation_dataframe(
 
     Input df has ROSTER_COLUMNS plus one column per poll id (str) and one per spell address, one row per delegate.
 
-    Output has one row per poll/spell with columns [Poll Id, Start Date, End Date, Title, <Delegate 1>, ...]. Zero-poll
-    months return a header-only DataFrame.
+    Output has one row per poll/spell with columns [Poll Id, Start Date, End Date, Title, <Delegate 1>, ...], sorted by
+    Start Date ascending. Zero-poll months return a header-only DataFrame.
 
-    Poll/spell columns with no matching poll_info or spell_info entry get blank metadata cells; the status column is
-    still written so a transient API inconsistency can't drop participation data. Spell rows have a blank End Date.
+    Poll/spell columns with no matching poll_info or spell_info entry get blank metadata cells and sort last; the status
+    column is still written so a transient API inconsistency can't drop participation data. Spell rows have a blank
+    End Date.
 
     Returns:
         Wide-format participation DataFrame.
@@ -87,7 +88,13 @@ def build_participation_dataframe(
             row[name] = str(df_by_delegate.loc[name, poll_id])
         rows.append(row)
 
-    return pd.DataFrame(rows, columns=columns)
+    out = pd.DataFrame(rows, columns=columns)
+    return out.sort_values(
+        "Start Date",
+        key=lambda s: pd.to_datetime(s, errors="coerce"),
+        na_position="last",
+        kind="stable",
+    ).reset_index(drop=True)
 
 
 def _defuse_csv_formulas(df: pd.DataFrame) -> pd.DataFrame:
