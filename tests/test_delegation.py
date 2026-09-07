@@ -176,9 +176,12 @@ def test_sync_events_second_run_starts_after_last_synced_block_and_appends(tmp_p
     factory = delegation.V3_FACTORY_BLOCK
     first_head = factory + 1_000 + delegation.FINALITY_BLOCKS
 
+    def fake_block(number: int) -> dict[str, int]:
+        return {"timestamp": 1_700_000_000 + number}
+
     w3 = MagicMock()
     w3.batch_requests.side_effect = ValueError("no batch support")
-    w3.eth.get_block.side_effect = lambda n: {"timestamp": 1_700_000_000 + n}
+    w3.eth.get_block.side_effect = fake_block
     w3.eth.block_number = first_head
     w3.eth.get_logs.return_value = [_lock_log(contract, factory + 10, 100)]
 
