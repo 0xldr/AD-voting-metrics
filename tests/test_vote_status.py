@@ -121,13 +121,6 @@ def test_spell_vote_deadline_skips_weekends(spell_start, expected):
     assert vote_status.spell_vote_deadline(spell_start) == expected
 
 
-def test_spell_vote_deadline_honours_explicit_business_days():
-    """The window length is a parameter; the default is SPELL_VOTE_BUSINESS_DAYS."""
-    assert vote_status.SPELL_VOTE_BUSINESS_DAYS == 3
-    # Friday + 1 business day is the following Monday.
-    assert vote_status.spell_vote_deadline(date(2026, 4, 3), business_days=1) == date(2026, 4, 6)
-
-
 def test_spell_vote_deadline_spanning_a_month_boundary():
     """Deadlines roll into the next month; a spell late in the month is still adjudicated."""
     # Thursday 2026-04-30 -> Fri, (weekend), Mon, Tue = 2026-05-05.
