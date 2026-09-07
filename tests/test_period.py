@@ -8,10 +8,6 @@ import pytest
 from ad_voting_metrics.cli import parse_month
 from ad_voting_metrics.period import MonthPeriod
 
-# ---------------------------------------------------------------------------
-# MonthPeriod construction and properties
-# ---------------------------------------------------------------------------
-
 
 @pytest.mark.parametrize("month", [13, 0, -1, 24])
 def test_out_of_range_month_rejected(month):
@@ -31,11 +27,6 @@ def test_far_future_year_accepted_at_type_level():
     assert p.end == date(2099, 12, 31)
 
 
-# ---------------------------------------------------------------------------
-# start and end derived properties
-# ---------------------------------------------------------------------------
-
-
 @pytest.mark.parametrize(
     ("year", "month", "expected_end_day"),
     [
@@ -53,20 +44,10 @@ def test_end_day_for_calendar_variants(year, month, expected_end_day):
     assert p.start == date(year, month, 1)
 
 
-# ---------------------------------------------------------------------------
-# __str__ formatting
-# ---------------------------------------------------------------------------
-
-
 def test_str_format():
     assert str(MonthPeriod(2026, 4)) == "April 2026"
     assert str(MonthPeriod(2025, 1)) == "January 2025"
     assert str(MonthPeriod(2024, 12)) == "December 2024"
-
-
-# ---------------------------------------------------------------------------
-# MonthPeriod.from_string parsing
-# ---------------------------------------------------------------------------
 
 
 @pytest.mark.parametrize(
@@ -101,11 +82,6 @@ def test_from_string_does_not_reject_future():
     # Future-month rejection is a CLI concern, not a type concern.
     p = MonthPeriod.from_string("December 2099")
     assert p == MonthPeriod(2099, 12)
-
-
-# ---------------------------------------------------------------------------
-# parse_month (the argparse type callback) — CLI-specific behavior
-# ---------------------------------------------------------------------------
 
 
 def test_parse_month_returns_month_period():

@@ -61,10 +61,6 @@ _CHIEF_ABI = [
     },
 ]
 
-# ---------------------------------------------------------------------------
-# Slate cache
-# ---------------------------------------------------------------------------
-
 
 def _load_slate_cache(path: Path) -> dict[str, list[str]]:
     """Load the slate-hash -> [executive addresses] cache from disk.
@@ -78,11 +74,6 @@ def _load_slate_cache(path: Path) -> dict[str, list[str]]:
 def _save_slate_cache(cache: dict[str, list[str]], path: Path) -> None:
     """Persist the slate cache to disk atomically, creating the parent dir if needed."""
     save_json_cache(cast("dict[str, Any]", cache), path)
-
-
-# ---------------------------------------------------------------------------
-# Web3 calls
-# ---------------------------------------------------------------------------
 
 
 def _resolve_slate(w3: Web3, slate_hash: str) -> list[str]:
@@ -179,11 +170,6 @@ def _fetch_vote_events(
         event_date = datetime.fromtimestamp(block_ts_cache[block_number], tz=UTC).date()
         result.setdefault(voter, []).append((slate, event_date))
     return result
-
-
-# ---------------------------------------------------------------------------
-# Orchestrator
-# ---------------------------------------------------------------------------
 
 
 def _pending_pairs(statuses: Statuses, spells: list[Ballot]) -> set[tuple[str, str]]:

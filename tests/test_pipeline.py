@@ -14,10 +14,6 @@ from ad_voting_metrics.period import MonthPeriod
 from ad_voting_metrics.pipeline import _rank_daily_balances, run
 from ad_voting_metrics.roster import Delegate
 
-# ---------------------------------------------------------------------------
-# _rank_daily_balances
-# ---------------------------------------------------------------------------
-
 
 def test_rank_daily_balances_ranks_within_each_day_and_sorts_by_date_then_rank():
     daily = pd.DataFrame(
@@ -49,11 +45,6 @@ def test_rank_daily_balances_breaks_ties_by_row_order():
     )
 
     assert list(_rank_daily_balances(daily)["rank"]) == [1, 2]
-
-
-# ---------------------------------------------------------------------------
-# run — end-to-end orchestration with every external call mocked
-# ---------------------------------------------------------------------------
 
 
 @pytest.fixture

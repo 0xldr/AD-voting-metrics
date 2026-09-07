@@ -26,11 +26,6 @@ def _delegate_dict(name: str, address: str) -> dict:
     }
 
 
-# ---------------------------------------------------------------------------
-# Single-page response: hasNextPage=false on first page
-# ---------------------------------------------------------------------------
-
-
 @responses.activate
 def test_single_page_returns_all_delegates():
     responses.add(
@@ -68,11 +63,6 @@ def test_empty_response():
 
     result = fetch_aligned_delegates()
     assert result == []
-
-
-# ---------------------------------------------------------------------------
-# Multi-page response: hasNextPage=true then false
-# ---------------------------------------------------------------------------
 
 
 @responses.activate
@@ -170,11 +160,6 @@ def test_query_params_include_aligned_filter():
     assert "network=mainnet" in url
 
 
-# ---------------------------------------------------------------------------
-# Defensive: page cap prevents infinite loops on misbehaving APIs
-# ---------------------------------------------------------------------------
-
-
 @responses.activate
 def test_stops_on_empty_page_even_when_hasnextpage_true():
     """Treat an empty page as end-of-data; sky.money returns delegates=[] with hasNextPage=true forever after last."""
@@ -233,11 +218,6 @@ def test_page_cap_stops_infinite_loop(caplog: pytest.LogCaptureFixture):
     assert len(result) == _MAX_PAGES  # Got one delegate per page
     # The cap-hit warning fired
     assert any("page cap" in record.message for record in caplog.records)
-
-
-# ---------------------------------------------------------------------------
-# HTTP error handling: relies on raise_for_status from the shared session
-# ---------------------------------------------------------------------------
 
 
 @responses.activate

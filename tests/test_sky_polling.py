@@ -43,10 +43,6 @@ def _mock_poll_response(voter_addresses: list[str]) -> MagicMock:
 _POLL = _poll("1234", date(2026, 4, 1), date(2026, 4, 3))
 _CLOSED_POLL_NOW = datetime(2026, 4, 10, 17, 0, tzinfo=UTC)  # after the poll closes 2026-04-03 16:00
 
-# ---------------------------------------------------------------------------
-# poll_statuses — per-poll vote status, voter-set boundary normalization
-# ---------------------------------------------------------------------------
-
 
 def test_poll_statuses_has_an_entry_per_delegate_per_poll():
     delegates = [_delegate("Alice", _ADDR_A)]
@@ -99,11 +95,6 @@ def test_poll_statuses_multiple_delegates_per_poll():
         out = sky_polling.poll_statuses([_POLL], delegates, sky_lookup, _CLOSED_POLL_NOW)
 
     assert out == {(_ADDR_A, "1234"): "Yes", (_ADDR_B, "1234"): "No"}
-
-
-# ---------------------------------------------------------------------------
-# fetch_polls_for_period — pagination and date filtering against vote.sky.money
-# ---------------------------------------------------------------------------
 
 
 def _poll_dict(poll_id: int, start_iso: str, end_iso: str, title: str = "Test poll") -> dict:

@@ -14,10 +14,6 @@ from ad_voting_metrics.period import MonthPeriod
 from ad_voting_metrics.reconciliation import ReconciliationEntry, build_entry, write_entry
 from ad_voting_metrics.roster import Delegate, DelegatesConfig, RosterResult
 
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
 
 def _make_yaml_config(active: int = 1, exited: int = 0) -> DelegatesConfig:
     """Return a DelegatesConfig with the given counts of active/exited delegates."""
@@ -94,11 +90,6 @@ def _make_entry(**overrides: object) -> ReconciliationEntry:
         "output_files": [],
     }
     return cast("ReconciliationEntry", {**base, **overrides})
-
-
-# ---------------------------------------------------------------------------
-# build_entry — dict shape and field correctness
-# ---------------------------------------------------------------------------
 
 
 def test_build_entry_minimal():
@@ -200,11 +191,6 @@ def test_build_entry_is_json_serializable():
     serialized = json.dumps(entry)
     round_tripped = json.loads(serialized)
     assert round_tripped == entry
-
-
-# ---------------------------------------------------------------------------
-# write_entry — file IO, filename format, and soft-fail
-# ---------------------------------------------------------------------------
 
 
 def test_write_entry_creates_file_with_period_and_timestamp_in_name(tmp_path):

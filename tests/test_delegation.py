@@ -34,11 +34,6 @@ def _period_stub(start: date, end: date) -> MonthPeriod:
     return cast("MonthPeriod", SimpleNamespace(start=start, end=end, year=start.year, month=start.month))
 
 
-# ---------------------------------------------------------------------------
-# _fetch_event_logs — merged Lock/Free fetch
-# ---------------------------------------------------------------------------
-
-
 def test_fetch_event_logs_merges_topics_and_signs_amounts():
     """One OR-filtered getLogs call returns both event types; Free amounts come back negated."""
     contract = "0x" + "c" * 40
@@ -65,11 +60,6 @@ def test_fetch_event_logs_merges_topics_and_signs_amounts():
     mock_w3.eth.get_logs.assert_called_once()
     params = mock_w3.eth.get_logs.call_args.args[0]
     assert params["topics"] == [[delegation.LOCK_TOPIC, delegation.FREE_TOPIC]]
-
-
-# ---------------------------------------------------------------------------
-# _fetch_block_timestamps — batched with sequential fallback
-# ---------------------------------------------------------------------------
 
 
 def test_fetch_block_timestamps_uses_one_batch_for_missing_blocks():
@@ -155,11 +145,6 @@ def test_fetch_block_timestamps_splits_large_sets_into_multiple_batches():
     assert mock_w3.batch_requests.call_count == 2
 
 
-# ---------------------------------------------------------------------------
-# _sync_events — incremental sync against the on-disk cache
-# ---------------------------------------------------------------------------
-
-
 def _lock_log(contract: str, block: int, wad: int) -> dict:
     return {
         "address": contract,
@@ -220,11 +205,6 @@ def test_sync_events_skips_fetch_when_cache_is_current(tmp_path):
     w3.eth.get_logs.assert_not_called()
     assert out.last_synced_block == synced_to
     assert cache_path.stat().st_mtime_ns == mtime
-
-
-# ---------------------------------------------------------------------------
-# get_all_sky_delegated — event sync, cache load/save, daily series
-# ---------------------------------------------------------------------------
 
 
 def test_get_all_sky_delegated_returns_frame_with_no_events(tmp_path):
@@ -299,11 +279,6 @@ def test_get_all_sky_delegated_recovers_by_shrinking_chunk(tmp_path):
     assert result.empty
 
 
-# ---------------------------------------------------------------------------
-# _contract_cumulative_balances / _build_balance_series — running-total arithmetic
-# ---------------------------------------------------------------------------
-
-
 def test_contract_cumulative_balances_nets_same_day_events_and_carries_total():
     """Two events on one day collapse to one entry; later days start from the prior running total."""
     day_1, day_3 = date(2026, 4, 1), date(2026, 4, 3)
@@ -353,10 +328,6 @@ def test_build_balance_series_empty_cache_returns_empty_indexed_frame():
     assert out.index.names == ["delegation_contract", "dt"]
     assert list(out.columns) == ["running_total_balance"]
 
-
-# ---------------------------------------------------------------------------
-# get_delegate_list_sky — per-day rows + zero-fill
-# ---------------------------------------------------------------------------
 
 # These tests patch get_all_sky_delegated, so neither the client nor the cache path is touched.
 _UNUSED_W3 = MagicMock()
@@ -462,11 +433,6 @@ def test_get_delegate_list_sky_multiple_delegates():
     assert by_name == {"Alice": 1000.0, "Bob": 500.0}
 
 
-# ---------------------------------------------------------------------------
-# build_sky_lookup — O(1) dict from DataFrame
-# ---------------------------------------------------------------------------
-
-
 def test_build_sky_lookup_returns_dict_keyed_by_contract_date():
     """Materialize df_sky into (contract, date) -> balance dict."""
     df_sky = pd.DataFrame(
@@ -480,11 +446,6 @@ def test_build_sky_lookup_returns_dict_keyed_by_contract_date():
 
     assert result[_ADDR_A, date(2026, 4, 1)] == 1000.0
     assert result[_ADDR_B, date(2026, 4, 1)] == 500.0
-
-
-# ---------------------------------------------------------------------------
-# DelegationCache — on-disk format
-# ---------------------------------------------------------------------------
 
 
 def test_delegation_cache_load_normalises_legacy_string_keys_and_wads(tmp_path):

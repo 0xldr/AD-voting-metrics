@@ -23,10 +23,6 @@ _ADDR_B = "0x0f23de72e1581857eacd6308aebb69cf3a49cc86"
 _ADDR_C = "0x173a1c04b79ed9266721c1154daa29addc0b9558"
 _ADDR_GENERIC = "0x1234567890abcdef1234567890abcdef12345678"
 
-# ---------------------------------------------------------------------------
-# Delegate construction and validation
-# ---------------------------------------------------------------------------
-
 
 @pytest.mark.parametrize(
     "bad_address",
@@ -71,11 +67,6 @@ def test_end_date_must_be_strictly_after_start(end_date):
         )
 
 
-# ---------------------------------------------------------------------------
-# is_active_during — interval overlap with the queried month
-# ---------------------------------------------------------------------------
-
-
 def _delegate(start: date, end: date | None = None) -> Delegate:
     return Delegate(
         name="Harry",
@@ -104,11 +95,6 @@ def test_is_active_during_april_2026(start, end, expected):
     assert d.is_active_during(date(2026, 4, 1), date(2026, 4, 30)) is expected
 
 
-# ---------------------------------------------------------------------------
-# DelegatesConfig validation
-# ---------------------------------------------------------------------------
-
-
 def test_empty_list_accepted():
     # An empty list is valid. Drift detection
     # will warn if the API returns delegates.
@@ -125,11 +111,6 @@ def test_duplicate_addresses_rejected():
                 Delegate(name="B", vote_delegate_address=addr, start_date=date(2025, 2, 1)),
             ],
         )
-
-
-# ---------------------------------------------------------------------------
-# load_delegates — file IO
-# ---------------------------------------------------------------------------
 
 
 def test_load_delegates_happy_path(tmp_path):
@@ -198,11 +179,6 @@ def test_load_delegates_schema_violation(tmp_path):
         load_delegates(p)
 
 
-# ---------------------------------------------------------------------------
-# Sanity check the actual delegates.yaml in the repo
-# ---------------------------------------------------------------------------
-
-
 def test_real_delegates_yaml():
     """The committed delegates.yaml at the repo root must load without errors."""
     repo_root = Path(__file__).resolve().parent.parent
@@ -213,11 +189,6 @@ def test_real_delegates_yaml():
         assert d.name
         assert d.vote_delegate_address.startswith("0x")
         assert len(d.vote_delegate_address) == 42
-
-
-# ---------------------------------------------------------------------------
-# detect_roster_drift — drift detection between YAML and API
-# ---------------------------------------------------------------------------
 
 
 def _api_entry(name: str, address: str) -> dict:
@@ -325,11 +296,6 @@ def test_drift_names_differ_addresses_match_no_warn():
     api = [_api_entry("Bonapublica", addr)]  # different casing
     warnings = detect_roster_drift(yaml_config, api)
     assert warnings == []
-
-
-# ---------------------------------------------------------------------------
-# build_roster_for_period — load + merge + filter
-# ---------------------------------------------------------------------------
 
 
 def test_build_roster_for_period_filters_to_active(tmp_path):

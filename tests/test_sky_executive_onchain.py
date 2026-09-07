@@ -40,11 +40,6 @@ def _fake_chain(genesis_ts: int, seconds_per_block: int):
     return get_block
 
 
-# ---------------------------------------------------------------------------
-# Slate cache I/O
-# ---------------------------------------------------------------------------
-
-
 def test_load_slate_cache_missing_file_returns_empty(tmp_path):
     assert onchain._load_slate_cache(tmp_path / "nope.json") == {}
 
@@ -73,11 +68,6 @@ def test_save_slate_cache_round_trip(tmp_path):
     assert cache_path.exists()
     loaded = onchain._load_slate_cache(cache_path)
     assert loaded == cache
-
-
-# ---------------------------------------------------------------------------
-# _resolve_slate
-# ---------------------------------------------------------------------------
 
 
 def _make_w3_with_slates(slate_addresses: list[str]) -> MagicMock:
@@ -137,11 +127,6 @@ def test_resolve_slate_safety_cap_on_runaway():
     assert len(out) == onchain.MAX_SLATE_LENGTH
 
 
-# ---------------------------------------------------------------------------
-# _block_from_date
-# ---------------------------------------------------------------------------
-
-
 def test_block_from_date_finds_first_block_at_or_after_midnight():
     """Binary search converges on the first block whose timestamp >= midnight UTC of the target date."""
     genesis_ts = _ts(date(2026, 5, 1))
@@ -174,11 +159,6 @@ def test_block_from_date_uses_latest_known_block_before_target_without_rpc():
 
     assert onchain._block_from_date(mock_w3, target, known) == 250
     mock_w3.eth.get_block.assert_not_called()
-
-
-# ---------------------------------------------------------------------------
-# _fetch_vote_events
-# ---------------------------------------------------------------------------
 
 
 def _make_event(slate_hex: str, block_number: int, voter: str = _VOTER_1) -> dict:
@@ -266,11 +246,6 @@ def test_fetch_vote_events_caches_block_timestamps():
     assert w3.eth.get_block.call_count == 1
 
 
-# ---------------------------------------------------------------------------
-# _pending_pairs
-# ---------------------------------------------------------------------------
-
-
 def test_pending_pairs_only_flags_pending_cells_for_known_spells():
     statuses = {
         ("0xa", "0xspell1"): "Yes",
@@ -283,11 +258,6 @@ def test_pending_pairs_only_flags_pending_cells_for_known_spells():
     spells = [_spell("0xspell1", date(2026, 4, 1)), _spell("0xspell2", date(2026, 4, 8))]
 
     assert onchain._pending_pairs(statuses, spells) == {("0xb", "0xspell1"), ("0xa", "0xspell2"), ("0xb", "0xspell2")}
-
-
-# ---------------------------------------------------------------------------
-# _first_vote_date_for_spell
-# ---------------------------------------------------------------------------
 
 
 @pytest.mark.parametrize(
@@ -342,11 +312,6 @@ def test_first_vote_date_for_spell(events, spell_address, slate_cache, expected)
         )
         == expected
     )
-
-
-# ---------------------------------------------------------------------------
-# resolve_pending_executive_votes — orchestrator
-# ---------------------------------------------------------------------------
 
 
 def test_resolve_pending_no_op_when_nothing_pending(tmp_path):

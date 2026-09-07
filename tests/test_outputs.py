@@ -43,11 +43,6 @@ _STATUSES = {
 }
 
 
-# ---------------------------------------------------------------------------
-# build_participation_dataframe
-# ---------------------------------------------------------------------------
-
-
 def test_build_participation_dataframe_one_row_per_ballot_with_metadata_then_delegates():
     out = build_participation_dataframe(_DELEGATES, _BALLOTS, _STATUSES)
 
@@ -94,11 +89,6 @@ def test_build_participation_dataframe_zero_ballots_returns_header_only():
 
     assert list(out.columns) == [*PARTICIPATION_METADATA_COLUMNS, "BLUE", "Cloaky"]
     assert len(out) == 0
-
-
-# ---------------------------------------------------------------------------
-# write_csvs
-# ---------------------------------------------------------------------------
 
 
 def _daily():

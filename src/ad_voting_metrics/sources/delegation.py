@@ -55,10 +55,6 @@ RATE_LIMIT_BASE_DELAY_SECONDS = 1.0
 # A Lock/Free event: (block number, signed wad). Lock amounts are positive, Free amounts negative.
 type Event = tuple[int, int]
 
-# ---------------------------------------------------------------------------
-# Cache
-# ---------------------------------------------------------------------------
-
 
 @dataclass
 class DelegationCache:
@@ -95,11 +91,6 @@ class DelegationCache:
     def save(self, path: Path) -> None:
         """Persist the cache atomically; json turns the int block keys into strings."""
         save_json_cache(asdict(self), path)
-
-
-# ---------------------------------------------------------------------------
-# Event sync
-# ---------------------------------------------------------------------------
 
 
 def _fetch_event_logs(
@@ -281,11 +272,6 @@ def _sync_events(
     return cache
 
 
-# ---------------------------------------------------------------------------
-# Daily series building
-# ---------------------------------------------------------------------------
-
-
 def _contract_cumulative_balances(
     events: list[Event],
     block_timestamps: dict[int, int],
@@ -342,11 +328,6 @@ def _build_balance_series(cache: DelegationCache) -> pd.DataFrame:
     ]
     columns = ["delegation_contract", "dt", "running_total_balance"]
     return pd.DataFrame(rows, columns=columns).set_index(["delegation_contract", "dt"])
-
-
-# ---------------------------------------------------------------------------
-# Public API
-# ---------------------------------------------------------------------------
 
 
 def get_all_sky_delegated(

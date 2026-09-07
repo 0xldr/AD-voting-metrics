@@ -15,10 +15,6 @@ from ad_voting_metrics.cli import (
 )
 from ad_voting_metrics.period import MonthPeriod
 
-# ---------------------------------------------------------------------------
-# check_period_has_ended
-# ---------------------------------------------------------------------------
-
 
 def test_check_period_has_ended_accepts_period_in_past():
     """Period ended months ago: no error, returns None."""
@@ -58,11 +54,6 @@ def test_check_period_has_ended_handles_year_boundary():
         check_period_has_ended(period, today=date(2026, 12, 31))
 
 
-# ---------------------------------------------------------------------------
-# build_arg_parser
-# ---------------------------------------------------------------------------
-
-
 def test_parser_parses_month_and_rebuild_with_default_paths():
     """The parser takes --month and --rebuild; roster and output dir default to the working directory."""
     parser = build_arg_parser()
@@ -99,11 +90,6 @@ def test_parser_requires_month():
         parser.parse_args([])
 
 
-# ---------------------------------------------------------------------------
-# main() — argparse + run
-# ---------------------------------------------------------------------------
-
-
 def test_main_runs_pipeline(monkeypatch):
     """main(['--month', ...]) runs the pipeline with the parsed period, paths, and a Web3 client."""
     monkeypatch.setattr("ad_voting_metrics.cli.check_period_has_ended", MagicMock())
@@ -119,11 +105,6 @@ def test_main_runs_pipeline(monkeypatch):
     assert kwargs["roster_path"] == Path("delegates.yaml")
     assert kwargs["output_dir"] == Path("output_data")
     assert isinstance(kwargs["w3"], Web3)
-
-
-# ---------------------------------------------------------------------------
-# connect_rpc
-# ---------------------------------------------------------------------------
 
 
 def test_connect_rpc_exits_when_env_var_unset(monkeypatch):

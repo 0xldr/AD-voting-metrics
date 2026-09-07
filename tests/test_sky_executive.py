@@ -24,11 +24,6 @@ def _spell(address: str, start: date = _LIVE) -> Ballot:
     return Ballot(id=address, kind="spell", start=start, end=None, title="Test spell")
 
 
-# ---------------------------------------------------------------------------
-# spell_statuses — balance-derived seed statuses
-# ---------------------------------------------------------------------------
-
-
 def test_spell_statuses_has_an_entry_per_delegate_per_spell():
     delegates = [_delegate("Alice", _ADDR_A)]
     sky_lookup = {(_ADDR_A, _LIVE): 1000.0}
@@ -74,11 +69,6 @@ def test_spell_statuses_makes_no_http_call():
 
 def test_spell_statuses_empty_spells_returns_empty():
     assert sky_executive.spell_statuses([], [_delegate("Alice", _ADDR_A)], {}) == {}
-
-
-# ---------------------------------------------------------------------------
-# fetch_spells_for_period — pagination and date filtering against vote.sky.money
-# ---------------------------------------------------------------------------
 
 
 def _executive_dict(address: str, date_iso: str, title: str = "Test spell") -> dict:
