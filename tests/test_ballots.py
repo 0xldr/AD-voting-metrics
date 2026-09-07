@@ -1,10 +1,10 @@
-"""Tests for vote_status — the poll close-day rule and the spell voting deadline."""
+"""Tests for ballots — the poll close-day rule and the spell voting deadline."""
 
 from datetime import UTC, date, datetime
 
 import pytest
 
-from ad_voting_metrics import vote_status
+from ad_voting_metrics import ballots
 
 # Standard 3-day poll spanning 4 calendar days in daily SKY delegation snapshots:
 # 16:00-24:00 on day 0, full days 1 and 2, 0:00-16:00 on day 3 (close day).
@@ -86,7 +86,7 @@ def _sky(*values: float) -> dict[date, float]:
 )
 def test_determine_vote_status(sky, delegate_voted, current_datetime, expected):
     """Status rule for one (delegate, poll) pair across closed and open-poll regimes."""
-    result = vote_status.determine_vote_status(
+    result = ballots.determine_vote_status(
         sky,
         _POLL_CLOSE,
         delegate_voted=delegate_voted,
@@ -109,10 +109,35 @@ def test_determine_vote_status(sky, delegate_voted, current_datetime, expected):
 )
 def test_spell_vote_deadline_skips_weekends(spell_start, expected):
     """Three Mon-Fri days strictly after the spell goes live; no holiday calendar."""
-    assert vote_status.spell_vote_deadline(spell_start) == expected
+    assert ballots.spell_vote_deadline(spell_start) == expected
 
 
 def test_spell_vote_deadline_spanning_a_month_boundary():
     """Deadlines roll into the next month; a spell late in the month is still adjudicated."""
     # Thursday 2026-04-30 -> Fri, (weekend), Mon, Tue = 2026-05-05.
-    assert vote_status.spell_vote_deadline(date(2026, 4, 30)) == date(2026, 5, 5)
+    assert ballots.spell_vote_deadline(date(2026, 4, 30)) == date(2026, 5, 5)
+
+
+@pytest.mark.parametrize(
+    ("end", "day", "expected"),
+    [
+        pytest.param(None, date(2026, 4, 5), False, id="still aligned"),
+        pytest.param(date(2026, 4, 5), date(2026, 4, 5), False, id="last aligned day itself"),
+        pytest.param(date(2026, 4, 4), date(2026, 4, 5), True, id="day after leaving"),
+    ],
+)
+def test_exited_before(end, day, expected):
+    assert ballots.exited_before(end, day) is expected
+
+
+@pytest.mark.parametrize(
+    ("vote_day", "end", "expected"),
+    [
+        pytest.param(None, None, False, id="no vote"),
+        pytest.param(date(2026, 4, 5), None, True, id="voted, never left"),
+        pytest.param(date(2026, 4, 5), date(2026, 4, 5), True, id="voted on the last aligned day"),
+        pytest.param(date(2026, 4, 6), date(2026, 4, 5), False, id="voted after leaving"),
+    ],
+)
+def test_voted_while_aligned(vote_day, end, expected):
+    assert ballots.voted_while_aligned(vote_day, end) is expected

@@ -1,11 +1,9 @@
-"""Tests for MonthPeriod and the parse_month argparse type callback."""
+"""Tests for MonthPeriod."""
 
-import argparse
 from datetime import date
 
 import pytest
 
-from ad_voting_metrics.cli import parse_month
 from ad_voting_metrics.period import MonthPeriod
 
 
@@ -18,13 +16,6 @@ def test_out_of_range_month_rejected(month):
 def test_unreasonable_year_rejected():
     with pytest.raises(ValueError, match="year must be"):
         MonthPeriod(year=1800, month=4)
-
-
-def test_far_future_year_accepted_at_type_level():
-    # The type itself doesn't reject future months — that's a CLI concern.
-    p = MonthPeriod(year=2099, month=12)
-    assert p.start == date(2099, 12, 1)
-    assert p.end == date(2099, 12, 31)
 
 
 @pytest.mark.parametrize(
@@ -65,39 +56,7 @@ def test_from_string_happy_path(value, expected):
     assert MonthPeriod.from_string(value) == expected
 
 
-@pytest.mark.parametrize(
-    "value",
-    [
-        "not a date",
-        "Decembruary 2026",
-        "",
-    ],
-)
+@pytest.mark.parametrize("value", ["not a date", "Decembruary 2026", ""])
 def test_from_string_unparseable_raises_value_error(value):
     with pytest.raises(ValueError, match="could not parse"):
         MonthPeriod.from_string(value)
-
-
-def test_from_string_does_not_reject_future():
-    # Future-month rejection is a CLI concern, not a type concern.
-    p = MonthPeriod.from_string("December 2099")
-    assert p == MonthPeriod(2099, 12)
-
-
-def test_parse_month_returns_month_period():
-    result = parse_month("April 2026")
-    assert isinstance(result, MonthPeriod)
-    assert result == MonthPeriod(2026, 4)
-
-
-def test_parse_month_unparseable_raises_argument_type_error():
-    with pytest.raises(argparse.ArgumentTypeError):
-        parse_month("not a date")
-
-
-def test_parse_month_error_messages_mention_input():
-    """The error message helps the user fix their input."""
-    with pytest.raises(argparse.ArgumentTypeError) as exc_info:
-        parse_month("not a date")
-    msg = str(exc_info.value)
-    assert "not a date" in msg

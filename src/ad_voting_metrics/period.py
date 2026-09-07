@@ -47,11 +47,7 @@ class MonthPeriod:
         return date(self.year, self.month, last_day)
 
     def __str__(self) -> str:
-        """Render as April 2026 rather than "MonthPeriod(year=2026, month=4)".
-
-        Returns:
-            The human-readable form.
-        """
+        """Render as "April 2026" rather than "MonthPeriod(year=2026, month=4)"."""
         return date(self.year, self.month, 1).strftime("%B %Y")
 
     @classmethod
@@ -59,9 +55,6 @@ class MonthPeriod:
         """Parse a human or ISO month string into a MonthPeriod.
 
         Accepts the spellings in _MONTH_FORMATS; surrounding whitespace is ignored.
-
-        Returns:
-            A MonthPeriod for the parsed (year, month).
 
         Raises:
             ValueError: if the input matches none of the accepted formats.
