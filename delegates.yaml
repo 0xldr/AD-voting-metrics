@@ -1,21 +1,6 @@
-# Aligned Delegate roster — source of truth for who is or has been an AD.
-#
-# Every delegate ever in the program has an entry here. Currently-active
-# delegates have end_date: null. Exited delegates have end_date set to their
-# inclusive last day (e.g., end_date: 2026-04-15 means April 15 was their
-# last active day).
-#
-# When a new delegate is aligned: add an entry with their start_date (the date
-# AD compensation begins, not the contract creation date).
-# When a delegate exits: set their end_date.
-#
-# The script verifies this YAML against the vote.sky.money API on each run
-# and warns about mismatches (a YAML entry with end_date: null that the API
-# doesn't return as currently-aligned probably means the operator forgot to
-# set end_date after an exit).
-#
-# Schema validation is in src/ad_voting_metrics/roster.py.
-# Address regex: ^0x[0-9a-f]{40}$ (lowercase only).
+# Aligned Delegate roster: every delegate ever in the program, past and present.
+# Field meanings and maintenance steps are in the README under "Delegate Roster";
+# the schema is enforced by src/ad_voting_metrics/roster.py.
 
 delegates:
   - name: BONAPUBLICA
@@ -51,7 +36,7 @@ delegates:
   - name: Excel
     vote_delegate_address: "0xead02d18529c10eedd995f760fdf5e380ddf3da6"
     start_date: 2025-04-04
-    end_date: null
+    end_date: 2026-08-10
 
   - name: Tango
     vote_delegate_address: "0x550e5ec00b9d26a3517ce772ddfe73e8ed1672ad"
@@ -76,12 +61,12 @@ delegates:
   - name: OPEX
     vote_delegate_address: "0x16a5a76904140e01f31c7e7abd9fb81988469ba4"
     start_date: 2026-01-21
-    end_date: null
+    end_date: 2026-08-10
 
   - name: AxisLegati
     vote_delegate_address: "0x7bc5a420b6524fa925f1321a01825438369e3c2e"
     start_date: 2026-02-01
-    end_date: null
+    end_date: 2026-08-10
 
   - name: Brendan Navigator
     vote_delegate_address: "0x8a8d131502bb4868a0777bef604547a8316a8f11"

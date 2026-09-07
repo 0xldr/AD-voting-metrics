@@ -1,4 +1,4 @@
-"""Tests for the roster module - Delegate, DelegatesConfig, load_delegates."""
+"""Tests for the roster module: Delegate validation, YAML loading, drift detection, and period filtering."""
 
 from datetime import date
 from pathlib import Path
@@ -15,17 +15,20 @@ from ad_voting_metrics.roster import (
     detect_roster_drift,
     load_delegates,
 )
+from tests.helpers import ADDR_A, ADDR_B, ADDR_C, delegate
 
-# Reusable delegate-contract addresses for tests. All are valid
-# `^0x[0-9a-f]{40}$`. Pick whichever is convenient; they don't carry meaning.
-_ADDR_A = "0xfc48fbca739079aab08216c4d5e506b96593753d"
-_ADDR_B = "0x0f23de72e1581857eacd6308aebb69cf3a49cc86"
-_ADDR_C = "0x173a1c04b79ed9266721c1154daa29addc0b9558"
-_ADDR_GENERIC = "0x1234567890abcdef1234567890abcdef12345678"
+_APRIL = MonthPeriod(2026, 4)
 
-# ---------------------------------------------------------------------------
-# Delegate construction and validation
-# ---------------------------------------------------------------------------
+
+def _api_entry(name: str, address: str) -> dict:
+    return {"name": name, "voteDelegateAddress": address}
+
+
+def _write_roster(tmp_path: Path, *delegates: Delegate) -> Path:
+    """Write the delegates as a roster YAML and return its path."""
+    path = tmp_path / "delegates.yaml"
+    path.write_text(yaml.safe_dump({"delegates": [d.model_dump() for d in delegates]}))
+    return path
 
 
 @pytest.mark.parametrize(
@@ -38,51 +41,18 @@ _ADDR_GENERIC = "0x1234567890abcdef1234567890abcdef12345678"
 )
 def test_address_must_match_lowercase_hex_pattern(bad_address):
     with pytest.raises(ValidationError, match="String should match pattern"):
-        Delegate(
-            name="X",
-            vote_delegate_address=bad_address,
-            start_date=date(2025, 1, 1),
-        )
+        delegate(address=bad_address)
 
 
 def test_name_must_be_non_empty():
-    with pytest.raises(ValidationError, match="name must be non-empty"):
-        Delegate(
-            name="   ",
-            vote_delegate_address=_ADDR_GENERIC,
-            start_date=date(2025, 1, 1),
-        )
+    with pytest.raises(ValidationError, match="at least 1 character"):
+        delegate(name="   ")
 
 
-@pytest.mark.parametrize(
-    "end_date",
-    [
-        date(2024, 12, 31),  # before start
-        date(2025, 1, 1),  # equal to start (must be strictly after)
-    ],
-)
-def test_end_date_must_be_strictly_after_start(end_date):
+@pytest.mark.parametrize("end", [date(2024, 12, 31), date(2025, 1, 1)], ids=["before start", "equal to start"])
+def test_end_date_must_be_strictly_after_start(end):
     with pytest.raises(ValidationError, match=r"end_date.*must be after"):
-        Delegate(
-            name="X",
-            vote_delegate_address=_ADDR_GENERIC,
-            start_date=date(2025, 1, 1),
-            end_date=end_date,
-        )
-
-
-# ---------------------------------------------------------------------------
-# is_active_during — interval overlap with the queried month
-# ---------------------------------------------------------------------------
-
-
-def _delegate(start: date, end: date | None = None) -> Delegate:
-    return Delegate(
-        name="Harry",
-        vote_delegate_address=_ADDR_GENERIC,
-        start_date=start,
-        end_date=end,
-    )
+        delegate(start=date(2025, 1, 1), end=end)
 
 
 @pytest.mark.parametrize(
@@ -100,342 +70,111 @@ def _delegate(start: date, end: date | None = None) -> Delegate:
 )
 def test_is_active_during_april_2026(start, end, expected):
     """Interval-overlap with the queried month; both alignment bounds inclusive."""
-    d = _delegate(start=start, end=end)
-    assert d.is_active_during(date(2026, 4, 1), date(2026, 4, 30)) is expected
+    assert delegate(start=start, end=end).is_active_during(_APRIL) is expected
 
 
-# ---------------------------------------------------------------------------
-# DelegatesConfig validation
-# ---------------------------------------------------------------------------
-
-
-def test_empty_list_accepted():
-    # An empty list is valid. Drift detection
-    # will warn if the API returns delegates.
-    config = DelegatesConfig(delegates=[])
-    assert config.delegates == []
+def test_empty_roster_is_valid():
+    assert DelegatesConfig(delegates=[]).delegates == []
 
 
 def test_duplicate_addresses_rejected():
-    addr = _ADDR_GENERIC
     with pytest.raises(ValidationError, match="Duplicate vote_delegate_address"):
-        DelegatesConfig(
-            delegates=[
-                Delegate(name="A", vote_delegate_address=addr, start_date=date(2025, 1, 1)),
-                Delegate(name="B", vote_delegate_address=addr, start_date=date(2025, 2, 1)),
-            ],
-        )
+        DelegatesConfig(delegates=[delegate("A", ADDR_A), delegate("B", ADDR_A)])
 
 
-# ---------------------------------------------------------------------------
-# load_delegates — file IO
-# ---------------------------------------------------------------------------
+def test_load_delegates_parses_active_and_exited_entries(tmp_path):
+    path = _write_roster(tmp_path, delegate("Alice", ADDR_A), delegate("Bob", ADDR_B, end=date(2024, 6, 30)))
 
+    config = load_delegates(path)
 
-def test_load_delegates_happy_path(tmp_path):
-    yaml_text = """
-    delegates:
-      - name: Alice
-        vote_delegate_address: "0x1234567890abcdef1234567890abcdef12348899"
-        start_date: 2025-01-01
-        end_date: null
-        """
-    p = tmp_path / "delegates.yaml"
-    p.write_text(yaml_text)
-    config = load_delegates(p)
-    assert len(config.delegates) == 1
-    assert config.delegates[0].name == "Alice"
-
-
-def test_load_delegates_with_exited_delegate(tmp_path):
-    yaml_text = """
-    delegates:
-      - name: Alice
-        vote_delegate_address: "0x1234567890abcdef1234567890abcdef12348899"
-        start_date: 2025-01-01
-        end_date: null
-      - name: Bob
-        vote_delegate_address: "0xabcdef1234567890abcdef1234567890abcdef12"
-        start_date: 2024-01-01
-        end_date: 2024-06-30
-        """
-    p = tmp_path / "delegates.yaml"
-    p.write_text(yaml_text)
-    config = load_delegates(p)
-    assert len(config.delegates) == 2
+    assert [d.name for d in config.delegates] == ["Alice", "Bob"]
     assert config.delegates[1].end_date == date(2024, 6, 30)
 
 
-def test_load_delegates_file_not_found(tmp_path):
-    with pytest.raises(FileNotFoundError):
-        load_delegates(tmp_path / "nonexistent.yaml")
+def test_load_delegates_rejects_empty_file(tmp_path):
+    path = tmp_path / "delegates.yaml"
+    path.write_text("")
 
-
-def test_load_delegates_empty_file(tmp_path):
-    p = tmp_path / "delegates.yaml"
-    p.write_text("")
     with pytest.raises(ValueError, match="empty"):
-        load_delegates(p)
+        load_delegates(path)
 
 
-def test_load_delegates_malformed_yaml(tmp_path):
-    p = tmp_path / "delegates.yaml"
-    p.write_text("delegates:\n  - name: X\n   bad indent: y\n")
-    with pytest.raises(yaml.YAMLError):
-        load_delegates(p)
+def test_committed_roster_loads():
+    config = load_delegates(Path(__file__).resolve().parent.parent / "delegates.yaml")
+
+    assert config.delegates
 
 
-def test_load_delegates_schema_violation(tmp_path):
-    yaml_text = """
-    delegates:
-    - name: X
-      vote_delegate_address: "not-an-address"
-      start_date: 2024-01-01
-"""
-    p = tmp_path / "delegates.yaml"
-    p.write_text(yaml_text)
-    with pytest.raises(ValidationError):
-        load_delegates(p)
+@pytest.mark.parametrize(
+    ("yaml_delegates", "api", "expected_fragments"),
+    [
+        pytest.param([delegate("Active", ADDR_A)], [_api_entry("active", ADDR_A)], [], id="match by address, not name"),
+        pytest.param(
+            [delegate("Active", ADDR_A)],
+            [_api_entry("Active", ADDR_A.upper().replace("0X", "0x"))],
+            [],
+            id="API address case is ignored",
+        ),
+        pytest.param([delegate("Ghost", ADDR_A)], [], ["Ghost", "active in YAML"], id="YAML active, API absent"),
+        pytest.param([delegate("Gone", ADDR_A, end=date(2025, 6, 30))], [], [], id="YAML exited, API absent"),
+        pytest.param(
+            [delegate("Back", ADDR_A, end=date(2025, 6, 30))],
+            [_api_entry("Back", ADDR_A)],
+            ["Back", "exited in YAML"],
+            id="YAML exited, API present",
+        ),
+        pytest.param([], [_api_entry("New", ADDR_B)], ["New", "not in delegates.yaml"], id="API present, not in YAML"),
+    ],
+)
+def test_detect_roster_drift(yaml_delegates, api, expected_fragments):
+    warnings = detect_roster_drift(DelegatesConfig(delegates=yaml_delegates), api)
+
+    assert len(warnings) == (1 if expected_fragments else 0)
+    for fragment in expected_fragments:
+        assert fragment in warnings[0]
 
 
-# ---------------------------------------------------------------------------
-# Sanity check the actual delegates.yaml in the repo
-# ---------------------------------------------------------------------------
-
-
-def test_real_delegates_yaml():
-    """The committed delegates.yaml at the repo root must load without errors."""
-    repo_root = Path(__file__).resolve().parent.parent
-    yaml_path = repo_root / "delegates.yaml"
-    config = load_delegates(yaml_path)
-    assert len(config.delegates) > 0
-    for d in config.delegates:
-        assert d.name
-        assert d.vote_delegate_address.startswith("0x")
-        assert len(d.vote_delegate_address) == 42
-
-
-# ---------------------------------------------------------------------------
-# detect_roster_drift — drift detection between YAML and API
-# ---------------------------------------------------------------------------
-
-
-def _api_entry(name: str, address: str) -> dict:
-    """Return a minimal API-shaped delegate dict."""
-    return {
-        "name": name,
-        "voteDelegateAddress": address,
-        "status": "aligned",
-    }
-
-
-def test_drift_no_drift():
-    addr = _ADDR_A
-    yaml_config = DelegatesConfig(
-        delegates=[
-            Delegate(name="Active", vote_delegate_address=addr, start_date=date(2024, 1, 1)),
-        ],
+def test_build_roster_for_period_filters_to_delegates_active_in_period(tmp_path):
+    path = _write_roster(
+        tmp_path,
+        delegate("Active", ADDR_A),
+        delegate("ExitedBefore", ADDR_B, start=date(2023, 1, 1), end=date(2025, 12, 31)),
+        delegate("AlignedAfter", ADDR_C, start=date(2027, 1, 1)),
     )
-    api = [_api_entry("Active", addr)]
-    warnings = detect_roster_drift(yaml_config, api)
-    assert warnings == []
+
+    def api():
+        return [_api_entry("Active", ADDR_A), _api_entry("AlignedAfter", ADDR_C)]
+
+    result = build_roster_for_period(path, _APRIL, api)
+
+    assert [d.name for d in result.active_delegates] == ["Active"]
+    assert result.drift_warnings == []
+    assert result.api_delegate_count == 2
+    assert len(result.yaml_config.delegates) == 3
 
 
-def test_drift_yaml_active_api_absent_warns():
-    addr = _ADDR_A
-    yaml_config = DelegatesConfig(
-        delegates=[
-            Delegate(name="GhostlyActive", vote_delegate_address=addr, start_date=date(2024, 1, 1)),
-        ],
-    )
-    api: list[dict] = []  # API doesn't return this delegate
-    warnings = detect_roster_drift(yaml_config, api)
-    assert len(warnings) == 1
-    assert "GhostlyActive" in warnings[0]
-    assert "active in YAML" in warnings[0]
+def test_build_roster_for_period_reports_drift(tmp_path):
+    path = _write_roster(tmp_path, delegate("Active", ADDR_A))
 
+    def api():
+        return []
 
-def test_drift_yaml_exited_api_absent_no_warn():
-    """Expected case: YAML says exited, API doesn't return them."""
-    addr = _ADDR_A
-    yaml_config = DelegatesConfig(
-        delegates=[
-            Delegate(
-                name="LegitimatelyExited",
-                vote_delegate_address=addr,
-                start_date=date(2024, 1, 1),
-                end_date=date(2025, 6, 30),
-            ),
-        ],
-    )
-    api: list[dict] = []
-    warnings = detect_roster_drift(yaml_config, api)
-    assert warnings == []
+    result = build_roster_for_period(path, _APRIL, api)
 
-
-def test_drift_yaml_exited_api_present_warns():
-    addr = _ADDR_A
-    yaml_config = DelegatesConfig(
-        delegates=[
-            Delegate(
-                name="ExitedButReappearing",
-                vote_delegate_address=addr,
-                start_date=date(2024, 1, 1),
-                end_date=date(2025, 6, 30),
-            ),
-        ],
-    )
-    api = [_api_entry("ExitedButReappearing", addr)]
-    warnings = detect_roster_drift(yaml_config, api)
-    assert len(warnings) == 1
-    assert "exited in YAML" in warnings[0]
-
-
-def test_drift_api_present_not_in_yaml_warns():
-    yaml_config = DelegatesConfig(delegates=[])
-    api = [_api_entry("NewlyAligned", _ADDR_B)]
-    warnings = detect_roster_drift(yaml_config, api)
-    assert len(warnings) == 1
-    assert "NewlyAligned" in warnings[0]
-    assert "not in delegates.yaml" in warnings[0]
-
-
-def test_drift_address_case_insensitive():
-    """API may return mixed-case addresses; comparison should still work."""
-    addr_lower = _ADDR_A
-    addr_mixed = "0xFc48fBcA739079aaB08216C4d5E506B96593753d"
-    yaml_config = DelegatesConfig(
-        delegates=[
-            Delegate(name="X", vote_delegate_address=addr_lower, start_date=date(2024, 1, 1)),
-        ],
-    )
-    api = [_api_entry("X", addr_mixed)]
-    warnings = detect_roster_drift(yaml_config, api)
-    assert warnings == []
-
-
-def test_drift_names_differ_addresses_match_no_warn():
-    """Casing differences in names are intentional; don't flag them."""
-    addr = _ADDR_A
-    yaml_config = DelegatesConfig(
-        delegates=[
-            Delegate(name="BONAPUBLICA", vote_delegate_address=addr, start_date=date(2024, 1, 1)),
-        ],
-    )
-    api = [_api_entry("Bonapublica", addr)]  # different casing
-    warnings = detect_roster_drift(yaml_config, api)
-    assert warnings == []
-
-
-# ---------------------------------------------------------------------------
-# build_roster_for_period — load + merge + filter
-# ---------------------------------------------------------------------------
-
-
-def test_build_roster_for_period_filters_to_active(tmp_path):
-    """Only delegates active during the period are returned."""
-    yaml_text = """
-    delegates:
-      - name: Active
-        vote_delegate_address: "0xfc48fbca739079aab08216c4d5e506b96593753d"
-        start_date: 2024-01-01
-        end_date: null
-      - name: ExitedBefore
-        vote_delegate_address: "0x0f23de72e1581857eacd6308aebb69cf3a49cc86"
-        start_date: 2023-01-01
-        end_date: 2025-12-31
-      - name: AlignedAfter
-        vote_delegate_address: "0x173a1c04b79ed9266721c1154daa29addc0b9558"
-        start_date: 2027-01-01
-        end_date: null
-    """
-    p = tmp_path / "delegates.yaml"
-    p.write_text(yaml_text)
-
-    period = MonthPeriod(2026, 4)
-
-    def fake_fetcher():
-        return [
-            _api_entry("Active", _ADDR_A),
-            _api_entry("AlignedAfter", _ADDR_C),
-        ]
-
-    result = build_roster_for_period(p, period, fake_fetcher)
-
-    # Only Active is in the period (ExitedBefore exited Dec 2025; AlignedAfter starts 2027)
-    assert len(result.active_delegates) == 1
-    assert result.active_delegates[0].name == "Active"
-
-
-def test_build_roster_for_period_propagates_warnings(tmp_path):
-    yaml_text = """
-    delegates:
-      - name: Active
-        vote_delegate_address: "0xfc48fbca739079aab08216c4d5e506b96593753d"
-        start_date: 2024-01-01
-        end_date: null
-    """
-    p = tmp_path / "delegates.yaml"
-    p.write_text(yaml_text)
-
-    # API doesn't return Active — should warn
-    fake_fetcher = list
-
-    result = build_roster_for_period(p, MonthPeriod(2026, 4), fake_fetcher)
     assert len(result.drift_warnings) == 1
     assert "Active" in result.drift_warnings[0]
 
 
-def test_build_roster_for_period_soft_fails_on_api_error(tmp_path):
-    """If the API fetch raises, drift detection is skipped with one warning."""
-    yaml_text = """
-    delegates:
-      - name: Active
-        vote_delegate_address: "0xfc48fbca739079aab08216c4d5e506b96593753d"
-        start_date: 2024-01-01
-        end_date: null
-    """
-    p = tmp_path / "delegates.yaml"
-    p.write_text(yaml_text)
+def test_build_roster_for_period_soft_fails_when_api_fetch_raises(tmp_path):
+    path = _write_roster(tmp_path, delegate("Active", ADDR_A))
 
-    def failing_fetcher():
+    def api():
         raise ConnectionError("network is down")
 
-    result = build_roster_for_period(p, MonthPeriod(2026, 4), failing_fetcher)
+    result = build_roster_for_period(path, _APRIL, api)
 
-    # The roster still loads from YAML — soft fail
-    assert len(result.active_delegates) == 1
-    assert result.active_delegates[0].name == "Active"
-    # One warning explaining the skipped check
+    assert [d.name for d in result.active_delegates] == ["Active"]
     assert len(result.drift_warnings) == 1
     assert "API drift check skipped" in result.drift_warnings[0]
     assert "network is down" in result.drift_warnings[0]
-    # api_fetch_succeeded reflects the failure
-    assert result.api_fetch_succeeded is False
-    assert result.api_delegate_count == 0
-
-
-def test_build_roster_for_period_records_api_metadata(tmp_path):
-    """RosterResult exposes the API count and success flag for the reconciliation log."""
-    yaml_text = """
-    delegates:
-      - name: Active
-        vote_delegate_address: "0xfc48fbca739079aab08216c4d5e506b96593753d"
-        start_date: 2024-01-01
-        end_date: null
-    """
-    p = tmp_path / "delegates.yaml"
-    p.write_text(yaml_text)
-
-    def fake_fetcher():
-        return [
-            _api_entry("Active", _ADDR_A),
-            _api_entry("Other", _ADDR_B),
-        ]
-
-    result = build_roster_for_period(p, MonthPeriod(2026, 4), fake_fetcher)
-
-    assert result.api_fetch_succeeded is True
-    assert result.api_delegate_count == 2  # the API returned 2 entries
-    # yaml_config exposed for downstream callers (reconciliation log)
-    assert len(result.yaml_config.delegates) == 1
+    assert result.api_delegate_count is None

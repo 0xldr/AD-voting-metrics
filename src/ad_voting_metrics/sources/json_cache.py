@@ -11,11 +11,7 @@ from typing import Any
 
 
 def load_json_cache(path: Path) -> dict[str, Any]:
-    """Load a JSON cache file.
-
-    Returns:
-        The parsed dict, or an empty dict if the file doesn't exist.
-    """
+    """Load a JSON cache file; an absent file yields an empty dict."""
     if not path.exists():
         return {}
     with path.open(encoding="utf-8") as f:
