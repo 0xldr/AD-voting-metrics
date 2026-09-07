@@ -81,8 +81,9 @@ def test_save_slate_cache_round_trip(tmp_path):
 
 
 def _make_w3_with_slates(slate_addresses: list[str]) -> MagicMock:
-    """Build a fake w3 whose chief.slates(slate, i) returns slate_addresses[i],
-    raising ContractLogicError when i >= len(slate_addresses).
+    """Build a fake w3 whose chief.slates(slate, i) returns slate_addresses[i].
+
+    Raises ContractLogicError when i >= len(slate_addresses), as the real contract does past the slate's end.
     """
     w3 = MagicMock()
     contract = MagicMock()

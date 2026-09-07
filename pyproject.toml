@@ -82,18 +82,12 @@ ignore = [
 
 [tool.ruff.lint.per-file-ignores]
 "tests/*" = [
-    "D",   # docstrings not required on tests
     "ANN", # annotations not required on tests
 
     "S101",    # assert - bare `assert` is how tests assert
-    "S105",    # hardcoded-password-string
-    "S106",    # hardcoded-password-func-arg
-    "S107",    # hardcoded-password-default
     "PLR2004", # magic-value-comparison
     "SLF001",  # private-member-access
     "ARG001",  # unused-function-argument
-    "PLC0415", # import-outside-top-level
-    "EM102",   # f-string-in-exception
     "S108",    # hardcoded-temp-file - /tmp paths in tests are not a real risk
 ]
 

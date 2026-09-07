@@ -282,7 +282,7 @@ def test_get_all_sky_delegated_raises_when_getlogs_always_fails(tmp_path):
 
 
 def test_get_all_sky_delegated_recovers_by_shrinking_chunk(tmp_path):
-    """getLogs ranges that are too large are retried at smaller sizes until one succeeds."""
+    """Log ranges that are too large are retried at smaller sizes until one succeeds."""
     cache_path = tmp_path / "delegation_cache.json"
 
     def get_logs(params: dict) -> list:
