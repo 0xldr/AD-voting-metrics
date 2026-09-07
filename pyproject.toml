@@ -21,12 +21,12 @@ ad-voting-metrics = "ad_voting_metrics.cli:main"
 
 [dependency-groups]
 dev = [
-    "ruff",
+    "ruff>=0.16.5",
     "pytest>=9.1.1",
     "responses>=0.26.2",
     "mypy>=2.3.0",
-    "pandas-stubs",
-    "types-PyYAML",
+    "pandas-stubs>=3.0.5",
+    "types-PyYAML>=6.0.12",
     "pre-commit>=4.6.1",
 ]
 
@@ -46,9 +46,6 @@ reportMissingTypeStubs = false
 line-length = 120
 
 [tool.ruff.lint]
-# Allow unused variables when underscore-prefixed.
-dummy-variable-rgx = "^(_+|(_+[a-zA-Z0-9_]*[a-zA-Z0-9]+?))$"
-
 # Everything on, including new linters as ruff adds them; deliberate
 # exclusions live in `ignore` below.
 select = ["ALL"]
@@ -64,9 +61,6 @@ ignore = [
     "D1",  # Pydocstyle - missing docstring in public module, class, or function
 
     # Individual rules.
-    "FBT003", # boolean-positional-value-in-call
-    "D212",   # multi-line-summary-first-line
-    "PD008",  # pandas-use-of-dot-at - `.at` is the right accessor for scalar cell reads/writes
     "TRY003", # raise-vanilla-args - long exception messages need not live on the exception class
     "EM101",  # raw-string-in-exception
     # All three flake8-type-checking import rules are off. The imports they would

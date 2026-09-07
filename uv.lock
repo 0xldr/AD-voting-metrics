@@ -47,12 +47,12 @@ requires-dist = [
 [package.metadata.requires-dev]
 dev = [
     { name = "mypy", specifier = ">=2.3.0" },
-    { name = "pandas-stubs" },
+    { name = "pandas-stubs", specifier = ">=3.0.5" },
     { name = "pre-commit", specifier = ">=4.6.1" },
     { name = "pytest", specifier = ">=9.1.1" },
     { name = "responses", specifier = ">=0.26.2" },
-    { name = "ruff" },
-    { name = "types-pyyaml" },
+    { name = "ruff", specifier = ">=0.16.5" },
+    { name = "types-pyyaml", specifier = ">=6.0.12" },
 ]
 
 [[package]]
