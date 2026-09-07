@@ -19,7 +19,7 @@ def _delegate(name: str, address: str, start: date = date(2024, 1, 1)) -> Delega
 
 
 def _poll(poll_id: str, start: date, end: date) -> Ballot:
-    return Ballot(id=poll_id, kind="poll", start=start, end=end, title="Test poll")
+    return Ballot(id=poll_id, start=start, end=end, title="Test poll")
 
 
 def _sky_lookup(rows: list[tuple[str, date, float]]) -> dict[tuple[str, date], float]:
@@ -123,7 +123,7 @@ def test_fetch_polls_for_period_single_page_filters_to_period():
     result = sky_polling.fetch_polls_for_period(period)
 
     assert result == [
-        Ballot(id="101", kind="poll", start=date(2025, 4, 5), end=date(2025, 4, 8), title="In window"),
+        Ballot(id="101", start=date(2025, 4, 5), end=date(2025, 4, 8), title="In window"),
     ]
 
 

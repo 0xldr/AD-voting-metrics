@@ -18,11 +18,11 @@ def _delegate(name: str, address: str) -> Delegate:
 
 
 def _poll(poll_id: str, start: date, end: date, title: str) -> Ballot:
-    return Ballot(id=poll_id, kind="poll", start=start, end=end, title=title)
+    return Ballot(id=poll_id, start=start, end=end, title=title)
 
 
 def _spell(address: str, start: date, title: str) -> Ballot:
-    return Ballot(id=address, kind="spell", start=start, end=None, title=title)
+    return Ballot(id=address, start=start, end=None, title=title)
 
 
 _DELEGATES = [_delegate("BLUE", _ADDR_A), _delegate("Cloaky", _ADDR_B), _delegate("BONAPUBLICA", _ADDR_C)]

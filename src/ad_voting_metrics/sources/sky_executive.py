@@ -52,7 +52,6 @@ def fetch_spells_for_period(period: MonthPeriod) -> list[Ballot]:
                 spells.append(
                     Ballot(
                         id=execute["address"].lower(),
-                        kind="spell",
                         start=live,
                         end=None,
                         title=execute["title"],

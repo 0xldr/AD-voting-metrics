@@ -66,7 +66,6 @@ def fetch_polls_for_period(period: MonthPeriod) -> list[Ballot]:
                 polls.append(
                     Ballot(
                         id=str(poll["pollId"]),
-                        kind="poll",
                         start=start,
                         end=datetime.fromisoformat(poll["endDate"]).date(),
                         title=poll["title"],

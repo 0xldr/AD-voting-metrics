@@ -2,7 +2,6 @@
 
 from dataclasses import dataclass
 from datetime import date
-from typing import Literal
 
 
 @dataclass(frozen=True)
@@ -15,7 +14,6 @@ class Ballot:
     """
 
     id: str
-    kind: Literal["poll", "spell"]
     start: date
     end: date | None
     title: str

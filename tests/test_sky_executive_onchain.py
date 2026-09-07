@@ -28,7 +28,7 @@ def _ts(d: date) -> int:
 
 
 def _spell(addr: str, start: date) -> Ballot:
-    return Ballot(id=addr, kind="spell", start=start, end=None, title="x")
+    return Ballot(id=addr, start=start, end=None, title="x")
 
 
 def _fake_chain(genesis_ts: int, seconds_per_block: int):

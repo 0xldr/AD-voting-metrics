@@ -21,7 +21,7 @@ def _delegate(name: str, address: str, start: date = date(2024, 1, 1)) -> Delega
 
 
 def _spell(address: str, start: date = _LIVE) -> Ballot:
-    return Ballot(id=address, kind="spell", start=start, end=None, title="Test spell")
+    return Ballot(id=address, start=start, end=None, title="Test spell")
 
 
 def test_spell_statuses_has_an_entry_per_delegate_per_spell():
@@ -96,7 +96,6 @@ def test_fetch_spells_for_period_filters_to_period_and_stops_at_older_spell():
     assert result == [
         Ballot(
             id="0xaaaa000000000000000000000000000000000001",
-            kind="spell",
             start=date(2025, 4, 10),
             end=None,
             title="In window",
