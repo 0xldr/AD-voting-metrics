@@ -31,6 +31,15 @@ def _spell(addr: str, start: date) -> Ballot:
     return Ballot(id=addr, kind="spell", start=start, end=None, title="x")
 
 
+def _fake_chain(genesis_ts: int, seconds_per_block: int):
+    """A `get_block` stand-in for a chain with evenly spaced blocks starting at `genesis_ts`."""
+
+    def get_block(number: int) -> dict[str, int]:
+        return {"timestamp": genesis_ts + number * seconds_per_block}
+
+    return get_block
+
+
 # ---------------------------------------------------------------------------
 # Slate cache I/O
 # ---------------------------------------------------------------------------
@@ -137,8 +146,7 @@ def test_block_from_date_finds_first_block_at_or_after_midnight():
     genesis_ts = _ts(date(2026, 5, 1))
     mock_w3 = MagicMock()
     mock_w3.eth.block_number = 200_000
-    # One block every 12 seconds from genesis_ts.
-    mock_w3.eth.get_block.side_effect = lambda n: {"timestamp": genesis_ts + n * 12}
+    mock_w3.eth.get_block.side_effect = _fake_chain(genesis_ts, seconds_per_block=12)
 
     result = onchain._block_from_date(mock_w3, date(2026, 5, 13), {})
 
@@ -152,7 +160,7 @@ def test_block_from_date_returns_first_block_when_chain_starts_after_target():
     """A chain whose first block already postdates the target collapses to block 1."""
     mock_w3 = MagicMock()
     mock_w3.eth.block_number = 1_000
-    mock_w3.eth.get_block.side_effect = lambda n: {"timestamp": _ts(date(2026, 6, 1)) + n}
+    mock_w3.eth.get_block.side_effect = _fake_chain(_ts(date(2026, 6, 1)), seconds_per_block=1)
 
     assert onchain._block_from_date(mock_w3, date(2026, 5, 13), {}) == 1
 

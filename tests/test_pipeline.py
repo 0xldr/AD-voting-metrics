@@ -106,9 +106,12 @@ def test_run_writes_both_csvs_into_the_month_directory(externals):
 
 
 def test_run_threads_paths_client_and_rebuild_through_to_collaborators(externals):
+    def return_statuses_unchanged(statuses, spells, **kwargs):
+        return statuses
+
     with patch(
         "ad_voting_metrics.pipeline.sky_executive_onchain.resolve_pending_executive_votes",
-        side_effect=lambda statuses, _spells, **_: statuses,
+        side_effect=return_statuses_unchanged,
     ) as onchain_mock:
         run(externals.period, rebuild=True, **externals.run_kwargs)
 

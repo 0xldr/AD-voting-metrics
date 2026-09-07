@@ -2,7 +2,7 @@
 
 from datetime import date
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 from web3 import Web3
@@ -106,7 +106,7 @@ def test_parser_requires_month():
 
 def test_main_runs_pipeline(monkeypatch):
     """main(['--month', ...]) runs the pipeline with the parsed period, paths, and a Web3 client."""
-    monkeypatch.setattr("ad_voting_metrics.cli.check_period_has_ended", lambda *_, **__: None)
+    monkeypatch.setattr("ad_voting_metrics.cli.check_period_has_ended", MagicMock())
     monkeypatch.setenv("SKY_RPC_URL", "http://localhost:8545")
 
     with patch("ad_voting_metrics.cli.run") as run_mock:
