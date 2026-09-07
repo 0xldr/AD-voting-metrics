@@ -1,21 +1,6 @@
-# Aligned Delegate roster — source of truth for who is or has been an AD.
-#
-# Every delegate ever in the program has an entry here. Currently-active
-# delegates have end_date: null. Exited delegates have end_date set to their
-# inclusive last day (e.g., end_date: 2026-04-15 means April 15 was their
-# last active day).
-#
-# When a new delegate is aligned: add an entry with their start_date (the date
-# AD compensation begins, not the contract creation date).
-# When a delegate exits: set their end_date.
-#
-# The script verifies this YAML against the vote.sky.money API on each run
-# and warns about mismatches (a YAML entry with end_date: null that the API
-# doesn't return as currently-aligned probably means the operator forgot to
-# set end_date after an exit).
-#
-# Schema validation is in src/ad_voting_metrics/roster.py.
-# Address regex: ^0x[0-9a-f]{40}$ (lowercase only).
+# Aligned Delegate roster: every delegate ever in the program, past and present.
+# Field meanings and maintenance steps are in the README under "Delegate Roster";
+# the schema is enforced by src/ad_voting_metrics/roster.py.
 
 delegates:
   - name: BONAPUBLICA
