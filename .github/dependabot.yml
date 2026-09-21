@@ -13,6 +13,8 @@ updates:
     # Bump `uv.lock` only; the `pyproject.toml` floors state the minimum
     # supported version, not the version we run.
     versioning-strategy: "lockfile-only"
+    cooldown:
+      default-days: 7
     groups:
       python-deps:
         patterns: ["*"]
@@ -23,6 +25,8 @@ updates:
     target-branch: "dev"
     schedule:
       interval: "weekly"
+    cooldown:
+      default-days: 7
     groups:
       actions:
         patterns: ["*"]
