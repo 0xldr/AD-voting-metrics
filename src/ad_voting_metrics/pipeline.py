@@ -47,8 +47,9 @@ def run(period: MonthPeriod, *, rebuild: bool, roster_path: Path, output_dir: Pa
         (contract, day): sky for contract, day, sky in zip(daily["contract"], daily["date"], daily["sky"], strict=True)
     }
 
-    polls = sky_polling.fetch_polls_for_period(period)
-    statuses = sky_polling.poll_statuses(polls, delegates, sky_lookup, current_datetime=datetime.now(UTC))
+    now = datetime.now(UTC)
+    polls = sky_polling.fetch_polls_for_period(period, current_datetime=now)
+    statuses = sky_polling.poll_statuses(polls, delegates, sky_lookup, current_datetime=now)
 
     spells = sky_executive.fetch_spells_for_period(period)
     statuses |= sky_executive.spell_statuses(spells, delegates, sky_lookup)
