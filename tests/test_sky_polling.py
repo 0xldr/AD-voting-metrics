@@ -124,6 +124,7 @@ def test_fetch_polls_for_period_single_page_filters_to_period():
             _poll_dict(103, "2025-05-02T00:00:00Z", "2025-05-05T16:00:00Z", "After window"),
         ],
     )
+    _add_page([])
 
     result = sky_polling.fetch_polls_for_period(MonthPeriod(2025, 4))
 
@@ -147,19 +148,50 @@ def test_fetch_polls_for_period_paginates_until_an_empty_page():
 
 
 @responses.activate
-def test_fetch_polls_for_period_stops_at_first_poll_after_period():
-    """Oldest-first listing: a poll starting after the period ends paging, even with more pages advertised."""
+def test_fetch_polls_for_period_reads_past_a_poll_after_the_period():
+    """A poll starting after the period does not end paging; later pages are still read."""
     _add_page(
         [
             _poll_dict(401, "2025-04-28T00:00:00Z", "2025-05-01T16:00:00Z", "Last in period"),
             _poll_dict(402, "2025-05-05T00:00:00Z", "2025-05-08T16:00:00Z", "After period"),
         ],
     )
+    _add_page([_poll_dict(403, "2025-04-14T00:00:00Z", "2025-04-17T16:00:00Z", "In period, later page")])
+    _add_page([])
 
     result = sky_polling.fetch_polls_for_period(MonthPeriod(2025, 4))
 
-    assert [p.id for p in result] == ["401"]
-    assert len(responses.calls) == 1
+    assert [p.id for p in result] == ["401", "403"]
+    assert len(responses.calls) == 3
+
+
+@responses.activate
+def test_fetch_polls_for_period_skips_an_open_poll_pinned_ahead_of_the_listing():
+    """The API lists polls still open first; one starting after the period is skipped and the rest are kept."""
+    _add_page(
+        [
+            _poll_dict(503, "2025-05-12T16:00:00Z", "2025-05-15T16:00:00Z", "Open, after period"),
+            _poll_dict(501, "2025-04-07T16:00:00Z", "2025-04-10T16:00:00Z", "In period"),
+            _poll_dict(502, "2025-04-28T16:00:00Z", "2025-05-01T16:00:00Z", "In period"),
+        ],
+    )
+    _add_page([])
+
+    result = sky_polling.fetch_polls_for_period(MonthPeriod(2025, 4))
+
+    assert [p.id for p in result] == ["501", "502"]
+
+
+@responses.activate
+def test_fetch_polls_for_period_warns_when_no_poll_started_in_period(caplog):
+    _add_page([_poll_dict(701, "2025-05-05T00:00:00Z", "2025-05-08T16:00:00Z", "After period")])
+    _add_page([])
+
+    with caplog.at_level("WARNING"):
+        result = sky_polling.fetch_polls_for_period(MonthPeriod(2025, 4))
+
+    assert result == []
+    assert "No polls found starting in April 2025" in caplog.text
 
 
 @responses.activate
