@@ -35,12 +35,12 @@ SKY_POLL_PAGE_SIZE = 30
 _POLL_VOTER_FETCH_CONCURRENCY = 8
 
 
-def fetch_polls_for_period(period: MonthPeriod, current_datetime: datetime) -> list[Ballot]:
+def fetch_polls_for_period(period: MonthPeriod) -> list[Ballot]:
     """Fetch polls from vote.sky.money that started within the period, as Ballots.
 
-    The request's startDate parameter sets the lower bound. The listing pins polls still open at `current_datetime`
-    to the top and is otherwise oldest-first, so open polls never end paging; it stops at the first closed poll that
-    starts after the period.
+    The request's startDate parameter bounds the listing below; every page is read and each poll is kept only if it
+    started inside the period, so the listing's order plays no part. The API pins polls still open to the top, ahead
+    of the oldest-first remainder.
     """
 
     def polls_page(number: int) -> list[dict[str, Any]]:
@@ -58,16 +58,22 @@ def fetch_polls_for_period(period: MonthPeriod, current_datetime: datetime) -> l
     for page in paginate(polls_page):
         for poll in page:
             start = datetime.fromisoformat(poll["startDate"]).date()
-            end = datetime.fromisoformat(poll["endDate"])
-            if start > period.end:
-                if end > current_datetime:
-                    continue
-                logger.info("Fetched %d polls starting in %s", len(polls), period)
-                return polls
-            if start >= period.start:
-                polls.append(Ballot(id=str(poll["pollId"]), start=start, end=end.date(), title=poll["title"]))
+            if period.start <= start <= period.end:
+                polls.append(
+                    Ballot(
+                        id=str(poll["pollId"]),
+                        start=start,
+                        end=datetime.fromisoformat(poll["endDate"]).date(),
+                        title=poll["title"],
+                    )
+                )
 
-    logger.info("Fetched %d polls starting in %s", len(polls), period)
+    if not polls:
+        logger.warning(
+            "No polls found starting in %s; weekly Atlas polls make an empty completed month unlikely", period
+        )
+    else:
+        logger.info("Fetched %d polls starting in %s", len(polls), period)
     return polls
 
 
