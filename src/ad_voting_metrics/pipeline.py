@@ -12,6 +12,7 @@ import requests
 from web3 import Web3
 from web3.exceptions import Web3Exception
 
+from .ballots import Ballot
 from .outputs import build_participation_dataframe, build_reconciliation_entry, write_csvs, write_reconciliation_entry
 from .period import MonthPeriod
 from .roster import build_roster_for_period
@@ -40,17 +41,17 @@ def run(period: MonthPeriod, *, rebuild: bool, roster_path: Path, output_dir: Pa
         logger.warning(warning)
     logger.info("Roster has %d delegates active during %s", len(delegates), period)
 
+    polls = sky_polling.fetch_polls_for_period(period)
+    spells = sky_executive.fetch_spells_for_period(period)
+
     contracts = [d.vote_delegate_address for d in delegates]
     delegation_cache = delegation.sync_events(w3, contracts, cache_path=delegation_cache_path, rebuild=rebuild)
-    daily = delegation.daily_balances(delegation_cache, delegates, period)
+    daily = delegation.daily_balances(delegation_cache, delegates, period.start, _balance_window_end(period, polls))
     sky_lookup: dict[tuple[str, date], float] = {
         (contract, day): sky for contract, day, sky in zip(daily["contract"], daily["date"], daily["sky"], strict=True)
     }
 
-    polls = sky_polling.fetch_polls_for_period(period)
     statuses = sky_polling.poll_statuses(polls, delegates, sky_lookup, current_datetime=datetime.now(UTC))
-
-    spells = sky_executive.fetch_spells_for_period(period)
     statuses |= sky_executive.spell_statuses(spells, delegates, sky_lookup)
     try:
         statuses = sky_executive.resolve_pending_executive_votes(
@@ -69,7 +70,7 @@ def run(period: MonthPeriod, *, rebuild: bool, roster_path: Path, output_dir: Pa
         logger.exception("On-chain executive-vote verification failed; leaving Pending cells as-is")
 
     participation = build_participation_dataframe(delegates, [*polls, *spells], statuses)
-    output_files = write_csvs(month_dir, daily, participation)
+    output_files = write_csvs(month_dir, daily[daily["date"] <= period.end], participation)
 
     entry = build_reconciliation_entry(
         period=period,
@@ -79,3 +80,12 @@ def run(period: MonthPeriod, *, rebuild: bool, roster_path: Path, output_dir: Pa
         output_files=output_files,
     )
     write_reconciliation_entry(output_dir / "reconciliation", period, entry)
+
+
+def _balance_window_end(period: MonthPeriod, polls: list[Ballot]) -> date:
+    """Return the last day SKY balances are needed for: the period's end, or a later close day of one of its polls.
+
+    A poll opening late in the month can close in the next one, and the balance on its close day decides whether a
+    non-voter is "No" or "No Delegated SKY". Spells consult only their start day, which always lies inside the period.
+    """
+    return max([period.end, *(poll.end for poll in polls if poll.end is not None)])

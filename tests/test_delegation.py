@@ -246,7 +246,7 @@ def test_daily_balances_zero_before_first_event_then_carried_forward():
     """One row per day of the month; days before the first event are zero and later days keep the last balance."""
     cache = _cache([(ADDR_A, date(2026, 4, 2), 1500)])
 
-    result = delegation.daily_balances(cache, [delegate("Alice", ADDR_A)], _APRIL)
+    result = delegation.daily_balances(cache, [delegate("Alice", ADDR_A)], _APRIL.start, _APRIL.end)
 
     assert list(result.columns) == ["contract", "name", "date", "sky", "rank"]
     assert len(result) == 30
@@ -261,7 +261,7 @@ def test_daily_balances_carries_pre_period_balance_across_whole_period():
     """A delegate whose last Lock/Free predates the period keeps that balance every day of it."""
     cache = _cache([(ADDR_A, date(2026, 3, 15), 1_000_000)])
 
-    result = delegation.daily_balances(cache, [delegate("Alice", ADDR_A)], _APRIL)
+    result = delegation.daily_balances(cache, [delegate("Alice", ADDR_A)], _APRIL.start, _APRIL.end)
 
     assert set(result["sky"]) == {1_000_000.0}
 
@@ -269,7 +269,9 @@ def test_daily_balances_carries_pre_period_balance_across_whole_period():
 def test_daily_balances_ranks_delegates_within_each_day_and_sorts_by_date_then_rank():
     cache = _cache([(ADDR_A, date(2026, 4, 1), 500), (ADDR_B, date(2026, 4, 1), 1000), (ADDR_A, date(2026, 4, 2), 600)])
 
-    result = delegation.daily_balances(cache, [delegate("Alice", ADDR_A), delegate("Bob", ADDR_B)], _APRIL)
+    result = delegation.daily_balances(
+        cache, [delegate("Alice", ADDR_A), delegate("Bob", ADDR_B)], _APRIL.start, _APRIL.end
+    )
 
     first_two_days = result[result["date"] <= date(2026, 4, 2)]
     assert list(
@@ -285,7 +287,9 @@ def test_daily_balances_ranks_delegates_within_each_day_and_sorts_by_date_then_r
 def test_daily_balances_breaks_rank_ties_by_roster_order():
     cache = _cache([(ADDR_A, date(2026, 4, 1), 100), (ADDR_B, date(2026, 4, 1), 100)])
 
-    result = delegation.daily_balances(cache, [delegate("Alice", ADDR_A), delegate("Bob", ADDR_B)], _APRIL)
+    result = delegation.daily_balances(
+        cache, [delegate("Alice", ADDR_A), delegate("Bob", ADDR_B)], _APRIL.start, _APRIL.end
+    )
 
     first_day = result[result["date"] == date(2026, 4, 1)]
     assert list(zip(first_day["name"], first_day["rank"], strict=True)) == [("Alice", 1), ("Bob", 2)]

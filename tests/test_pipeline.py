@@ -1,17 +1,21 @@
 """Tests for pipeline.run."""
 
+from datetime import date
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pandas as pd
 import pytest
+from web3 import Web3
 from web3.exceptions import Web3Exception
 
 from ad_voting_metrics import pipeline
+from ad_voting_metrics.ballots import Ballot
 from ad_voting_metrics.period import MonthPeriod
 from ad_voting_metrics.pipeline import run
-from ad_voting_metrics.sources.delegation import DelegationCache
+from ad_voting_metrics.sources.delegation import DelegationCache, daily_balances
+from ad_voting_metrics.sources.sky_polling import poll_statuses
 from tests.helpers import ADDR_A, delegate
 
 
@@ -113,3 +117,22 @@ def test_run_still_writes_outputs_when_onchain_verification_fails(externals):
 
     assert (externals.out_dir / "vote_participation.csv").exists()
     externals.entry_mock.assert_called_once()
+
+
+def test_run_resolves_a_poll_closing_after_the_month_from_balances_past_month_end(externals):
+    """A non-voter who held SKY on a close day in the next month is "No"; sky.csv still stops at the month's end."""
+    poll = Ballot(id="1", start=date(2026, 4, 28), end=date(2026, 5, 1), title="Straddles May")
+    externals.cache.events[ADDR_A] = [(22_400_000, Web3.to_wei(100, "ether"))]
+
+    with (
+        patch("ad_voting_metrics.pipeline.delegation.daily_balances", new=daily_balances),
+        patch("ad_voting_metrics.pipeline.sky_polling.fetch_polls_for_period", return_value=[poll]),
+        patch("ad_voting_metrics.pipeline.sky_polling.poll_statuses", new=poll_statuses),
+        patch("ad_voting_metrics.sources.sky_polling._fetch_poll_votes", return_value=("1", {})),
+    ):
+        run(externals.period, rebuild=False, **externals.run_kwargs)
+
+    participation = pd.read_csv(externals.out_dir / "vote_participation.csv")
+    assert participation.loc[0, "alpha"] == "No"
+    sky = pd.read_csv(externals.out_dir / "sky.csv")
+    assert sky["date"].max() == "2026-04-30"

@@ -15,7 +15,6 @@ import pandas as pd
 from web3 import Web3
 from web3.exceptions import Web3RPCError
 
-from ad_voting_metrics.period import MonthPeriod
 from ad_voting_metrics.roster import Delegate
 from ad_voting_metrics.sources.chain import FINALITY_BLOCKS, fetch_block_timestamps, safe_head, utc_date
 from ad_voting_metrics.sources.json_cache import load_json_cache, save_json_cache
@@ -226,15 +225,15 @@ def _contract_cumulative_balances(
     return cumulative_by_date
 
 
-def daily_balances(cache: DelegationCache, delegates: list[Delegate], period: MonthPeriod) -> pd.DataFrame:
-    """Build one row per (delegate, day) across the period with columns contract, name, date, sky, rank.
+def daily_balances(cache: DelegationCache, delegates: list[Delegate], start: date, end: date) -> pd.DataFrame:
+    """Build one row per (delegate, day) from start through end inclusive with columns contract, name, date, sky, rank.
 
-    Each day carries the delegate's balance as of their latest Lock/Free on or before it, so a balance set before the
-    period holds on every day of it. Days before a delegate's first event are zero. Within each day delegates are
-    ranked by balance (1 = most SKY), ties broken by roster order so no two share a rank, and the frame is sorted by
-    date then rank.
+    Each day carries the delegate's balance as of their latest Lock/Free on or before it, so a balance set before
+    `start` holds on every day of the range. Days before a delegate's first event are zero. Within each day delegates
+    are ranked by balance (1 = most SKY), ties broken by roster order so no two share a rank, and the frame is sorted
+    by date then rank.
     """
-    days = pd.date_range(period.start, period.end, freq="D").date
+    days = pd.date_range(start, end, freq="D").date
     rows = []
     for delegate in delegates:
         contract = delegate.vote_delegate_address
