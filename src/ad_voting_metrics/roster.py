@@ -16,9 +16,10 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
+from typing import Annotated, Any
 
 import yaml
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, Field, StringConstraints, model_validator
 
 from .period import MonthPeriod
 
@@ -28,17 +29,10 @@ logger = logging.getLogger(__name__)
 class Delegate(BaseModel):
     """A single AD entry, currently or previously active."""
 
-    name: str
+    name: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
     vote_delegate_address: str = Field(pattern=r"^0x[0-9a-f]{40}$")
     start_date: date
     end_date: date | None = None
-
-    @field_validator("name")
-    @classmethod
-    def _name_non_empty(cls, v: str) -> str:
-        if not v.strip():
-            raise ValueError("name must be non-empty")
-        return v
 
     @model_validator(mode="after")
     def _end_date_after_start_date(self) -> Delegate:
@@ -47,17 +41,11 @@ class Delegate(BaseModel):
             raise ValueError(msg)
         return self
 
-    def is_active_during(self, period_start: date, period_end: date) -> bool:
-        """True if this delegate was active at any point during the given period.
-
-        end_date is inclusive; None means no upper bound.
-
-        Returns:
-            Whether the delegate's alignment overlaps the period.
-        """
-        if self.start_date > period_end:
+    def is_active_during(self, period: MonthPeriod) -> bool:
+        """True if this delegate's alignment overlaps the period; end_date is inclusive and None means still active."""
+        if self.start_date > period.end:
             return False
-        return not (self.end_date is not None and self.end_date < period_start)
+        return self.end_date is None or self.end_date >= period.start
 
 
 class DelegatesConfig(BaseModel):
@@ -82,16 +70,13 @@ class DelegatesConfig(BaseModel):
 def load_delegates(path: Path) -> DelegatesConfig:
     """Load and validate the delegates YAML.
 
-    Returns:
-        Parsed and validated DelegatesConfig.
-
     Raises:
         ValueError: if YAML is empty.
 
     Notes:
         The function may raise FileNotFoundError, yaml.YAMLError, or pydantic.ValidationError from validation.
     """
-    with Path(path).open(encoding="utf-8") as f:
+    with path.open(encoding="utf-8") as f:
         raw = yaml.safe_load(f)
     if raw is None:
         msg = f"{path} is empty or contains only YAML null"
@@ -101,7 +86,7 @@ def load_delegates(path: Path) -> DelegatesConfig:
 
 def detect_roster_drift(
     yaml_config: DelegatesConfig,
-    api_response: list[dict],
+    api_response: list[dict[str, Any]],
 ) -> list[str]:
     """Verify the YAML roster against the API response and return drift warnings.
 
@@ -111,16 +96,14 @@ def detect_roster_drift(
     - YAML exited, API present -> warn (date mismatch)
     - API present, not in YAML -> warn (new delegate missing from YAML)
 
-    Comparisons are by vote delegate address (lowercased); names that differ but addresses match are not flagged. The
-    YAML is the canonical roster — the API never adds anyone — so the delegate list itself is not returned.
-
-    Returns:
-        List of drift-warning strings; empty if no drift.
+    Comparisons are by vote delegate address, with the API side lowercased; names that differ but addresses match are
+    not flagged. The YAML is the canonical roster — the API never adds anyone — so the delegate list itself is not
+    returned.
     """
     warnings: list[str] = []
 
-    yaml_by_address: dict[str, Delegate] = {d.vote_delegate_address.lower(): d for d in yaml_config.delegates}
-    api_by_address: dict[str, dict] = {entry["voteDelegateAddress"].lower(): entry for entry in api_response}
+    yaml_by_address: dict[str, Delegate] = {d.vote_delegate_address: d for d in yaml_config.delegates}
+    api_by_address = {entry["voteDelegateAddress"].lower(): entry for entry in api_response}
 
     for addr, delegate in yaml_by_address.items():
         in_api = addr in api_by_address
@@ -158,46 +141,36 @@ class RosterResult:
     active_delegates: list[Delegate]
     drift_warnings: list[str]
     yaml_config: DelegatesConfig  # full config so callers can split active/exited
-    api_delegate_count: int  # 0 if api_fetch_succeeded is False
-    api_fetch_succeeded: bool
+    api_delegate_count: int | None  # None when the API fetch failed and drift detection was skipped
 
 
 def build_roster_for_period(
     yaml_path: Path,
     period: MonthPeriod,
-    api_fetcher: Callable[[], list[dict]],
+    api_fetcher: Callable[[], list[dict[str, Any]]],
 ) -> RosterResult:
     """Load YAML, fetch the API, run drift detection, filter to active-during-period.
 
     Drift detection compares the YAML against the live vote.sky.money listing. A fetch failure degrades to YAML-only
     with a warning rather than aborting the run.
-
-    Returns:
-        RosterResult with active delegates, drift warnings, the full YAML config, and API-fetch metadata.
     """
     yaml_config = load_delegates(yaml_path)
 
-    api_response: list[dict] = []
-    api_fetch_succeeded = False
-    warnings: list[str] = []
+    api_delegate_count: int | None
     try:
         api_response = api_fetcher()
-        api_fetch_succeeded = True
-        warnings = detect_roster_drift(yaml_config, api_response)
     except Exception as e:  # noqa: BLE001 — api_fetcher is caller-supplied; any failure degrades to YAML-only
-        warnings = [
-            (
-                f"API drift check skipped due to fetch failure: {type(e).__name__}: {e}. "
-                f"Proceeding with delegates.yaml as the sole source."
-            )
-        ]
         logger.warning("API fetch failed during drift check: %s", e)
+        skipped = f"API drift check skipped due to fetch failure: {type(e).__name__}: {e}."
+        warnings = [f"{skipped} Proceeding with delegates.yaml as the sole source."]
+        api_delegate_count = None
+    else:
+        warnings = detect_roster_drift(yaml_config, api_response)
+        api_delegate_count = len(api_response)
 
-    active = [d for d in yaml_config.delegates if d.is_active_during(period.start, period.end)]
     return RosterResult(
-        active_delegates=active,
+        active_delegates=[d for d in yaml_config.delegates if d.is_active_during(period)],
         drift_warnings=warnings,
         yaml_config=yaml_config,
-        api_delegate_count=len(api_response),
-        api_fetch_succeeded=api_fetch_succeeded,
+        api_delegate_count=api_delegate_count,
     )

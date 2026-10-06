@@ -36,7 +36,7 @@ repos:
 
       - id: pytest
         name: pytest
-        entry: uv run pytest --tb=short
+        entry: uv run pytest --tb=short --cov
         language: system
         types: [python]
         pass_filenames: false

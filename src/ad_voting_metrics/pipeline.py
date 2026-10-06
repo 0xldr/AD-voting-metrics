@@ -5,34 +5,20 @@ adjudicates pending executive votes on-chain, then writes the month's CSVs and a
 """
 
 import logging
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from pathlib import Path
 
-import pandas as pd
 import requests
 from web3 import Web3
 from web3.exceptions import Web3Exception
 
-from .outputs import write_csvs
+from .outputs import build_participation_dataframe, build_reconciliation_entry, write_csvs, write_reconciliation_entry
 from .period import MonthPeriod
-from .reconciliation import build_entry, write_entry
 from .roster import build_roster_for_period
-from .sources import delegation, sky_executive, sky_executive_onchain, sky_polling
+from .sources import delegation, sky_executive, sky_polling
 from .sources.delegates import fetch_aligned_delegates
 
 logger = logging.getLogger(__name__)
-
-
-def _rank_daily_balances(daily: pd.DataFrame) -> pd.DataFrame:
-    """Add a per-day rank (1 = most SKY delegated) and sort by date, then rank.
-
-    Ties break by row order, so two delegates with identical balances never share a rank.
-
-    Returns:
-        The (contract, name, date, sky, rank) frame.
-    """
-    rank = daily.groupby("date")["sky"].rank(method="first", ascending=False).astype(int)
-    return daily.assign(rank=rank).sort_values(["date", "rank"]).reset_index(drop=True)
 
 
 def run(period: MonthPeriod, *, rebuild: bool, roster_path: Path, output_dir: Path, w3: Web3) -> None:
@@ -54,29 +40,23 @@ def run(period: MonthPeriod, *, rebuild: bool, roster_path: Path, output_dir: Pa
         logger.warning(warning)
     logger.info("Roster has %d delegates active during %s", len(delegates), period)
 
-    logger.info("Fetching daily SKY balances...")
-    daily = _rank_daily_balances(
-        delegation.get_delegate_list_sky(delegates, period, w3=w3, cache_path=delegation_cache_path, rebuild=rebuild)
-    )
-    sky_lookup = delegation.build_sky_lookup(daily)
-    # The sync just wrote this; its block timestamps seed the executive-vote fetch and its head goes in the log.
-    delegation_cache = delegation.DelegationCache.load(delegation_cache_path)
+    contracts = [d.vote_delegate_address for d in delegates]
+    delegation_cache = delegation.sync_events(w3, contracts, cache_path=delegation_cache_path, rebuild=rebuild)
+    daily = delegation.daily_balances(delegation_cache, delegates, period)
+    sky_lookup: dict[tuple[str, date], float] = {
+        (contract, day): sky for contract, day, sky in zip(daily["contract"], daily["date"], daily["sky"], strict=True)
+    }
 
-    logger.info("Fetching polls...")
     polls = sky_polling.fetch_polls_for_period(period)
-    logger.info("Fetching poll votes...")
     statuses = sky_polling.poll_statuses(polls, delegates, sky_lookup, current_datetime=datetime.now(UTC))
 
-    logger.info("Fetching executive spells...")
     spells = sky_executive.fetch_spells_for_period(period)
-    logger.info("Seeding spell statuses...")
     statuses |= sky_executive.spell_statuses(spells, delegates, sky_lookup)
-
-    logger.info("Verifying Pending executive votes on-chain...")
     try:
-        statuses = sky_executive_onchain.resolve_pending_executive_votes(
+        statuses = sky_executive.resolve_pending_executive_votes(
             statuses,
             spells,
+            delegates,
             w3=w3,
             cache_path=slate_cache_path,
             known_block_timestamps=delegation_cache.block_timestamps,
@@ -88,13 +68,14 @@ def run(period: MonthPeriod, *, rebuild: bool, roster_path: Path, output_dir: Pa
         # silently no-op'ing every time.
         logger.exception("On-chain executive-vote verification failed; leaving Pending cells as-is")
 
-    output_files = write_csvs(month_dir, daily, delegates, [*polls, *spells], statuses)
+    participation = build_participation_dataframe(delegates, [*polls, *spells], statuses)
+    output_files = write_csvs(month_dir, daily, participation)
 
-    entry = build_entry(
+    entry = build_reconciliation_entry(
         period=period,
-        yaml_path=roster_path,
+        roster_path=roster_path,
         roster=roster_result,
         last_synced_block=delegation_cache.last_synced_block or delegation.V3_FACTORY_BLOCK,
         output_files=output_files,
     )
-    write_entry(output_dir / "reconciliation", period, entry)
+    write_reconciliation_entry(output_dir / "reconciliation", period, entry)

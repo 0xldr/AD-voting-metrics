@@ -21,13 +21,14 @@ ad-voting-metrics = "ad_voting_metrics.cli:main"
 
 [dependency-groups]
 dev = [
-    "ruff",
+    "ruff>=0.16.5",
     "pytest>=9.1.1",
     "responses>=0.26.2",
     "mypy>=2.3.0",
-    "pandas-stubs",
-    "types-PyYAML",
+    "pandas-stubs>=3.0.5",
+    "types-PyYAML>=6.0.12",
     "pre-commit>=4.6.1",
+    "pytest-cov>=7",
 ]
 
 [tool.setuptools.packages.find]
@@ -46,9 +47,6 @@ reportMissingTypeStubs = false
 line-length = 120
 
 [tool.ruff.lint]
-# Allow unused variables when underscore-prefixed.
-dummy-variable-rgx = "^(_+|(_+[a-zA-Z0-9_]*[a-zA-Z0-9]+?))$"
-
 # Everything on, including new linters as ruff adds them; deliberate
 # exclusions live in `ignore` below.
 select = ["ALL"]
@@ -64,9 +62,6 @@ ignore = [
     "D1",  # Pydocstyle - missing docstring in public module, class, or function
 
     # Individual rules.
-    "FBT003", # boolean-positional-value-in-call
-    "D212",   # multi-line-summary-first-line
-    "PD008",  # pandas-use-of-dot-at - `.at` is the right accessor for scalar cell reads/writes
     "TRY003", # raise-vanilla-args - long exception messages need not live on the exception class
     "EM101",  # raw-string-in-exception
     # All three flake8-type-checking import rules are off. The imports they would
@@ -82,18 +77,12 @@ ignore = [
 
 [tool.ruff.lint.per-file-ignores]
 "tests/*" = [
-    "D",   # docstrings not required on tests
     "ANN", # annotations not required on tests
 
     "S101",    # assert - bare `assert` is how tests assert
-    "S105",    # hardcoded-password-string
-    "S106",    # hardcoded-password-func-arg
-    "S107",    # hardcoded-password-default
     "PLR2004", # magic-value-comparison
     "SLF001",  # private-member-access
     "ARG001",  # unused-function-argument
-    "PLC0415", # import-outside-top-level
-    "EM102",   # f-string-in-exception
     "S108",    # hardcoded-temp-file - /tmp paths in tests are not a real risk
 ]
 
@@ -118,8 +107,20 @@ filterwarnings = [
 [tool.mypy]
 files = ["src", "tests"]
 plugins = ["pydantic.mypy"]
-warn_redundant_casts = true
-warn_unused_ignores = true
-warn_return_any = true
-strict_equality = true
-check_untyped_defs = true
+strict = true
+
+[[tool.mypy.overrides]]
+# Test functions and helpers stay lightly annotated (ruff's ANN is off for tests too); bodies are still checked.
+module = "tests.*"
+disallow_untyped_defs = false
+disallow_incomplete_defs = false
+disallow_untyped_calls = false
+disallow_any_generics = false
+
+[tool.coverage.run]
+source = ["ad_voting_metrics"]
+omit = ["*/__main__.py"]
+
+[tool.coverage.report]
+show_missing = true
+fail_under = 95

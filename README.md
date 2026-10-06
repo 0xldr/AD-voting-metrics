@@ -22,6 +22,7 @@ Each (delegate, poll or spell) cell holds one of:
 - `No` — had SKY delegated across the voting window and did not vote.
 - `Late` — spells only: voted after the deadline. Counts as non-participation but is labelled distinctly.
 - `Not Started` — the delegate's alignment began after the poll closed.
+- `Exited` — the delegate's alignment ended before the poll or spell closed and they did not vote while still aligned. A vote cast on or before their last aligned day counts as normal.
 - `Voting Open` — the poll had not closed when the data was fetched; re-run after it closes.
 - `No Delegated SKY` — zero SKY delegated on the relevant days, so non-participation is not held against them.
 - `Pending verification` — a spell cell the on-chain check could not settle.
@@ -75,9 +76,9 @@ uv run python -m ad_voting_metrics --month "April 2026"
 
 The month argument accepts either natural form (`"April 2026"`) or ISO (`"2026-04"`). The month must have ended — the script refuses an in-progress period, since poll close-day rules can't be applied to polls still in their voting window.
 
-Runs sync only new blocks since the last one by default, reusing cached on-chain events in the output directory. Pass `--rebuild` to discard the cache and resync the full delegation history from the V3 factory block.
+Runs sync only new blocks since the last one by default, reusing cached on-chain events in the output directory. A delegate newly added to the roster is backfilled from the V3 factory block automatically on the next run. Pass `--rebuild` only if the cache itself is suspect; it discards the cache and resyncs the full delegation history.
 
-`--roster FILE` and `--output-dir DIR` override the default `delegates.yaml` and `output_data` locations, which are resolved relative to the working directory.
+`--roster FILE` and `--output-dir DIR` override the default `delegates.yaml` and `output_data` locations, which are resolved relative to the working directory. `--verbose` adds debug detail such as getLogs chunk sizing and batch fallbacks. The RPC URL, including any API key embedded in it, is redacted from all log output.
 
 ## Outputs
 

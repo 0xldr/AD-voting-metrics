@@ -1,18 +1,26 @@
 """vote.sky.money polling endpoints: poll listing + per-poll voter tallies."""
 
-import itertools
 import logging
 from concurrent.futures import ThreadPoolExecutor
 from datetime import date, datetime
+from typing import Any
 
 import pandas as pd
 
-from ad_voting_metrics.ballot import Ballot
+from ad_voting_metrics.ballots import (
+    EXITED,
+    NOT_STARTED,
+    Ballot,
+    Statuses,
+    determine_vote_status,
+    exited_before,
+    voted_while_aligned,
+)
 from ad_voting_metrics.period import MonthPeriod
 from ad_voting_metrics.roster import Delegate
-from ad_voting_metrics.vote_status import NOT_STARTED, Statuses, determine_vote_status
 
-from .http import HEADERS, HTTP_TIMEOUT, get_session
+from .chain import utc_date
+from .http import fetch_json, paginate
 
 logger = logging.getLogger(__name__)
 
@@ -28,71 +36,52 @@ _POLL_VOTER_FETCH_CONCURRENCY = 8
 
 
 def fetch_polls_for_period(period: MonthPeriod) -> list[Ballot]:
-    """Fetch polls from vote.sky.money that started within the period.
+    """Fetch polls from vote.sky.money that started within the period, as Ballots.
 
     The request's startDate parameter sets the lower bound and the listing comes back oldest-first, so paging stops at
     the first poll that starts after the period.
-
-    Returns:
-        Polls starting within the period, as Ballots.
     """
-    polls: list[Ballot] = []
-    for page in itertools.count(1):
-        params: dict[str, str | int] = {
-            "network": "mainnet",
-            "pageSize": SKY_POLL_PAGE_SIZE,
-            "page": page,
-            "orderBy": "FURTHEST_START",
-            "startDate": period.start.isoformat(),
-        }
-        response = get_session().get(
-            SKY_ALL_POLLS_URL,
-            params=params,
-            headers=HEADERS,
-            timeout=HTTP_TIMEOUT,
-        )
-        response.raise_for_status()
-        data = response.json()
-        page_polls = data.get("polls", [])
-        pagination = data.get("paginationInfo") or {}
-        if not page_polls or not pagination:
-            break
 
-        for poll in page_polls:
+    def polls_page(number: int) -> list[dict[str, Any]]:
+        data = fetch_json(
+            SKY_ALL_POLLS_URL,
+            network="mainnet",
+            pageSize=SKY_POLL_PAGE_SIZE,
+            page=number,
+            orderBy="FURTHEST_START",
+            startDate=period.start.isoformat(),
+        )
+        return list(data.get("polls", []))
+
+    polls: list[Ballot] = []
+    for page in paginate(polls_page):
+        for poll in page:
             start = datetime.fromisoformat(poll["startDate"]).date()
             if start > period.end:
+                logger.info("Fetched %d polls starting in %s", len(polls), period)
                 return polls
             if start >= period.start:
                 polls.append(
                     Ballot(
                         id=str(poll["pollId"]),
-                        kind="poll",
                         start=start,
                         end=datetime.fromisoformat(poll["endDate"]).date(),
                         title=poll["title"],
                     )
                 )
 
-        if page >= pagination.get("numPages", page):
-            break
-
+    logger.info("Fetched %d polls starting in %s", len(polls), period)
     return polls
 
 
-def _fetch_poll_voters(poll: Ballot) -> tuple[str, set[str]]:
-    """Fetch the voter address set for one poll.
+def _fetch_poll_votes(poll: Ballot) -> tuple[str, dict[str, date]]:
+    """Fetch one poll's votes as a mapping of lowercased voter address to the UTC day the vote was recorded.
 
-    Returns a tuple of (poll id, lowercased voter addresses).
+    Returns a tuple of (poll id, votes by voter).
     """
-    response = get_session().get(
-        f"{SKY_POLL_ID_URL}/{poll.id}",
-        params={"network": "mainnet"},
-        headers=HEADERS,
-        timeout=HTTP_TIMEOUT,
-    )
-    response.raise_for_status()
-    data = response.json()
-    return poll.id, {vote["voter"].lower() for vote in data.get("votesByAddress", [])}
+    data = fetch_json(f"{SKY_POLL_ID_URL}/{poll.id}", network="mainnet")
+    votes = {vote["voter"].lower(): utc_date(int(vote["blockTimestamp"])) for vote in data.get("votesByAddress", [])}
+    return poll.id, votes
 
 
 def poll_statuses(
@@ -103,12 +92,10 @@ def poll_statuses(
 ) -> Statuses:
     """Determine each (delegate, poll) participation status.
 
-    Fetches every poll's voter list from vote.sky.money (concurrently) and runs determine_vote_status against each
-    delegate using their SKY balance from sky_lookup. A poll that closed before a delegate's alignment start date is
-    "Not Started".
-
-    Returns:
-        Mapping of (delegate contract, poll id) to status; empty when there are no polls.
+    Fetches every poll's votes from vote.sky.money (concurrently) and runs determine_vote_status against each delegate
+    using their SKY balance from sky_lookup. Alignment timing overrides that rule: a poll that closed before a
+    delegate's start date is "Not Started", and a delegate who exited before the poll closed is "Exited" unless they
+    voted while still aligned, in which case the vote counts as normal.
 
     Raises:
         ValueError: if a poll has no end date, which the polls endpoint always supplies.
@@ -117,24 +104,28 @@ def poll_statuses(
         return {}
 
     with ThreadPoolExecutor(max_workers=_POLL_VOTER_FETCH_CONCURRENCY) as executor:
-        voters_by_poll = dict(executor.map(_fetch_poll_voters, polls))
+        votes_by_poll = dict(executor.map(_fetch_poll_votes, polls))
+    logger.info("Fetched votes for %d polls", len(votes_by_poll))
 
     statuses: Statuses = {}
     for poll in polls:
         if poll.end is None:
             msg = f"Poll {poll.id} has no end date"
             raise ValueError(msg)
-        voters = voters_by_poll[poll.id]
+        votes = votes_by_poll[poll.id]
         window = pd.date_range(poll.start, poll.end, freq="D").date
 
         for delegate in delegates:
             contract = delegate.vote_delegate_address
-            sky_by_date = {d: sky_lookup[contract, d] for d in window if (contract, d) in sky_lookup}
-            status = determine_vote_status(
-                sky_by_date, poll.end, delegate_voted=contract in voters, current_datetime=current_datetime
-            )
+            voted = voted_while_aligned(votes.get(contract), delegate.end_date)
             if delegate.start_date > poll.end:
-                status = NOT_STARTED
-            statuses[contract, poll.id] = status
+                statuses[contract, poll.id] = NOT_STARTED
+            elif exited_before(delegate.end_date, poll.end) and not voted:
+                statuses[contract, poll.id] = EXITED
+            else:
+                sky_by_date = {d: sky_lookup.get((contract, d), 0.0) for d in window}
+                statuses[contract, poll.id] = determine_vote_status(
+                    sky_by_date, poll.end, delegate_voted=voted, current_datetime=current_datetime
+                )
 
     return statuses
