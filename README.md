@@ -54,6 +54,8 @@ Run the tool from the repo root so the default `delegates.yaml` and `output_data
 
 Copy `.env.example` to `.env` and set `SKY_RPC_URL` to a mainnet JSON-RPC endpoint. It is used to fetch on-chain delegation events and to establish when each executive vote was cast.
 
+Requests the provider rate-limits (HTTP 429, or Infura's JSON-RPC error -32005) are retried with exponential backoff before the run fails. Block-timestamp batches shrink on each rate limit, down to one block, to fit providers that meter credits per second.
+
 ### Delegate Roster
 
 `delegates.yaml` at the repo root is the source of truth for who is an Aligned Delegate. Each entry has:

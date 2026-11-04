@@ -16,6 +16,7 @@ Slate -> address-list resolution is cached persistently because slates are immut
 
 import logging
 from datetime import UTC, date, datetime
+from functools import partial
 from pathlib import Path
 from typing import Any
 
@@ -40,7 +41,13 @@ from ad_voting_metrics.ballots import (
 )
 from ad_voting_metrics.period import MonthPeriod
 from ad_voting_metrics.roster import Delegate
-from ad_voting_metrics.sources.chain import block_timestamp, fetch_block_timestamps, safe_head, utc_date
+from ad_voting_metrics.sources.chain import (
+    block_timestamp,
+    fetch_block_timestamps,
+    retry_on_rate_limit,
+    safe_head,
+    utc_date,
+)
 from ad_voting_metrics.sources.json_cache import load_json_cache, save_json_cache
 
 from .http import fetch_json, paginate
@@ -196,7 +203,7 @@ def _block_from_date(w3: Web3, target: date, known_timestamps: dict[int, int], *
     lo, hi = 1, to_block
     while lo < hi:
         mid = (lo + hi) // 2
-        if block_timestamp(w3.eth.get_block(mid)) < target_ts:
+        if block_timestamp(retry_on_rate_limit(partial(w3.eth.get_block, mid), f"get_block({mid})")) < target_ts:
             lo = mid + 1
         else:
             hi = mid
@@ -224,11 +231,13 @@ def _fetch_vote_events(
         return result
 
     vote_event = _chief(w3).events.Vote()
-    entries = vote_event.get_logs(
+    get_logs = partial(
+        vote_event.get_logs,
         from_block=from_block,
         to_block=to_block,
         argument_filters={"usr": [Web3.to_checksum_address(v) for v in voters]},
     )
+    entries = retry_on_rate_limit(get_logs, f"chief Vote eth_getLogs {from_block}-{to_block}")
     fetch_block_timestamps(w3, {entry["blockNumber"] for entry in entries}, block_timestamps)
 
     for entry in entries:

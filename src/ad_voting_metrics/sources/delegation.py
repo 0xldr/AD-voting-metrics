@@ -9,15 +9,23 @@ import logging
 from bisect import bisect_right
 from dataclasses import asdict, dataclass, field
 from datetime import date
+from functools import partial
 from pathlib import Path
 
 import pandas as pd
 from web3 import Web3
 from web3.exceptions import Web3RPCError
+from web3.types import FilterParams
 
 from ad_voting_metrics.period import MonthPeriod
 from ad_voting_metrics.roster import Delegate
-from ad_voting_metrics.sources.chain import FINALITY_BLOCKS, fetch_block_timestamps, safe_head, utc_date
+from ad_voting_metrics.sources.chain import (
+    FINALITY_BLOCKS,
+    fetch_block_timestamps,
+    retry_on_rate_limit,
+    safe_head,
+    utc_date,
+)
 from ad_voting_metrics.sources.json_cache import load_json_cache, save_json_cache
 
 logger = logging.getLogger(__name__)
@@ -87,13 +95,14 @@ def _fetch_event_logs(
     Both event types are fetched in a single eth_getLogs call per chunk (an OR-filter on topic0) and signed by topic
     afterwards. Chunks start at INITIAL_CHUNK_BLOCKS; on an eth_getLogs range/size error, the window halves and
     retries down to MIN_CHUNK_BLOCKS. A size that worked carries over to subsequent chunks so a provider with a low
-    limit isn't re-probed on every window.
+    limit isn't re-probed on every window. A rate-limited chunk is retried at the same size after a backoff.
 
     Returns a tuple of (events_by_contract, new_blocks). events_by_contract maps a lowercased contract address to its
     events; new_blocks is the set of block numbers in which an event was seen.
 
     Raises:
         RuntimeError: if eth_getLogs fails even at MIN_CHUNK_BLOCKS.
+        RateLimitError: if the provider still rate-limits a chunk on the final attempt.
     """
     contracts_checksummed = [Web3.to_checksum_address(c) for c in contracts]
     events_by_contract: dict[str, list[Event]] = {}
@@ -103,15 +112,14 @@ def _fetch_event_logs(
     chunk_size = INITIAL_CHUNK_BLOCKS
     while block <= safe_head:
         to_block = min(block + chunk_size - 1, safe_head)
+        filter_params: FilterParams = {
+            "fromBlock": block,
+            "toBlock": to_block,
+            "address": contracts_checksummed,
+            "topics": [[LOCK_TOPIC, FREE_TOPIC]],
+        }
         try:
-            logs = w3.eth.get_logs(
-                {
-                    "fromBlock": block,
-                    "toBlock": to_block,
-                    "address": contracts_checksummed,
-                    "topics": [[LOCK_TOPIC, FREE_TOPIC]],
-                }
-            )
+            logs = retry_on_rate_limit(partial(w3.eth.get_logs, filter_params), f"eth_getLogs {block}-{to_block}")
         except Web3RPCError as e:
             if chunk_size <= MIN_CHUNK_BLOCKS:
                 msg = f"eth_getLogs failed even at the minimum chunk size of {MIN_CHUNK_BLOCKS} blocks: {e}"

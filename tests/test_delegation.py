@@ -2,7 +2,7 @@
 
 import json
 from datetime import date
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 from eth_typing import HexStr
@@ -11,7 +11,7 @@ from web3.exceptions import Web3RPCError
 
 from ad_voting_metrics.period import MonthPeriod
 from ad_voting_metrics.sources import delegation
-from tests.helpers import ADDR_A, ADDR_B, delegate, ts
+from tests.helpers import ADDR_A, ADDR_B, delegate, http_429, ts
 
 
 def test_fetch_event_logs_merges_topics_and_signs_amounts():
@@ -184,6 +184,21 @@ def test_fetch_event_logs_raises_when_getlogs_fails_at_minimum_chunk():
 
     with pytest.raises(RuntimeError, match="minimum chunk size"):
         delegation._fetch_event_logs(mock_w3, ["0x" + "a" * 40], factory, factory + 100_000)
+
+
+def test_fetch_event_logs_retries_rate_limited_chunk_at_the_same_size():
+    """An HTTP 429 on a chunk is retried after a backoff with the window unchanged, not halved."""
+    mock_w3 = MagicMock()
+    mock_w3.eth.get_logs.side_effect = [http_429(), []]
+    factory = delegation.V3_FACTORY_BLOCK
+    last = factory + delegation.INITIAL_CHUNK_BLOCKS - 1
+
+    with patch("ad_voting_metrics.sources.chain.time.sleep") as mock_sleep:
+        events, new_blocks = delegation._fetch_event_logs(mock_w3, ["0x" + "a" * 40], factory, last)
+
+    assert (events, new_blocks) == ({}, set())
+    mock_sleep.assert_called_once()
+    assert [c.args[0]["toBlock"] for c in mock_w3.eth.get_logs.call_args_list] == [last, last]
 
 
 def test_fetch_event_logs_halves_chunk_until_provider_accepts():

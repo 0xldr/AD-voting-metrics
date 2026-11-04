@@ -1,8 +1,10 @@
 """Constants and factories shared across the test modules."""
 
 from datetime import UTC, date, datetime
+from unittest.mock import MagicMock
 
 import responses
+from requests.exceptions import HTTPError
 
 from ad_voting_metrics.roster import Delegate
 
@@ -23,6 +25,13 @@ def delegate(
 def ts(day: date) -> int:
     """Unix timestamp for midnight UTC on `day`."""
     return int(datetime(day.year, day.month, day.day, tzinfo=UTC).timestamp())
+
+
+def http_429() -> HTTPError:
+    """Build the HTTPError a provider raises when it rate-limits a request."""
+    response = MagicMock()
+    response.status_code = 429
+    return HTTPError("429 Client Error: Too Many Requests", response=response)
 
 
 def request_urls() -> list[str]:
