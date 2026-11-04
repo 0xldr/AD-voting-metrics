@@ -2,7 +2,7 @@
 
 import logging
 from datetime import date
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 import responses
@@ -14,7 +14,7 @@ from ad_voting_metrics.ballots import Ballot
 from ad_voting_metrics.period import MonthPeriod
 from ad_voting_metrics.sources import sky_executive
 from ad_voting_metrics.sources.json_cache import load_json_cache, save_json_cache
-from tests.helpers import ADDR_A, ADDR_B, delegate, request_urls, ts
+from tests.helpers import ADDR_A, ADDR_B, delegate, http_429, request_urls, ts
 
 _SPELL_1 = "0x" + "11" * 20
 _SPELL_2 = "0x" + "22" * 20
@@ -246,6 +246,20 @@ def test_fetch_vote_events_makes_one_get_logs_call_for_n_voters():
     assert get_logs.call_count == 1
     assert len(get_logs.call_args.kwargs["argument_filters"]["usr"]) == 2
     assert (get_logs.call_args.kwargs["from_block"], get_logs.call_args.kwargs["to_block"]) == (500, 9_000)
+
+
+def test_fetch_vote_events_retries_get_logs_after_rate_limit():
+    """An HTTP 429 on the Vote log fetch is retried after a backoff."""
+    w3 = _w3()
+    get_logs = w3.eth.contract.return_value.events.Vote.return_value.get_logs
+    get_logs.side_effect = [http_429(), [_make_event("0xabcd", 1000)]]
+    timestamps = {1000: ts(date(2026, 5, 20))}
+
+    with patch("ad_voting_metrics.sources.chain.time.sleep") as mock_sleep:
+        out = sky_executive._fetch_vote_events(w3, {ADDR_A}, 500, 9_000, timestamps)
+
+    assert out == {ADDR_A: [("0x" + "abcd".zfill(64), date(2026, 5, 20))]}
+    mock_sleep.assert_called_once()
 
 
 def test_fetch_vote_events_groups_by_voter_with_empty_lists_for_silent_voters():
